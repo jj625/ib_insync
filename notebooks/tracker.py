@@ -233,7 +233,7 @@ class Agent:
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         # reqHistoricalData with keepUpToDate=True always ticks every 5s
         self.lastPrice = bars[-1].close
-        logger.debug(f"onBarUpdate: {datetime.datetime.now().isoformat(' ')} {hasNewBar}, {bars[-1]}")
+        logger.info(f"hasNewBar={hasNewBar}, {bars[-1]}")
         if (self.highsincestart == 0.0) or (self.highsincestart < bars[-1].high):
             self.highsincestart = bars[-1].high
         if (self.lowsincestart == 0.0) or (self.lowsincestart > bars[-1].low):
@@ -479,15 +479,19 @@ agent = None
 def onAccountValueUpdate(*args, **kwargs):
     # every three minutes
     logger.debug(get_asyncio_running_loop(''))
+    logger.debug(f"{args} {kwargs}")
     # pdb.set_trace()
 
 def onPnlUpdate(pnl):
     logger.debug(get_asyncio_running_loop(''))
+    logger.debug(f"{pnl}")
     # pdb.set_trace()
 
 def onPortfolioUpdate(portfolio):
     # every three minutes, usually following onAccountValueUpdate
     logger.debug(get_asyncio_running_loop(''))
+    logger.debug(f"{portfolio}")
+    # ib.sleep(30) # simulate blocking
     # pdb.set_trace()
 
 def onPositionUpdate(newpos):
@@ -506,7 +510,7 @@ def onPositionUpdate(newpos):
     logger.info(logmsg)
     traceback.print_stack()
     if agent is None:
-        logger.error(f"onPositionUpdate: agent not initialized yet")
+        logger.error(f"agent not initialized yet")
         # just move on
         return
     # only care about specific stock positions for now
@@ -514,26 +518,26 @@ def onPositionUpdate(newpos):
         # agent.state = 1
         prevstkpos = agent.stkpos
         agent.stkpos = newpos
-        logger.info(f"onPositionUpdate: updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos} (id={id(prevstkpos)})")
+        logger.info(f"updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos} (id={id(prevstkpos)})")
         # should we change state?
         # let's just warn about possible state change for now
         if (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position != 0 and agent.state == 0:
-            logger.info(f"onPositionUpdate: agent state change: 0 -> 1")
+            logger.info(f"agent state change: 0 -> 1")
             agent.state = 1
             # print stack trace
         elif not (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position == 0 and agent.state == 1:
-            logger.info(f"onPositionUpdate: agent state should change: 1 -> 0")
+            logger.info(f"agent state should change: 1 -> 0")
             agent.state = 0
         elif not (prevstkpos is None) and (prevstkpos.position == newpos.position):
-            logger.warning(f"onPositionUpdate: newpos.position == prevpos.position, agent state: {agent.state}")
+            logger.warning(f"newpos.position == prevpos.position, agent state: {agent.state}")
 
         # if prevstkpos is None:
         #     logger.info(f"onPositionUpdate: agent initialized with stock position: {agent.stkpos}, state={agent.state}")
         # logger.info(f"onPositionUpdate: agent initialized with stock position: {agent.stkpos}, state={agent.state}")
     elif (newpos.contract.symbol != agent.symbol) and (newpos.contract.secType == 'STK'):
-        logger.warning(f"onPositionUpdate: ignoring stock position: {newpos}")
+        logger.warning(f"ignoring stock position: {newpos}")
     else:
-        logger.warning(f"onPositionUpdate: ignoring new position: {newpos}")
+        logger.warning(f"ignoring new position: {newpos}")
 
 def symbolMktValue(tickerFilter=None):
     # get market value of portfolio
@@ -827,7 +831,7 @@ if __name__ == "__main__":
         # logger.info(f"Market Value: {mv[agent.symbol]:.2f}")
         if agent.stkpos:
             logger.info(f"Market Value: {agent.bars[-1].close * agent.stkpos.position:.2f}")
-        logger.debug(f"Bars: {len(agent.bars)} {agent.bars[-1]}")
+        logger.debug(f"Bars: len={len(agent.bars)} last={agent.bars[-1]}")
 
         # # if no position, we just quit
         # if agent.stkpos.position == 0:
