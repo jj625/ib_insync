@@ -448,8 +448,6 @@ class Agent:
 
 agent = None
 
-print(f"TWS API version: {ibapi.__version__}, ib_insync version: {ib_insync.__version__}")
-
 def onAccountValueUpdate(*args, **kwargs):
     # every three minutes
     logger.debug(get_asyncio_running_loop(''))
@@ -746,6 +744,18 @@ if __name__ == "__main__":
             # contracts = ib.qualifyContracts(*contracts_)
             # logger.info(f"ib.qualifyContracts: {[x.localSymbol for x in contracts_]}")
             doOnce = False
+
+            # ensure no outstanding trades
+            ot = [t for t in ib.reqAllOpenOrders() if t.contract.symbol == agent.symbol]
+            if ot:
+                logger.warning(f"Outstanding trades: {ot}")
+                # for t in ot:
+                #     logger.warning(f"Canceling trade: {t}")
+                #     ib.cancelOrder(t.order)
+                # wait for trades to cancel
+                while (ot := [t for t in ib.reqAllOpenOrders() if t.contract.symbol == agent.symbol]):
+                    logger.warning(f"Waiting for trades to cancel: {ot}")
+                    ib.sleep(np.random.uniform(low=2.0, high=20.0))
 
             # request market data
             contract_1 = Stock(agent.symbol, 'SMART', 'USD')
