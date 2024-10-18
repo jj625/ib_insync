@@ -174,13 +174,14 @@ class Agent:
         pass
 
     def simpleLongStrategy1Init(self):
-        self.upPctMilestone = [0, .0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
-            0.055, 0.06, 0.065, 0.07, 0.075, 0.08, 0.09, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0,
-            2.0, 3.0]
-        # self.upPriceMilestone = [0.0] * len(self.upPctMilestone)
-        self.stopLossPct = [-0.001] * len(self.upPctMilestone) # uniform -10bps for now. This is the stop loss for each milestone as we cross it, we want small buffer from previous milestone as stop loss so we don't bump into it immediately
-        self.stopLossPct[0] = -0.0025 # -25bps initial stop loss
-        self.idxMilestone = -1 # initialize to an impossible value
+        # self.upPctMilestone = [0, .0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
+        #     0.055, 0.06, 0.065, 0.07, 0.075, 0.08, 0.09, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0,
+        #     2.0, 3.0]
+        # # self.upPriceMilestone = [0.0] * len(self.upPctMilestone)
+        # self.stopLossPct = [-0.001] * len(self.upPctMilestone) # uniform -10bps for now. This is the stop loss for each milestone as we cross it, we want small buffer from previous milestone as stop loss so we don't bump into it immediately
+        # self.stopLossPct[0] = -0.0025 # -25bps initial stop loss
+
+        self.reset_milestone() # initialize to an impossible value
         logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone}, stopLossPct={self.stopLossPct}")
         
         # stockpos = [p for p in ib.positions() if p.contract.symbol in [self.symbol] and p.contract.secType == 'STK']
@@ -344,7 +345,7 @@ class Agent:
                 return
             else:
                 logger.error(f"Impossible state: state=0 but position={self.stkpos} and idxMilestone={self.idxMilestone}")
-        elif self.state == 1:
+        elif self.get_state() == 1:
             # we have a position
             if self.stkpos is None:
                 logger.error(f"Waiting for position update to complete...")
