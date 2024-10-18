@@ -1,8 +1,6 @@
+import inspect
 import asyncio
 import ibapi
-import sys
-import ib_insync
-from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util, objects
 import pandas as pd
 import numpy as np
 import scipy.optimize
@@ -10,13 +8,67 @@ np.set_printoptions(precision=2, suppress=True)
 import scipy
 import logging
 import datetime
+import time
+import dateutil
 import argparse
+import json
 import email.utils
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List
 import pdb
 import telegram
+if telegram.__version__ < '20.0':
+    print("Requires python-telegram-bot library version 20.0 or higher")
+    sys.exit(1)
+
+from concurrent.futures import ThreadPoolExecutor
+import pytz
+local_tz = pytz.timezone('US/Eastern')  # Adjust for your local timezone, America/New_York
+
+# to import local code
+# https://stackoverflow.com/questions/61058798/python-relative-import-in-jupyter-notebook
+# https://stackoverflow.com/questions/34478398/import-local-function-from-a-module-housed-in-another-directory-with-relative-im
+
+import os, sys
+parent_dir = os.path.abspath('..')
+if parent_dir not in sys.path:
+    # sys.path.append(parent_dir)
+    sys.path.insert(0, parent_dir)
+    print(f"{parent_dir} added to sys.path")
+
+# cmd /c mklink /D "eventkit" "C:\Users\Jimmy\source\erdewit\eventkit"
+import pathlib
+mpl_dir = pathlib.Path('../eventkit').resolve()
+if mpl_dir.exists() and mpl_dir.is_dir() and str(mpl_dir) not in sys.path:
+    sys.path.insert(0, str(mpl_dir))
+    mpl_dir
+elif not mpl_dir.exists():
+    print(f"Expected {mpl_dir} does not exist")
+
+import eventkit
+import ib_insync
+from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util, objects
+
+def install_custom_repr_():
+    # monkey patch ib_insync.objects.TradeLogEntry.__repr__ to use friendlier time format
+    def trade_log_entry_repr(self):
+        return f"TradeLogEntry(time={self.time.astimezone(local_tz).strftime('%H:%M:%S.%f')}" \
+            + (f", status='{self.status}'") \
+            + (f", message='{self.message}'" if self.message else '') \
+            + (f", errorCode={self.errorCode})" if self.errorCode else '')
+    ib_insync.objects.TradeLogEntry.__repr__ = trade_log_entry_repr
+
+    def bar_data_repr(self):
+        if isinstance(self.date, datetime.datetime):
+            dstr = self.date.astimezone(local_tz).strftime('%H:%M:%S')
+        else:
+            dstr = self.date.__repr__()
+        return f"BarData(date={dstr}, open={self.open}, high={self.high}, low={self.low}, close={self.close}, volume={self.volume:.0f}, average={self.average:.2f}, barCount={self.barCount})"
+    ib_insync.objects.BarData.__repr__ = bar_data_repr
+    # ib_insync.objects.BarData.__str__ = bar_data_repr
+
+install_custom_repr_()
 
 # globals
 ib = None
