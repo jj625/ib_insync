@@ -803,7 +803,8 @@ if __name__ == "__main__":
             agent.barsstartidx = len(agent.bars) - 1
             agent.beginprice = agent.bars[agent.barsstartidx].close
             logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar start={agent.bars[agent.barsstartidx]}")
-            agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y)
+            # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
+            agent.bars.updateEvent += agent.onBarUpdate
 
             agent.simpleLongStrategy1Init()
 
