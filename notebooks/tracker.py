@@ -703,10 +703,28 @@ if __name__ == "__main__":
         untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.datetime.strptime(args.run_until, '%H:%M').time())
     else:           
         # untilTime = datetime.datetime.now() + datetime.timedelta(hours=2.2)
-        untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.time(16, 2, 0)) # 4:02 PM
+        if dateutil.parser.parse('20:00:00') < datetime.datetime.now(): # after 8:00 PM, run until 11:59 PM
+            untilTime = dateutil.parser.parse('23:59:00') # 11:59 PM
+        elif dateutil.parser.parse('16:16:00') < datetime.datetime.now(): # after 4:16 PM, run until 8:00 PM
+            untilTime = dateutil.parser.parse('20:02:00') # 8:00 PM
+        elif datetime.datetime.now() < dateutil.parser.parse('16:02:00'): # before 4:02 PM, run until 4:02 PM
+            untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.time(16, 2, 0)) # 4:02 PM
     doOnce = True
+
+    # wait until market open
+    waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(minutes=1)
+    if datetime.datetime.now() < waitUntil:
+        logger.info(f"Waiting until {waitUntil}")
+        util.waitUntil(waitUntil)
+
+    waitUntil2 = dateutil.parser.parse('17:00:00') - datetime.timedelta(minutes=1)
+    if datetime.datetime.now() < waitUntil2 and dateutil.parser.parse('16:16:00') < datetime.datetime.now():
+        logger.info(f"Waiting until {waitUntil}")
+        util.waitUntil(waitUntil)
+
     logger.info(f"Running until {untilTime}")
-    while datetime.datetime.now() < untilTime:
+    while datetime.datetime.now() < untilTime and agent.get_state() != 99:
+        logger.debug(get_asyncio_running_loop('main loop: ')) # expect 'no running event loop'
         # get market data for all positions
         if doOnce:
             # contracts_ = [p.contract for p in ib.positions()]
@@ -846,12 +864,10 @@ if __name__ == "__main__":
         # slopes = cheb_poly_derivative(x)
         # logger.info(f"chebyshev o/c slopes: {slopes}")
 
-        logger.debug("sleeping for 10 seconds...")
-        ib.sleep(10)
+        sleepsecs: float = 10
+        logger.debug(f"sleeping for {sleepsecs} seconds...")
+        ib.sleep(sleepsecs)
 
-    # ib.sleep(60*10) # sleep for 60 seconds
-    # ib.waitUntil(datetime.time(16,2,0)) # wait until 4:05 PM
-    
     # # dump the bars to a file
     # filesuffix = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     # df = util.df(bars_1)
