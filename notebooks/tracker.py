@@ -151,6 +151,7 @@ class Agent:
     background_tasks: set[asyncio.Task] = field(default_factory=set)
 
     # state variables and methods for simpleLongStrategy1
+    numshares: int = 0
     upPctMilestone: List[float] = field(default_factory=list)
     # upPriceMilestone: List[float] = field(default_factory=list)
     stopLossPct: List[float] = field(default_factory=list)
@@ -268,7 +269,7 @@ class Agent:
         def seekEntry():
             if two_bars_green_with_one_close_near_high_2() and low_to_high_inflection_point(10, 5):
                 logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
-                self.order = MarketOrder('BUY', 100)
+                self.order = MarketOrder('BUY', agent.numshares)
                 contract_ = Stock(self.symbol, 'SMART', 'USD')
                 logger.info(f"Buying shares of {contract_} as {self.order}")
                 # before we place the order, make sure no outstanding trades
@@ -593,25 +594,44 @@ async def telegram_init(bot):
         # asyncio.Task.set_result(await u)
 
 if __name__ == "__main__":
+    # print(get_asyncio_running_loop('__main__: ')) # expect 'no running event loop'
+
+    # spec file
+    scriptdir = os.path.dirname(os.path.realpath(__file__))
+    specfile = os.path.join(scriptdir, 'spec.json')
+    spec = json.load(open(specfile, 'r'))
+
     # parse command line arguments
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbol', type=str, help='Ticker symbol to trade')
-    argparser.add_argument('maxloss', type=float, help='Max loss threshold')
-    argparser.add_argument('--clientid', type=int, default=9, help='IBKR API Client ID')
+    argparser.add_argument('maxloss', type=float, nargs='*', help='Max loss threshold')
+    argparser.add_argument('--clientid', type=int, help='IBKR API Client ID')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
-    argparser.add_argument('--port', type=int, default=4002, help='Port number') # IB Gateway 4001, TWS 7496
+    argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--run_until', type=str, help='Run until this time (HH:MM)')
     argparser.add_argument('--live_trading', action='store_true', help='Live trading')
     args = argparser.parse_args()
 
-    logging.basicConfig(level=args.loglevel) # must come before any logging calls
+    # must come before any logging calls
+    logging.basicConfig(level=args.loglevel
+        , format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s'
+    )
     logger = logging.getLogger()
     logging.getLogger('ib_insync').setLevel(logging.WARN)
 
     # logger.addFilter(NoParsingFilter())
 
+    logger.info(f"module loaded: {inspect.getfile(eventkit)}")
+    logger.info(f"module loaded: {inspect.getfile(ib_insync)}")
+    logger.info(f"module loaded: {inspect.getfile(telegram)}")
+
+    logger.info(f"TWS API version: {ibapi.__version__}, ib_insync: {ib_insync.__version__}, telegram: {telegram.__version__}")
+
     logger.info("Script is starting...")
+
+    logger.info(f"spec file loaded: {specfile}")
+
     logger.info(f"args: {args}")
 
     # telegram
@@ -627,7 +647,10 @@ if __name__ == "__main__":
     # IB
     ib = IB()
     # util.logToConsole(logging.DEBUG) # show network traffic
-    ib.connect(args.host, args.port, clientId=args.clientid)
+    clientid = args.clientid if args.clientid else spec['root'][args.symbol]['clientid']
+    ib.connect(args.host, args.port, clientId=clientid)
+
+
     # print portfolio
     logger.info(f"Portfolio: {ib.portfolio()}")
 
@@ -637,7 +660,10 @@ if __name__ == "__main__":
     # if len(sp_) == 0:
     #     logger.warning(f"Stock position not found for {args.symbol}")
 
-    agent = Agent(symbol=args.symbol, liveTrading=args.live_trading, maxloss=args.maxloss)
+    agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
+                  , maxloss=spec['root'][args.symbol]['maxloss'], numshares=spec['root'][args.symbol]['numshares']
+                  , upPctMilestone=spec['root'][args.symbol]['upPctMilestone']
+                  , stopLossPct=spec['root'][args.symbol]['stopLossPct'])
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
         agent.state = 1
