@@ -168,6 +168,7 @@ class Agent:
     idxMilestone: int = -1 # initialize to an impossible value
     # avgCost: float = 0.0
     state: int = 0 # state machine: 0 = seek entry, 1 = maintain position, keep ratchet up until stop loss
+    prevstate: int = 0 # previous state
 
     def reset(self):
         pass
@@ -204,6 +205,29 @@ class Agent:
         return f"Symbol: {self.symbol}, stock position: {self.stkpos}"
     #, Avg Cost: {self.avg_cost}, Last Price: {self.last_price}, Realized PnL: {self.realized_pnl}, Unrealized PnL: {self.unrealized_pnl}, Daily PnL: {self.daily_pnl}"
 
+    def set_state(self, state: int) -> 'Agent':
+        if state == self.state:
+            logger.warning(f"State unchanged: {state}")
+            return self
+        self.prevstate = self.state
+        self.state = state
+        return self
+    
+    def get_state(self) -> int:
+        return self.state
+    
+    def reset_milestone(self) -> 'Agent':
+        self.idxMilestone = -1
+        logger.info(f"idxMilestone={self.idxMilestone}")
+        return self
+
+    def set_milestone(self, idx: int) -> 'Agent':
+        self.idxMilestone = idx
+        return self
+    
+    def get_milestone(self) -> int:
+        return self.idxMilestone
+    
     async def onBarUpdate(self, bars, hasNewBar):
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         # reqHistoricalData with keepUpToDate=True always ticks every 5s
@@ -291,7 +315,7 @@ class Agent:
                     self.trade = None
                 if self.trade is None:
                     if self.liveTrading:
-                        self.state = 1 # because this is market order, we can change state immediately
+                        self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade.log}")
                         loop = asyncio.get_running_loop()
@@ -305,15 +329,15 @@ class Agent:
                     logger.info(f"Trade is still open: {ib.openTrades()}")
                 if self.trade and self.trade not in ib.openTrades() and self.trade.orderStatus.status == 'Filled':
                     logger.info(f"Trade is filled: {self.trade.log}")
-                    self.state = 1
+                    self.set_state(1)
                     self.trade = None
                 # else:
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
 
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
-        logger.info(f"SimpleLongStrategy1: {datetime.datetime.now().isoformat(' ')} state={self.state}")
-        if self.state == 0:
-            # no position
+        logger.info(f"state={self.get_state()}")
+        if self.get_state() == 0:
+            # no position, no outstanding trades and milestone has been reset
             if ((self.stkpos is None) or (self.stkpos.position == 0)) and self.idxMilestone == -1:
                 logger.info(f"No position, seeking entry...")
                 seekEntry()
@@ -336,7 +360,10 @@ class Agent:
                     logger.info(f"Trade is filled: {self.trade.log}")
                     # self.state = 1
                     self.trade = None
-            
+        elif self.get_state() == 99:
+            logger.warning(f"Exiting strategy...")
+            return
+        
         # if we have no position, just return
         if (self.stkpos is None) or (self.stkpos.position == 0):
             logger.warning(f"No position, returning...")
@@ -352,7 +379,7 @@ class Agent:
         if newIdx_ > 0:
             newIdx_ -= 1  # Adjust because the loop exits after crossing the last milestone
         if newIdx_ > self.idxMilestone:
-            self.idxMilestone = newIdx_
+            self.set_milestone(newIdx_)
             logger.info(f"Crossed milestone {self.idxMilestone} {self.upPctMilestone[self.idxMilestone]:.2%}: {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
         else:
             logger.info(f"Milestone unch: {self.idxMilestone} {self.upPctMilestone[self.idxMilestone]:.2%}: {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
@@ -373,7 +400,7 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
-                    self.state = 0 # reset state
+                    self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
                     loop = asyncio.get_running_loop()
                     loop.create_task(
@@ -430,7 +457,7 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
-                    self.state = 0 # reset state
+                    self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
                     loop = asyncio.get_event_loop()
                     logger.debug(get_asyncio_running_loop('get_event_loop()')) # expect 'no running event loop'
