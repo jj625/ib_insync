@@ -74,9 +74,33 @@ install_custom_repr_()
 ib = None
 logger = None
 
-import pytz
+TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
+telegram_bot = telegram.Bot(TELEGRAM_TOKEN)
+telegram_tasks = set() # hold strong references to tasks
+TELEGRAM_CHAT_ID = '5215848738'
+
 import traceback
-local_tz = pytz.timezone('US/Eastern')  # Adjust for your local timezone, America/New_York
+
+async def send_telegram_message_async(text):
+    # bot = Bot(token='YOUR_BOT_TOKEN')
+    return await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+
+def send_telegram_message(text):
+    util.run(send_telegram_message_async(text))
+    # task = asyncio.create_task(send_telegram_message_async(text))
+    # telegram_tasks.add(task)
+    # task.add_done_callback(telegram_tasks.discard)
+
+# def run_async_task(chat_id, text):
+#     loop = asyncio.get_event_loop()
+#     asyncio.run_coroutine_threadsafe(send_telegram_message(chat_id, text), loop)
+
+# # Example usage
+# if __name__ == "__main__":
+#     chat_id = 'YOUR_CHAT_ID'
+#     text = 'Hello, this is an asynchronous message!'
+#     executor = ThreadPoolExecutor()
+#     executor.submit(run_async_task, chat_id, text)
 
 def singleton(cls):
     instances = {}
@@ -256,6 +280,8 @@ class Agent:
                         self.state = 1 # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade.log}")
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
                         # asyncio.sleep(0.2)
                     else:
                         logger.error(f"No live trading, trade not placed: {self.order}")
@@ -334,6 +360,10 @@ class Agent:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                     self.state = 0 # reset state
                     logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
+                            , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
                 else:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
@@ -386,6 +416,13 @@ class Agent:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                     self.state = 0 # reset state
                     logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
+                    loop = asyncio.get_event_loop()
+                    logger.debug(get_asyncio_running_loop('get_event_loop()')) # expect 'no running event loop'
+                    future = asyncio.ensure_future(
+                        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
+                            , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
+                    loop.run_until_complete(future)
+                    logger.debug(get_asyncio_running_loop('run_until_complete()')) # expect 'no running event loop'
                 else:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
@@ -546,6 +583,15 @@ def resample_bars(bars, resample_interval='2min'):
 
     return resampled_df
 
+async def telegram_init(bot):
+    # bot = telegram.Bot(TELEGRAM_TOKEN)
+    # u = bot.get_me()
+    # logger.info(f"Telegram user: {u}")
+    async with bot:
+        u = bot.get_me()
+        logger.info(f"Telegram user: {await u}")
+        # asyncio.Task.set_result(await u)
+
 if __name__ == "__main__":
     # parse command line arguments
     argparser = argparse.ArgumentParser()
@@ -567,6 +613,18 @@ if __name__ == "__main__":
 
     logger.info("Script is starting...")
     logger.info(f"args: {args}")
+
+    # telegram
+    TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
+    if TELEGRAM_TOKEN == '':
+        logger.error(f"TELEGRAM_TOKEN not found in environment")
+        sys.exit(1)
+    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    util.run(telegram_init(bot))
+    # t = asyncio.create_task(telegram_init(bot))
+    # t.add_done_callback(lambda x: logger.info(f"Telegram user: {x.result()}"))
+
+    # IB
     ib = IB()
     # util.logToConsole(logging.DEBUG) # show network traffic
     ib.connect(args.host, args.port, clientId=args.clientid)
