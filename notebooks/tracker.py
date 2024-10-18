@@ -1,5 +1,14 @@
 import inspect
 import asyncio
+def get_asyncio_running_loop(prefix: str = '') -> str:
+    try:
+        running_loop = asyncio.get_running_loop()
+        result = f"{prefix} asyncio.get_running_loop() -> {running_loop} ({id(running_loop)})"
+    except Exception as e:
+        result = f"{prefix} asyncio.get_running_loop() -> {e}"
+    return result
+
+# print(get_asyncio_running_loop('0. '))
 import ibapi
 import pandas as pd
 import numpy as np
@@ -195,7 +204,8 @@ class Agent:
         return f"Symbol: {self.symbol}, stock position: {self.stkpos}"
     #, Avg Cost: {self.avg_cost}, Last Price: {self.last_price}, Realized PnL: {self.realized_pnl}, Unrealized PnL: {self.unrealized_pnl}, Daily PnL: {self.daily_pnl}"
 
-    def onBarUpdate(self, bars, hasNewBar):
+    async def onBarUpdate(self, bars, hasNewBar):
+        logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         # reqHistoricalData with keepUpToDate=True always ticks every 5s
         self.lastPrice = bars[-1].close
         logger.debug(f"onBarUpdate: {datetime.datetime.now().isoformat(' ')} {hasNewBar}, {bars[-1]}")
@@ -208,9 +218,12 @@ class Agent:
 
         # schedule strategy execution
         if self.background_tasks == set():
+            logger.info(f"scheduling strategy execution")
             task = asyncio.create_task(self.simpleLongStrategy1())
             self.background_tasks.add(task)
             task.add_done_callback(self.background_tasks.discard)
+            await task
+            task = None
 
     async def simpleLongStrategy1(self):
         """
@@ -297,6 +310,7 @@ class Agent:
                 # else:
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
 
+        logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         logger.info(f"SimpleLongStrategy1: {datetime.datetime.now().isoformat(' ')} state={self.state}")
         if self.state == 0:
             # no position
@@ -395,6 +409,7 @@ class Agent:
         #         self.idxMilestone += 1
 
     def enforceMaxLoss(self, lastPrice=None, maxloss_=None):
+        logger.debug(get_asyncio_running_loop('')) # expect 'no running event loop'
         if lastPrice is None:
             lastPrice = self.lastPrice
         if maxloss_ is None:
@@ -437,20 +452,20 @@ print(f"TWS API version: {ibapi.__version__}, ib_insync version: {ib_insync.__ve
 
 def onAccountValueUpdate(*args, **kwargs):
     # every three minutes
-    logger.debug(f"onAccountValueUpdate: {datetime.datetime.now().isoformat(' ')} {args} {kwargs}")
+    logger.debug(get_asyncio_running_loop(''))
     # pdb.set_trace()
 
 def onPnlUpdate(pnl):
-    logger.debug(f"pnl update: {datetime.datetime.now().isoformat(' ')} {pnl}")
+    logger.debug(get_asyncio_running_loop(''))
     # pdb.set_trace()
 
 def onPortfolioUpdate(portfolio):
     # every three minutes, usually following onAccountValueUpdate
-    logger.debug(f"portfolio update: {datetime.datetime.now().isoformat(' ')} {portfolio}")
+    logger.debug(get_asyncio_running_loop(''))
     # pdb.set_trace()
 
 def onPositionUpdate(newpos):
-    logmsg = f"onPositionUpdate: {datetime.datetime.now().isoformat(' ')} {newpos} id={id(newpos)}"
+    logger.debug(get_asyncio_running_loop(''))
     if agent:
         logmsg += f" agent.state={agent.state} agent.idxMilestone={agent.idxMilestone}"
         if agent.trade:
