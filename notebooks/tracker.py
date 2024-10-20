@@ -184,6 +184,8 @@ class Agent:
     # avgCost: float = 0.0
     state: int = 0 # state machine: 0 = seek entry, 1 = maintain position, keep ratchet up until stop loss
     prevstate: int = 0 # previous state
+    recenthigh: tuple[int, BarData] = None
+    recentlow: tuple[int, BarData] = None
 
     def reset(self):
         pass
@@ -215,6 +217,9 @@ class Agent:
             useRTH=True,
             formatDate=1)
         self.prevclose = self.histbars[-1].close
+        self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+        self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+
         logger.info(f"SimpleLongStrategy1Init: histbars len={len(self.histbars)}")
 
     def __str__(self):
@@ -256,6 +261,12 @@ class Agent:
         self.testpnl = bars[-1].close - self.beginprice
         logger.info(f"High since start: {self.highsincestart}, Low since start: {self.lowsincestart}, test pnl = {self.testpnl:.2f}")
 
+        # update agent's recent high and low
+        if self.recenthigh[1].high < bars[-1].high:
+            self.recenthigh = (len(bars)-1, bars[-1])
+        if self.recentlow[1].low > bars[-1].low:
+            self.recentlow = (len(bars)-1, bars[-1])
+        
         # schedule strategy execution
         if self.background_tasks == set():
             logger.info(f"scheduling strategy execution")
@@ -358,16 +369,34 @@ class Agent:
         logger.info(f"state={self.get_state()}")
         if self.get_state() == 0:
             # no position, no outstanding trades and milestone has been reset
-            if ((self.stkpos is None) or (self.stkpos.position == 0)) and self.idxMilestone == -1:
+            if ((self.stkpos is None) or (self.stkpos.position == 0)) and self.idxMilestone == -1 and self.trade is None:
                 logger.info(f"No position, seeking entry...")
                 seekEntry()
                 return
+            elif self.trade and self.trade in ib.openTrades():
+                logger.info(f"Trade is still open: {ib.openTrades()}") # wait for trade to complete
+                return
+            elif self.trade and not (self.trade in ib.openTrades()):
+                if self.trade.orderStatus.status == 'Filled':
+                    logmsg = f"Trade status: {self.trade}"
+                    self.trade = None
+                    logger.info(logmsg + f", resetting trade to None")
+                    # allow to proceed
+                elif self.trade.orderStatus.status == 'Cancelled':
+                    logger.error(f"Trade was cancelled: {self.trade}, undoing state change")
+                    self.state = self.prevstate # undo state change
+                    return
             else:
                 logger.error(f"Impossible state: state=0 but position={self.stkpos} and idxMilestone={self.idxMilestone}")
+                return # don't allow to proceed
+            
         elif self.get_state() == 1:
             # we have a position
-            if self.stkpos is None:
-                logger.error(f"Waiting for position update to complete...")
+            if self.stkpos is None and self.trade and self.trade in ib.openTrades():
+                logger.info(f"Waiting for position update to complete...")
+                return
+            elif self.stkpos is None:
+                logger.error(f"Impossible state: state=1 waiting for position update to complete but no outstanding trade")
                 return
             if self.stkpos.position == 0:
                 logger.error(f"Impossible state: state=1 but position={self.stkpos}")
@@ -376,10 +405,17 @@ class Agent:
             if self.trade:
                 if self.trade in ib.openTrades():
                     logger.info(f"Trade is still open: {ib.openTrades()}")
-                if self.trade not in ib.openTrades() and self.trade.orderStatus.status == 'Filled':
-                    logger.info(f"Trade is filled: {self.trade.log}")
+                elif self.trade not in ib.openTrades() and self.trade.orderStatus.status == 'Filled':
+                    logmsg = f"Trade is filled: {self.trade.log}"
+                    logger.info(logmsg)
                     # self.state = 1
                     self.trade = None
+                    logger.info(logmsg + f", resetting trade to None")
+                else:
+                    logmsg = f"Trade not filled: {self.trade.log}"
+                    self.trade = None
+                    logger.error(logmsg + f", resetting trade to None")
+                    return # proceed or not?
         elif self.get_state() == 99:
             logger.warning(f"Exiting strategy...")
             return
@@ -430,8 +466,10 @@ class Agent:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
                 logger.info(f"Trade is still open: {ib.openTrades()}")
-            else:
-                logger.error(f"Impossible state: trade {self.trade} not in {ib.openTrades()}")
+            else: # self.trade is not in ib.openTrades()
+                logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
+                self.trade = None
+                logger.error(logmsg + f", resetting trade to None")
             # 
             # _openTrades = ib.trades()
             # if _openTrades is not None:
@@ -464,13 +502,13 @@ class Agent:
         currentPnl = (lastPrice - self.stkpos.avgCost) * self.stkpos.position
         if currentPnl < maxloss_:
             logger.warning(f"Current loss: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
-            if self.stkpos.position > 0:
+            if self.stkpos.position > 0 and self.trade is None:
                 # self.order = MarketOrder('SELL', self.stkpos.position)
                 # watch out, with limit order we may not get filled
                 self.order = LimitOrder('SELL', self.stkpos.position, lastPrice)
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 logger.warning(f"Selling shares of {contract_} as {self.order} ...")
-            if self.stkpos.position < 0:
+            if self.stkpos.position < 0 and self.trade is None:
                 logger.warning(f"Buying {-self.stkpos.position} shares of {self.symbol}...")
                 # ib.placeOrder(self.stkpos.contract, MarketOrder('BUY', -self.stkpos.position))
 
@@ -491,8 +529,19 @@ class Agent:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
                 logger.info(f"Trade is still open: {ib.openTrades()}")
+            elif self.trade not in ib.openTrades():
+                if self.trade.orderStatus.status == 'Filled':
+                    logmsg = f"Trade is filled: {self.trade.log}"
+                    self.trade = None
+                    logger.info(logmsg + f", resetting trade to None")
+                else:
+                    logger.error(f"Trade was not filled: {self.trade}")
+                    self.set_state(99) # bail out of main loop
+                    # assert False, "Please close out manually."
             else:
-                assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
+                logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
+                self.trade = None
+                logger.error(logmsg + f", resetting trade to None")
 
 agent = None
 
@@ -517,6 +566,10 @@ def onPortfolioUpdate(portfolio):
 def onPositionUpdate(newpos):
     # only care about specific stock positions for now
     logger.debug(get_asyncio_running_loop(''))
+    if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK')):
+        logger.info(f"don't care {newpos}")
+        return
+    logmsg = f"{newpos} id={id(newpos)}"
     if agent:
         logmsg += f" agent.state={agent.state} agent.idxMilestone={agent.idxMilestone}"
         if agent.trade:
@@ -524,9 +577,9 @@ def onPositionUpdate(newpos):
             if agent.trade.orderStatus.status == 'Filled' and agent.state == 0:
                 logmsg += f" state is zero and last trade is filled, resetting trade status"
                 agent.trade = None
-                if agent.idxMilestone >= 0:
-                    agent.idxMilestone = -1 # reset milestone
-                    logmsg += f" also resetting strategy1 milestone to -1"
+            if agent.idxMilestone >= 0:
+                agent.reset_milestone() # reset milestone
+                logmsg += f" resetting strategy1 milestone to -1"
                 
     logger.info(logmsg)
     # traceback.print_stack()
@@ -727,7 +780,8 @@ if __name__ == "__main__":
     #     logger.warning(f"Stock position not found for {args.symbol}")
 
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
-                  , maxloss=spec['root'][args.symbol]['maxloss'], numshares=spec['root'][args.symbol]['numshares']
+                  , maxloss=args.maxloss[0] if args.maxloss else spec['root'][args.symbol]['maxloss']
+                  , numshares=spec['root'][args.symbol]['numshares']
                   , upPctMilestone=spec['root'][args.symbol]['upPctMilestone']
                   , stopLossPct=spec['root'][args.symbol]['stopLossPct'])
     if len(sp_) > 0:
