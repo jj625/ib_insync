@@ -65,7 +65,8 @@ def install_custom_repr_():
         return f"TradeLogEntry(time={self.time.astimezone(local_tz).strftime('%H:%M:%S.%f')}" \
             + (f", status='{self.status}'") \
             + (f", message='{self.message}'" if self.message else '') \
-            + (f", errorCode={self.errorCode})" if self.errorCode else '')
+            + (f", errorCode={self.errorCode})" if self.errorCode else '') \
+            + ")"
     ib_insync.objects.TradeLogEntry.__repr__ = trade_log_entry_repr
 
     def bar_data_repr(self):
