@@ -77,6 +77,20 @@ def install_custom_repr_():
     ib_insync.objects.BarData.__repr__ = bar_data_repr
     # ib_insync.objects.BarData.__str__ = bar_data_repr
 
+    def order_status_repr(self: ib_insync.order.OrderStatus):
+        return f"OrderStatus(orderId={self.orderId}, status='{self.status}'" \
+            + (f", filled={self.filled:.0f}" if self.filled != 0.0 else '') \
+            + (f", remaining={self.remaining:.0f}" if self.remaining != 0.0 else '') \
+            + (f", avgFillPrice={self.avgFillPrice:.2f}" if self.avgFillPrice != 0.0 else '') \
+            + (f", permId={self.permId}" if self.permId else '') \
+            + (f", parentId={self.parentId}" if self.parentId else '') \
+            + (f", lastFillPrice={self.lastFillPrice:.2f}" if self.lastFillPrice != 0.0 else '') \
+            + (f", clientId={self.clientId}" if self.clientId else '') \
+            + (f", whyHeld='{self.whyHeld}'" if self.whyHeld else '') \
+            + (f", mktCapPrice={self.mktCapPrice:.2f}" if self.mktCapPrice != 0.0 else '') \
+            + ")"
+    ib_insync.order.OrderStatus.__repr__ = order_status_repr
+
 install_custom_repr_()
 
 # globals
