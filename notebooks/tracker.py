@@ -320,6 +320,10 @@ class Agent:
             return False
         
         def seekEntry():
+            """
+            pre-condition: no position, no outstanding trades, milestone has been reset
+            """
+            assert self.trade is None, "Expect no outstanding trades"
             if two_bars_green_with_one_close_near_high_2() and low_to_high_inflection_point(10, 5):
                 logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
                 self.order = MarketOrder('BUY', agent.numshares)
@@ -462,6 +466,7 @@ class Agent:
             logger.warning(f"Current loss: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
             if self.stkpos.position > 0:
                 # self.order = MarketOrder('SELL', self.stkpos.position)
+                # watch out, with limit order we may not get filled
                 self.order = LimitOrder('SELL', self.stkpos.position, lastPrice)
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 logger.warning(f"Selling shares of {contract_} as {self.order} ...")
@@ -510,6 +515,7 @@ def onPortfolioUpdate(portfolio):
     # pdb.set_trace()
 
 def onPositionUpdate(newpos):
+    # only care about specific stock positions for now
     logger.debug(get_asyncio_running_loop(''))
     if agent:
         logmsg += f" agent.state={agent.state} agent.idxMilestone={agent.idxMilestone}"
@@ -523,7 +529,7 @@ def onPositionUpdate(newpos):
                     logmsg += f" also resetting strategy1 milestone to -1"
                 
     logger.info(logmsg)
-    traceback.print_stack()
+    # traceback.print_stack()
     if agent is None:
         logger.error(f"agent not initialized yet")
         # just move on
@@ -957,3 +963,10 @@ if __name__ == "__main__":
         ib.cancelHistoricalData(agent.bars)
 
     logger.info("Script has finished.")
+
+"""
+open issues:
+- stop loss is susceptible to gap down
+- start getting bars before market open
+
+"""
