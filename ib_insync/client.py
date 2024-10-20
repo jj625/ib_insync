@@ -245,7 +245,7 @@ class Client:
                 s = ''
             elif typ is str:
                 s = field
-            elif type is int:
+            elif typ is int:
                 s = str(field)
             elif typ is float:
                 s = 'Infinite' if field == math.inf else str(field)
