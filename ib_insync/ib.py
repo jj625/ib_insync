@@ -17,6 +17,7 @@ from ib_insync.objects import (
     ExecutionFilter, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
     NewsArticle, NewsBulletin, NewsProvider, NewsTick, OptionChain,
     OptionComputation, PnL, PnLSingle, PortfolioItem, Position, PriceIncrement,
+    PositionMulti,
     RealTimeBarList, ScanDataList, ScannerSubscription, SmartComponent,
     TagValue, TradeLogEntry, WshEventData)
 from ib_insync.order import (
@@ -847,6 +848,12 @@ class IB:
         This method is blocking.
         """
         return self._run(self.reqPositionsAsync())
+
+    def reqPositionsMulti(self, account: str = '', modelCode: str = ''):
+        """
+        https://interactivebrokers.github.io/tws-api/positions.html
+        """
+        return self._run(self.reqPositionsMultiAsync(account, modelCode))        
 
     def reqPnL(self, account: str, modelCode: str = '') -> PnL:
         """
@@ -1969,6 +1976,13 @@ class IB:
         self.client.reqPositions()
         return future
 
+    def reqPositionsMultiAsync(self, account: str, modelCode: str) \
+            -> Awaitable[List[PositionMulti]]:
+        reqId = self.client.getReqId()
+        future = self.wrapper.startReq(reqId)
+        self.client.reqPositionsMulti(reqId, account, modelCode)
+        return future
+    
     def reqContractDetailsAsync(self, contract: Contract) \
             -> Awaitable[List[ContractDetails]]:
         reqId = self.client.getReqId()
