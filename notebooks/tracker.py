@@ -733,10 +733,23 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     # must come before any logging calls
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s')
     logging.basicConfig(level=args.loglevel
         , format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s'
     )
+    # create handlers
+    # console_handler = logging.StreamHandler()
+    # console_handler.setLevel(args.loglevel)
+    # console_handler.setFormatter(formatter)
+    file_handler = logging.FileHandler(f'tracker_{args.symbol}_{datetime.datetime.now():%Y%m%d_%H%M}.log')
+    file_handler.setLevel(args.loglevel)
+    file_handler.setFormatter(formatter)
+
+    # # add handlers to logger
     logger = logging.getLogger()
+    # # logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
     logging.getLogger('ib_insync').setLevel(logging.WARN)
 
     # logger.addFilter(NoParsingFilter())
