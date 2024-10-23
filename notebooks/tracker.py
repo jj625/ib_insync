@@ -707,9 +707,9 @@ async def telegram_init(bot):
     # bot = telegram.Bot(TELEGRAM_TOKEN)
     # u = bot.get_me()
     # logger.info(f"Telegram user: {u}")
-    async with bot:
-        u = bot.get_me()
-        logger.info(f"Telegram user: {await u}")
+    # async with bot:
+    u = bot.get_me()
+    logger.info(f"Telegram user: {await u}")
         # asyncio.Task.set_result(await u)
 
 if __name__ == "__main__":
