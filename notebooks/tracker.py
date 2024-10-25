@@ -172,6 +172,7 @@ class Agent:
     trade: ib_insync.order.Trade = None # trade that we placed
     # order: ib_insync.objects.Order = None
     liveTrading: bool = False
+    strategy_tasks: set[asyncio.Task] = field(default_factory=set) # keep separate references for strategy tasks
     background_tasks: set[asyncio.Task] = field(default_factory=set)
 
     # state variables and methods for simpleLongStrategy1
@@ -268,11 +269,12 @@ class Agent:
             self.recentlow = (len(bars)-1, bars[-1])
         
         # schedule strategy execution
-        if self.background_tasks == set():
+        if self.strategy_tasks == set(): # if empty set, no tasks running
+            # check if strategy initialization is complete
             logger.info(f"scheduling strategy execution")
             task = asyncio.create_task(self.simpleLongStrategy1())
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
+            self.strategy_tasks.add(task)
+            task.add_done_callback(self.strategy_tasks.discard)
             await task
             task = None
 
@@ -350,7 +352,8 @@ class Agent:
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade.log}")
                         loop = asyncio.get_running_loop()
-                        loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
+                        task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
+                        self.background_tasks.add(task) # keep a reference to the task
                         # asyncio.sleep(0.2)
                     else:
                         logger.error(f"No live trading, trade not placed: {self.order}")
@@ -459,9 +462,10 @@ class Agent:
                     self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
                     loop = asyncio.get_running_loop()
-                    loop.create_task(
+                    task = loop.create_task(
                         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
                             , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
+                    self.background_tasks.add(task) # keep a reference to the task
                 else:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
