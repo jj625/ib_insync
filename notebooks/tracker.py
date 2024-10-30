@@ -57,17 +57,10 @@ elif not mpl_dir.exists():
 
 import eventkit
 import ib_insync
-from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util, objects
+import ib_insync.ib
+from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
 
-def install_custom_repr_():
-    # monkey patch ib_insync.objects.TradeLogEntry.__repr__ to use friendlier time format
-    def trade_log_entry_repr(self):
-        return f"TradeLogEntry(time={self.time.astimezone(local_tz).strftime('%H:%M:%S.%f')}" \
-            + (f", status='{self.status}'") \
-            + (f", message='{self.message}'" if self.message else '') \
-            + (f", errorCode={self.errorCode})" if self.errorCode else '') \
-            + ")"
-    ib_insync.objects.TradeLogEntry.__repr__ = trade_log_entry_repr
+ib_insync.ib.install_custom_repr_()
 
     def bar_data_repr(self):
         if isinstance(self.date, datetime.datetime):
