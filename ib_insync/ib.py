@@ -11,7 +11,7 @@ from eventkit import Event
 
 import ib_insync.util as util
 from ib_insync.client import Client
-from ib_insync.contract import Contract, ContractDescription, ContractDetails
+from ib_insync.contract import Contract, ContractDescription, ContractDetails, Stock
 from ib_insync.objects import (
     AccountValue, BarDataList, DepthMktDataDescription, Execution,
     ExecutionFilter, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
@@ -19,8 +19,10 @@ from ib_insync.objects import (
     OptionComputation, PnL, PnLSingle, PortfolioItem, Position, PriceIncrement,
     PositionMulti,
     RealTimeBarList, ScanDataList, ScannerSubscription, SmartComponent,
+    CommissionReport,
     TagValue, TradeLogEntry, WshEventData)
 from ib_insync.order import (
+    MarketOrder,
     BracketOrder, LimitOrder, Order, OrderState, OrderStatus, StopOrder, Trade)
 from ib_insync.ticker import Ticker
 from ib_insync.wrapper import Wrapper
@@ -2261,3 +2263,281 @@ if __name__ == '__main__':
     ib = IB()
     ib.connect('127.0.0.1', 7497, clientId=1)
     ib.disconnect()
+
+def install_custom_repr_():
+    def format_value(value):
+        return f"{value:.2f}" if value % 1 != 0 else f"{value:.0f}"
+
+    # monkey patch ib_insync.objects.TradeLogEntry.__repr__ to use friendlier time format
+    def trade_log_entry_repr(self):
+        return f"TradeLogEntry(time={self.time.astimezone().strftime('%H:%M:%S.%f')[:-3]}" \
+            + (f", status='{self.status}'") \
+            + (f", message='{self.message}'" if self.message else '') \
+            + (f", errorCode={self.errorCode})" if self.errorCode else '') \
+            + ")"
+    TradeLogEntry.__repr__orig = TradeLogEntry.__repr__
+    TradeLogEntry.__repr__ = trade_log_entry_repr
+
+    def execution_repr(self):
+        x = False
+        return f"Execution(execId={self.execId}" \
+            + (f", time={self.time.astimezone().strftime('%H:%M:%S')}") \
+            + (f", acctNumber={self.acctNumber}" if x else '') \
+            + (f", exchange={self.exchange}") \
+            + (f", side={self.side}") \
+            + (f", shares={self.shares}" if self.shares else '') \
+            + (f", price={self.price}") \
+            + (f", permId={self.permId}") \
+            + (f", clientId={self.clientId}") \
+            + (f", orderId={self.orderId}") \
+            + (f", liquidation={self.liquidation}" if self.liquidation != 0 else '') \
+            + (f", cumQty={self.cumQty}" if self.cumQty else '') \
+            + (f", avgPrice={self.avgPrice}" if self.avgPrice else '') \
+            + (f", orderRef={self.orderRef}" if self.orderRef else '') \
+            + (f", evRule={self.evRule}" if self.evRule else '') \
+            + (f", evMultiplier={self.evMultiplier}" if self.evMultiplier != 0 else '') \
+            + (f", modelCode={self.modelCode}" if self.modelCode else '') \
+            + (f", lastLiquidity={self.lastLiquidity}" if self.lastLiquidity else '') \
+            + (f", pendingPriceRevision={self.pendingPriceRevision}" if self.pendingPriceRevision else '') \
+            + ")"
+    Execution.__repr__orig = Execution.__repr__
+    Execution.__repr__ = execution_repr
+
+    def commission_repr(self):
+        if not (self.execId or self.commission or self.realizedPNL or self.yield_ or self.yieldRedemptionDate):
+            return "CommissionReport()"
+        return f"CommissionReport(execId={self.execId}" \
+            + (f", commission={self.commission:.2f} {self.currency}") if self.currency or self.commission != 0 else '' \
+            + (f", realizedPNL={self.realizedPNL:.2f}" if self.realizedPNL != 0 else '') \
+            + (f", yield={self.yield_:.3f}" if self.yield_ else '') \
+            + (f", yieldRedemptionDate={self.yieldRedemptionDate}" if self.yieldRedemptionDate else '') \
+            + ")"
+    CommissionReport.__repr__orig = CommissionReport.__repr__
+    CommissionReport.__repr__ = commission_repr
+
+    def accountvalue_repr(self):
+        return f"AccountValue({self.account}" \
+            + (f" {self.tag}={self.value} {self.currency}") \
+            + (f", modelCode={self.modelCode}" if self.modelCode else '') \
+            + (f", {self.lastUpdateTime.astimezone().strftime('%H:%M:%S')}" if self.lastUpdateTime else '') \
+            + ")"
+    AccountValue.__repr__orig = AccountValue.__repr__
+    AccountValue.__repr__ = accountvalue_repr
+
+    def stock_repr(self):
+        return "Stock(" \
+            + (f"conId={self.conId}, " if self.conId else '') \
+            + (f"symbol={self.symbol}") \
+            + (f", right={self.right}" if self.right not in ['0',''] else '') \
+            + (f", primaryExchange={self.primaryExchange}" if self.primaryExchange else '') \
+            + (f", currency={self.currency}" if self.currency not in ['', 'USD'] else '') \
+            + (f", localSymbol={self.localSymbol}" if self.localSymbol not in ['', self.symbol] else '') \
+            + (f", tradingClass={self.tradingClass}" if self.tradingClass not in ['', 'NMS'] else '') \
+            + ")"
+    Stock.__repr__orig = Stock.__repr__
+    Stock.__repr__ = stock_repr
+
+    def portfolioitem_repr(self):
+        return f"PortfolioItem(contract={self.contract}" \
+            + (f", position={format_value(self.position)}" if self.position else '') \
+            + (f", marketPrice={self.marketPrice:.2f}" if self.marketPrice else '') \
+            + (f", marketValue={format_value(self.marketValue)}" if self.marketValue else '') \
+            + (f", averageCost={self.averageCost}" if self.averageCost else '') \
+            + (f", unrealizedPNL={format_value(self.unrealizedPNL)}" if self.unrealizedPNL else '') \
+            + (f", realizedPNL={format_value(self.realizedPNL)}" if self.realizedPNL else '') \
+            + (f", account='{self.account}'" if self.account else '') \
+            + ")"
+    PortfolioItem.__repr__orig = PortfolioItem.__repr__
+    PortfolioItem.__repr__ = portfolioitem_repr
+
+    def orderstatus_repr(self):
+        return f"OrderStatus(orderId={self.orderId}" \
+            + (f", status={self.status}") \
+            + (f", filled={self.filled}" if self.filled != 0 else '') \
+            + (f", remaining={self.remaining}" if self.remaining != 0 else '') \
+            + (f", avgFillPrice={self.avgFillPrice}" if self.avgFillPrice else '') \
+            + (f", permId={self.permId}" if self.permId else '') \
+            + (f", parentId={self.parentId}" if self.parentId else '') \
+            + (f", lastFillPrice={self.lastFillPrice}" if self.lastFillPrice else '') \
+            + (f", clientId={self.clientId}" if self.clientId else '') \
+            + (f", whyHeld={self.whyHeld}" if self.whyHeld else '') \
+            + (f", mktCapPrice={self.mktCapPrice}" if self.mktCapPrice else '') \
+            + ")"
+    OrderStatus.__repr__orig = OrderStatus.__repr__
+    OrderStatus.__repr__ = orderstatus_repr
+
+    def order_repr(self):
+        return f"Order(orderId={self.orderId}" \
+            + (f", clientId={self.clientId}" if self.clientId else '') \
+            + (f", permId={self.permId}" if self.permId else '') \
+            + (f", action={self.action}" if self.action else '') \
+            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+            + (f", orderType={self.orderType}" if self.orderType else '') \
+            + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
+            + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
+            + ")"
+            # + (f", tif={self.tif}" if self.tif else '') \
+            # + (f", activeStartTime={self.activeStartTime}" if self.activeStartTime else '') \
+            # + (f", activeStopTime={self.activeStopTime}" if self.activeStopTime else '') \
+            # + (f", ocaGroup={self.ocaGroup}" if self.ocaGroup else '') \
+            # + (f", ocaType={self.ocaType}" if self.ocaType else '') \
+            # + (f", orderRef={self.orderRef}" if self.orderRef else '') \
+            # + (f", parentId={self.parentId}" if self.parentId else '') \
+            # + (f", blockOrder={self.blockOrder}" if self.blockOrder else '') \
+            # + (f", sweepToFill={self.sweepToFill}" if self.sweepToFill else '') \
+            # + (f", displaySize={self.displaySize}" if self.displaySize else '') \
+            # + (f", triggerMethod={self.triggerMethod}" if self.triggerMethod else '') \
+            # + (f", outsideRth={self.outsideRth}" if self.outsideRth else '') \
+            # + (f", hidden={self.hidden}" if self.hidden else '') \
+            # + (f", goodAfterTime={self.goodAfterTime}" if self.goodAfterTime else '') \
+            # + (f", goodTillDate={self.goodTillDate}" if self.goodTillDate else '') \
+            # + (f", rule80A={self.rule80A}" if self.rule80A else '') \
+            # + (f", allOrNone={self.allOrNone}" if self.allOrNone else '') \
+            # + (f", minQty={self.minQty}" if self.minQty else '') \
+            # + (f", percentOffset={self.percentOffset}" if self.percentOffset else '') \
+            # + (f", overridePercentageConstraints={self.overridePercentageConstraints}" if self.overridePercentageConstraints else '') \
+            # + (f", trailStopPrice={self.trailStopPrice}" if self.trailStopPrice else '') \
+            # + (f", trailingPercent={self.trailingPercent}" if self.trailingPercent else '') \
+            # + (f", faGroup={self.faGroup}" if self.faGroup else '') \
+            # + (f", faProfile={self.faProfile}" if self.faProfile else '') \
+            # + (f", faMethod={self.faMethod}" if self.faMethod else '') \
+            # + (f", faPercentage={self.faPercentage}" if self.faPercentage else '') \
+            # + (f", openClose={self.openClose}" if self.openClose else '') \
+            # + (f", origin={self.origin}" if self.origin else '') \
+            # + (f", shortSaleSlot={self.shortSaleSlot}" if self.shortSaleSlot else '') \
+            # + (f", designatedLocation={self.designatedLocation}" if self.designatedLocation else '') \
+            # + (f", exemptCode={self.exemptCode}" if self.exemptCode else '') \
+            # + (f", discretionaryAmt={self.discretionaryAmt}" if self.discretionaryAmt else '') \
+            # + (f", eTradeOnly={self.eTradeOnly}" if self.eTradeOnly else '') \
+            # + (f", firmQuoteOnly={self.firmQuoteOnly}" if self.firmQuoteOnly else '') \
+            # + (f", nbboPriceCap={self.nbboPriceCap}" if self.nbboPriceCap else '') \
+            # + (f", optOutSmartRouting={self.optOutSmartRouting}" if self.optOutSmartRouting else '') \
+            # + (f", auctionStrategy={self.auctionStrategy}" if self.auctionStrategy else '') \
+            # + (f", startingPrice={self.startingPrice}" if self.startingPrice else '') \
+            # + (f", stockRefPrice={self.stockRefPrice}" if self.stockRefPrice else '') \
+            # + (f", delta={self.delta}" if self.delta else '') \
+            # + (f", stockRangeLower={self.stockRangeLower}" if self.stockRangeLower else '') \
+            # + (f", stockRangeUpper={self.stockRangeUpper}" if self.stockRangeUpper else '') \
+            # + (f", volatility={self.volatility}" if self.volatility else '') \
+            # + (f", volatilityType={self.volatilityType}" if self.volatilityType else '') \
+            # + (f", deltaNeutralOrderType={self.deltaNeutralOrderType}" if self.deltaNeutralOrderType else '') \
+            # + (f", deltaNeutralAuxPrice={self.deltaNeutralAuxPrice}" if self.deltaNeutralAuxPrice else '') \
+            # + (f", deltaNeutralConId={self.deltaNeutralConId}" if self.deltaNeutralConId else '') \
+            # + (f", deltaNeutralSettlingFirm={self.deltaNeutralSettlingFirm}" if self.deltaNeutralSettlingFirm else '') \
+            # + (f", deltaNeutralClearingAccount={self.deltaNeutralClearingAccount}" if self.deltaNeutralClearingAccount else '') \
+            # + (f", deltaNeutralClearingIntent={self.deltaNeutralClearingIntent}" if self.deltaNeutralClearingIntent else '') \
+            # + (f", deltaNeutralOpenClose={self.deltaNeutralOpenClose}" if self.deltaNeutralOpenClose else '') \
+            # + (f", deltaNeutralShortSale={self.deltaNeutralShortSale}" if self.deltaNeutralShortSale else '') \
+            # + (f", deltaNeutralShortSaleSlot={self.deltaNeutralShortSaleSlot}" if self.deltaNeutralShortSaleSlot else '') \
+            # + (f", deltaNeutralDesignatedLocation={self.deltaNeutralDesignatedLocation}" if self.deltaNeutralDesignatedLocation else '') \
+            # + (f", continuousUpdate={self.continuousUpdate}" if self.continuousUpdate else '') \
+            # + (f", referencePriceType={self.referencePriceType}" if self.referencePriceType else '') \
+            # + (f", basisPoints={self.basisPoints}" if self.basisPoints else '') \
+            # + (f", basisPointsType={self.basisPointsType}" if self.basisPointsType else '') \
+            # + (f", scaleInitLevelSize={self.scaleInitLevelSize}" if self.scaleInitLevelSize else '') \
+            # + (f", scaleSubsLevelSize={self.scaleSubsLevelSize}" if self.scaleSubsLevelSize else '') \
+            # + (f", scalePriceIncrement={self.scalePriceIncrement}" if self.scalePriceIncrement else '') \
+            # + (f", scalePriceAdjustValue={self.scalePriceAdjustValue}" if self.scalePriceAdjustValue else '') \
+            # + (f", scalePriceAdjustInterval={self.scalePriceAdjustInterval}" if self.scalePriceAdjustInterval else '') \
+            # + (f", scaleProfitOffset={self.scaleProfitOffset}" if self.scaleProfitOffset else '') \
+            # + (f", scaleAutoReset={self.scaleAutoReset}" if self.scaleAutoReset else '') \
+            # + (f", scaleInitPosition={self.scaleInitPosition}" if self.scaleInitPosition else '') \
+            # + (f", scaleInitFillQty={self.scaleInitFillQty}" if self.scaleInitFillQty else '') \
+            # + (f", scaleRandomPercent={self.scaleRandomPercent}" if self.scaleRandomPercent else '') \
+            # + (f", hedgeType={self.hedgeType}" if self.hedgeType else '') \
+            # + (f", hedgeParam={self.hedgeParam}" if self.hedgeParam else '') \
+            # + (f", account={self.account}" if self.account else '') \
+            # + (f", settlingFirm={self.settlingFirm}" if self.settlingFirm else '') \
+            # + (f", clearingAccount={self.clearingAccount}" if self.clearingAccount else '') \
+            # + (f", clearingIntent={self.clearingIntent}" if self.clearingIntent else '') \
+            # + (f", algoStrategy={self.algoStrategy}" if self.algoStrategy else '') \
+            # + (f", algoParams={self.algoParams}" if self.algoParams else '') \
+            # + (f", smartComboRoutingParams={self.smartComboRoutingParams}" if self.smartComboRoutingParams else '') \
+            # + (f", algoId={self.algoId}" if self.algoId else '') \
+            # + (f", whatIf={self.whatIf}" if self.whatIf else '') \
+            # + (f", notHeld={self.notHeld}" if self.notHeld else '') \
+            # + (f", solicited={self.solicited}" if self.solicited else '') \
+            # + (f", modelCode={self.modelCode}" if self.modelCode else '') \
+            # + (f", orderComboLegs={self.orderComboLegs}" if self.orderComboLegs else '') \
+            # + (f", orderMiscOptions={self.orderMiscOptions}" if self.orderMiscOptions else '') \
+            # + (f", referenceContractId={self.referenceContractId}" if self.referenceContractId else '') \
+            # + (f", peggedChangeAmount={self.peggedChangeAmount}" if self.peggedChangeAmount else '') \
+            # + (f", isPeggedChangeAmountDecrease={self.isPeggedChangeAmountDecrease}" if self.isPeggedChangeAmountDecrease else '') \
+            # + (f", referenceChangeAmount={self.referenceChangeAmount}" if self.referenceChangeAmount else '') \
+            # + (f", referenceExchangeId={self.referenceExchangeId}" if self.referenceExchangeId else '') \
+            # + (f", adjustedOrderType={self.adjustedOrderType}" if self.adjustedOrderType else '') \
+            # + (f", triggerPrice={self.triggerPrice}" if self.triggerPrice else '') \
+            # + (f", adjustedStopPrice={self.adjustedStopPrice}" if self.adjustedStopPrice else '') \
+            # + (f", adjustedStopLimitPrice={self.adjustedStopLimitPrice}" if self.adjustedStopLimitPrice else '') \
+            # + (f", adjustedTrailingAmount={self.adjustedTrailingAmount}" if self.adjustedTrailingAmount else '') \
+            # + (f", adjustableTrailingUnit={self.adjustableTrailingUnit}" if self.adjustableTrailingUnit else '') \
+            # + (f", extOperator={self.extOperator}" if self.extOperator else '') \
+            # + (f", softDollarTier={self.softDollarTier}" if self.softDollarTier else '') \
+            # + (f", cashQty={self.cashQty}" if self.cashQty else '') \
+            # + (f", mifid2DecisionMaker={self.mifid2DecisionMaker}" if self.mifid2DecisionMaker else '') \
+            # + (f", mifid2DecisionAlgo={self.mifid2DecisionAlgo}" if self.mifid2DecisionAlgo else '') \
+            # + (f", mifid2ExecutionTrader={self.mifid2ExecutionTrader}" if self.mifid2ExecutionTrader else '') \
+            # + (f", dontUseAutoPriceForHedge={self.dontUseAutoPriceForHedge}" if self.dontUseAutoPriceForHedge else '') \
+            # + (f", isOmsContainer={self.isOmsContainer}" if self.isOmsContainer else '') \
+            # + (f", discretionaryUpToLimitPrice={self.discretionaryUpToLimitPrice}" if self.discretionaryUpToLimitPrice else '') \
+            # + (f", autoCancelDate={self.autoCancelDate}" if self.autoCancelDate else '') \
+            # + (f", filledQuantity={self.filledQuantity}" if self.filledQuantity else '') \
+            # + (f", refFuturesConId={self.refFuturesConId}" if self.refFuturesConId else '') \
+            # + (f", autoCancelParent={self.autoCancelParent}" if self.autoCancelParent else '') \
+            # + (f", shareholder={self.shareholder}" if self.shareholder else '') \
+            # + (f", imbalanceOnly={self.imbalanceOnly}" if self.imbalanceOnly else '') \
+            # + (f", routeMarketableToBbo={self.routeMarketableToBbo}" if self.routeMarketableToBbo else '') \
+            # + (f", parentPermId={self.parentPermId}" if self.parentPermId else '') \
+            # + (f", usePriceMgmtAlgo={self.usePriceMgmtAlgo}" if self.usePriceMgmtAlgo else '') \
+            # + (f", duration={self.duration}" if self.duration else '') \
+            # + (f", postToPsx={self.postToPsx}" if self.postToPsx else '') \
+            # + (f", advancedErrorOverride={self.advancedErrorOverride}" if self.advancedErrorOverride else '') \
+            # + (f", manualOrderTime={self.manualOrderTime}" if self.manualOrderTime else '') \
+            # + (f", minTradeQty={self.minTradeQty}" if self.minTradeQty else '') \
+            # + (f", minCompeteSize={self.minCompeteSize}" if self.minCompeteSize else '') \
+            # + (f", competeAgainstBestOffset={self.competeAgainstBestOffset}" if self.competeAgainstBestOffset else '') \
+            # + (f", midOffsetAtWhole={self.midOffsetAtWhole}" if self.midOffsetAtWhole else '') \
+            # + (f", midOffsetAtHalf={self.midOffsetAtHalf}" if self.midOffsetAtHalf else '') \
+
+    def marketorder_repr(self):
+        return f"MarketOrder(orderId={self.orderId}" \
+            + (f", clientId={self.clientId}" if self.clientId else '') \
+            + (f", permId={self.permId}" if self.permId else '') \
+            + (f", action={self.action}" if self.action else '') \
+            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+            + ")"
+    MarketOrder.__repr__orig = MarketOrder.__repr__
+    MarketOrder.__repr__ = marketorder_repr
+
+    def limitorder_repr(self):
+        return f"LimitOrder(orderId={self.orderId}" \
+            + (f", clientId={self.clientId}" if self.clientId else '') \
+            + (f", permId={self.permId}" if self.permId else '') \
+            + (f", action={self.action}" if self.action else '') \
+            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+            + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
+            + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
+            + (f", discretionaryAmt={self.discretionaryAmt}" if self.discretionaryAmt else '') \
+            + ")"
+    LimitOrder.__repr__orig = LimitOrder.__repr__
+    LimitOrder.__repr__ = limitorder_repr            
+
+    def trade_repr(self):
+        return f"Trade({self.contract}" \
+            + (f", order={self.order}" if self.order else '') \
+            + (f", orderStatus={self.orderStatus}" if self.orderStatus else '') \
+            + (f", fills={self.fills}" if self.fills else '') \
+            + (f", log={self.log}" if self.log else '') \
+            + (f", advancedError={self.advancedError}" if self.advancedError else '') \
+            + ")"
+    Trade.__repr__orig = Trade.__repr__
+    Trade.__repr__ = trade_repr
+
+    def fill_repr(self):
+        return f"Fill(contract={self.contract}" \
+            + (f", execution={self.execution}" if self.execution else '') \
+            + (f", commissionReport={self.commissionReport}" if self.commissionReport else '') \
+            + (f", time={self.time.astimezone().strftime('%H:%M:%S')}" if self.time else '') \
+            + ")"
+    Fill.__repr__orig = Fill.__repr__
+    Fill.__repr__ = fill_repr
