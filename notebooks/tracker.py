@@ -722,6 +722,9 @@ if __name__ == "__main__":
     # spec file
     scriptdir = os.path.dirname(os.path.realpath(__file__))
     specfile = os.path.join(scriptdir, 'spec.json')
+    if not os.path.exists(specfile):
+        logger.error(f"Spec file not found: {specfile}")
+        sys.exit(1)
     spec = json.load(open(specfile, 'r'))
 
     # parse command line arguments
@@ -783,6 +786,11 @@ if __name__ == "__main__":
     # IB
     ib = IB()
     # util.logToConsole(logging.DEBUG) # show network traffic
+
+    # get IB client id from cmd line or spec file
+    if args.symbol not in spec['root']:
+        logger.error(f"Symbol {args.symbol} not found in spec file")
+        sys.exit(1)
     clientid = args.clientid if args.clientid else spec['root'][args.symbol]['clientid']
     ib.connect(args.host, args.port, clientId=clientid)
 
