@@ -370,9 +370,18 @@ class Agent:
             Define inflection point as any of the last m bars lows is lower than any of the previous n-m bars lows
             """
             if len(self.bars) < n:
+                # the first n bars ...
+                # case in point: AMD 10/29/2024 9:35 and 9:36 bars
+                if len(self.bars) > 3:
+                    lows = [b.low for b in self.bars] # low so far
+                    lastn_lows = lows[-3:] # last 3 lows
+                    if min(lastn_lows) == min(lows):
+                        logger.info(f"low_to_high_inflection_point: last 3 lows are the same: {lows} {lastn_lows}")
+                        # return True
                 return False
             lows = [b.low for b in self.bars[-n:]]
             if min(lows[-m:]) < min(lows[:-m]):
+                logger.info(f"low_to_high_inflection_point: {lows[-m:]} < {lows[:-m]}")
                 return True
             return False
         
