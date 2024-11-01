@@ -350,7 +350,15 @@ class Agent:
             """
             if len(self.bars) < 3:
                 return False
-            if (self.bars[-2].close > self.bars[-2].open) and (self.bars[-3].close > self.bars[-3].open):
+            # check if the last two bars are green
+            cond1 = self.bars[-2].close > self.bars[-2].open and self.bars[-3].close > self.bars[-3].open
+            # if one of them is yellow it's ok too
+            # case in point: AMD 10/29/2024 9:35 and 9:36 bars
+            cond2 = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
+                self.bars[-2].close == self.bars[-2].open and self.bars[-3].close > self.bars[-3].open)
+            if cond1 or cond2:
+                if cond2:
+                    logger.warning(f"cond2={cond2}")
                 if (self.bars[-2].close > self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low)):
                     return True
                 if (self.bars[-3].close > self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low)):
