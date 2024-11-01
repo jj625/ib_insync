@@ -166,7 +166,6 @@ class Agent:
     # order: ib_insync.objects.Order = None
     liveTrading: bool = False
     strategy_tasks: set[asyncio.Task] = field(default_factory=set) # keep separate references for strategy tasks
-    background_tasks: set[asyncio.Task] = field(default_factory=set)
 
     # state variables and methods for simpleLongStrategy1
     strategy1initstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
