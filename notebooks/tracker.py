@@ -735,16 +735,20 @@ async def telegram_init(bot):
     logger.info(f"Telegram user: {await u}")
         # asyncio.Task.set_result(await u)
 
-if __name__ == "__main__":
-    # print(get_asyncio_running_loop('__main__: ')) # expect 'no running event loop'
-
+def load_spec_file(scriptdir: str = os.path.dirname(os.path.realpath(__file__))
+    , filename: str = 'spec.json') -> dict:
     # spec file
-    scriptdir = os.path.dirname(os.path.realpath(__file__))
-    specfile = os.path.join(scriptdir, 'spec.json')
+    
+    specfile = os.path.join(scriptdir, filename)
     if not os.path.exists(specfile):
         logger.error(f"Spec file not found: {specfile}")
         sys.exit(1)
-    spec = json.load(open(specfile, 'r'))
+    with open(specfile, 'r') as f:
+        spec = json.load(f)
+    logger.info(f"spec file loaded: {specfile}")
+    return spec
+
+if __name__ == "__main__":
 
     # parse command line arguments
     argparser = argparse.ArgumentParser()
@@ -788,9 +792,9 @@ if __name__ == "__main__":
 
     logger.info("Script is starting...")
 
-    logger.info(f"spec file loaded: {specfile}")
-
     logger.info(f"args: {args}")
+
+    spec = load_spec_file()
 
     # telegram
     TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
