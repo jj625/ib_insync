@@ -604,18 +604,22 @@ class Agent:
 
 agent = None
 
-def onAccountValueUpdate(*args, **kwargs):
+def onAccountValueUpdate(accountValue: ib_insync.objects.AccountValue):
     # every three minutes
     logger.debug(get_asyncio_running_loop(''))
-    logger.debug(f"{args} {kwargs}")
+    logger.debug(f"{accountValue}")
     # pdb.set_trace()
+
+def onAccountSummaryUpdate(acctValue: ib_insync.objects.AccountValue):
+    logger.debug(get_asyncio_running_loop(''))
+    logger.info(f"{acctValue}")
 
 def onPnlUpdate(pnl):
     logger.debug(get_asyncio_running_loop(''))
-    logger.debug(f"{pnl}")
+    logger.info(f"{pnl}")
     # pdb.set_trace()
 
-def onPortfolioUpdate(portfolio):
+def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem):
     # every three minutes, usually following onAccountValueUpdate
     logger.debug(get_asyncio_running_loop(''))
     logger.debug(f"{portfolio}")
@@ -861,8 +865,11 @@ if __name__ == "__main__":
     if TELEGRAM_TOKEN == '':
         logger.error(f"TELEGRAM_TOKEN not found in environment")
         sys.exit(1)
+
+    print(get_asyncio_running_loop('')) # expect 'no running event loop'
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     util.run(telegram_init(bot))
+    print(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
     # t = asyncio.create_task(telegram_init(bot))
     # t.add_done_callback(lambda x: logger.info(f"Telegram user: {x.result()}"))
 
@@ -875,6 +882,9 @@ if __name__ == "__main__":
         logger.error(f"Symbol {args.symbol} not found in spec file")
         sys.exit(1)
     clientid = args.clientid if args.clientid else spec['root'][args.symbol]['clientid']
+
+    # IB
+    ib = IB()
     ib.connect(args.host, args.port, clientId=clientid)
 
 
@@ -898,7 +908,7 @@ if __name__ == "__main__":
         logger.info(f"Tracked position: {agent.stkpos}")
     else:
         agent.state = 0
-        logger.info(f"Tracked position not found for {args.symbol}")
+        logger.info(f"No position found for {args.symbol}")
 
     logger.info(f"Agent State: {agent}")
 
@@ -908,6 +918,10 @@ if __name__ == "__main__":
     # no need to request updates, event fires every 3 minutes automatically
     ib.accountValueEvent += onAccountValueUpdate
     ib.updatePortfolioEvent += onPortfolioUpdate
+    ib.execDetailsEvent += onExecDetailsUpdate
+    ib.accountSummaryEvent += onAccountSummaryUpdate
+    ib.pnlEvent += onPnlUpdate
+    ib.errorEvent += onErrorEvent
     
     ib.pnlEvent += onPnlUpdate
     # ib.reqPnL(account)
@@ -988,12 +1002,17 @@ if __name__ == "__main__":
                 durationStr='1 D',
                 barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
                 whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
-                useRTH=False,
+                useRTH=False, # start from ~4:00 AM
                 formatDate=1,
                 keepUpToDate=True)
+
+            if len(agent.bars) > 0:
+                assert agent.bars[0].date.date() == datetime.datetime.now().date(), "Expect first bar to be today"
+            else:
+                assert False, "Expect at least one bar"
             agent.barsstartidx = len(agent.bars) - 1
             agent.beginprice = agent.bars[agent.barsstartidx].close
-            logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar start={agent.bars[agent.barsstartidx]}")
+            logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}")
             # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
             agent.bars.updateEvent += agent.onBarUpdate
 
@@ -1059,7 +1078,7 @@ if __name__ == "__main__":
         price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
         price_func_deriv = price_func.derivative()
         price_slopes = price_func_deriv(x)
-        logger.info(f"PCHIP 1m price slopes: {price_slopes}")
+        logger.debug(f"PCHIP 1m price slopes: {price_slopes}")
 
         # 5m resampled
         y = [b for b in df5m['close'].iloc[s]]
@@ -1071,7 +1090,7 @@ if __name__ == "__main__":
         price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
         price_func_deriv = price_func.derivative()
         price_slopes = price_func_deriv(x)
-        logger.info(f"PCHIP 5m price slopes: {price_slopes}")
+        logger.debug(f"PCHIP 5m price slopes: {price_slopes}")
         # np.log(df5m['close'] / df5m['close'].shift(1))
 
         # # Chebyshev polynomial fit
