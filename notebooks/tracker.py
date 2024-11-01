@@ -169,6 +169,7 @@ class Agent:
     background_tasks: set[asyncio.Task] = field(default_factory=set)
 
     # state variables and methods for simpleLongStrategy1
+    strategy1initstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
     numshares: int = 0
     upPctMilestone: List[float] = field(default_factory=list)
     # upPriceMilestone: List[float] = field(default_factory=list)
@@ -207,6 +208,10 @@ class Agent:
         logger.info(f"histbars len={len(self.histbars)}")
         return 0
 
+    def simpleLongStrategy1Init(self) -> int:
+        """
+        return 0 if successful, -1 if failed
+        """
         # self.upPctMilestone = [0, .0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
         #     0.055, 0.06, 0.065, 0.07, 0.075, 0.08, 0.09, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0,
         #     2.0, 3.0]
@@ -222,21 +227,28 @@ class Agent:
         # self.avgCost = stockpos[0].avgCost
         # self.position = stockpos[0].position
 
-        # get historical bars for the last 6 months
-        contract_ = Stock(self.symbol, 'SMART', 'USD')
-        self.histbars = ib.reqHistoricalData(
-            contract_,
-            endDateTime=(datetime.datetime.now() + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
-            durationStr='6 M',
-            barSizeSetting='15 mins',
-            whatToShow='TRADES',
-            useRTH=True,
-            formatDate=1)
-        self.prevclose = self.histbars[-1].close
-        self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
-        self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+        # # get historical bars for the last 6 months
+        # contract_ = Stock(self.symbol, 'SMART', 'USD')
+        # self.histbars = ib.reqHistoricalData( # this method is blocking
+        #     contract_,
+        #     endDateTime=(datetime.datetime.now() + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
+        #     durationStr='6 M',
+        #     barSizeSetting='15 mins',
+        #     whatToShow='TRADES',
+        #     useRTH=True,
+        #     formatDate=1)
+        # # and may timeout
+        # if self.histbars is None or len(self.histbars) == 0:
+        #     logger.error(f"Failed to get historical bars for {self.symbol}")
+        #     self.strategy1initstatus = -1
+        #     return -1
+        # self.prevclose = self.histbars[-1].close
+        # # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+        # # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
 
-        logger.info(f"SimpleLongStrategy1Init: histbars len={len(self.histbars)}")
+        # logger.info(f"SimpleLongStrategy1Init: histbars len={len(self.histbars)}")
+        self.strategy1initstatus = 0
+        return 0
 
     def __str__(self):
         return f"Symbol: {self.symbol}, stock position: {self.stkpos}"
@@ -286,12 +298,22 @@ class Agent:
         # schedule strategy execution
         if self.strategy_tasks == set(): # if empty set, no tasks running
             # check if strategy initialization is complete
+            if self.strategy1initstatus == -10:
+                logger.info(f"waiting for strategy initialization to complete")
+                return
+            elif self.strategy1initstatus == -1:
+                logger.error(f"Failed to initialize strategy, exiting...")
+                self.set_state(99) # bail out of main loop               
+                return
+            assert self.strategy1initstatus == 0, "Strategy initialization should return success"
             logger.info(f"scheduling strategy execution")
             task = asyncio.create_task(self.simpleLongStrategy1())
             self.strategy_tasks.add(task)
             task.add_done_callback(self.strategy_tasks.discard)
             await task
             task = None
+        
+        return
 
     async def simpleLongStrategy1(self):
         """
