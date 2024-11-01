@@ -184,7 +184,29 @@ class Agent:
     def reset(self):
         pass
 
-    def simpleLongStrategy1Init(self):
+    def simpleLongStrategy1InitPreMarket(self) -> int:
+        # get historical bars for the last 6 months
+        contract_ = Stock(self.symbol, 'SMART', 'USD')
+        self.histbars = ib.reqHistoricalData( # this method is blocking
+            contract_,
+            endDateTime=(datetime.datetime.now() + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
+            durationStr='6 M',
+            barSizeSetting='15 mins',
+            whatToShow='TRADES',
+            useRTH=True,
+            formatDate=1)
+        # and may timeout
+        if self.histbars is None or len(self.histbars) == 0:
+            logger.error(f"Failed to get historical bars for {self.symbol}")
+            # self.strategy1initstatus = -1
+            return -1
+        self.prevclose = self.histbars[-1].close
+        # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+        # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+
+        logger.info(f"histbars len={len(self.histbars)}")
+        return 0
+
         # self.upPctMilestone = [0, .0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
         #     0.055, 0.06, 0.065, 0.07, 0.075, 0.08, 0.09, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0,
         #     2.0, 3.0]
@@ -878,6 +900,14 @@ if __name__ == "__main__":
         elif datetime.datetime.now() < dateutil.parser.parse('16:02:00'): # before 4:02 PM, run until 4:02 PM
             untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.time(16, 2, 0)) # 4:02 PM
     doOnce = True
+
+    # run initialization before market open
+    status = agent.simpleLongStrategy1InitPreMarket()
+    if status < 0:
+        logger.error(f"Pre-Initialization failed: {status}")
+        sys.exit(1)
+    else:
+        logger.info(f"Pre-Initialization successful: {status}")
 
     # wait until market open
     waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(minutes=1)
