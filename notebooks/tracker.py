@@ -923,7 +923,7 @@ if __name__ == "__main__":
     doOnce = True
 
     # run initialization before market open
-    status = agent.simpleLongStrategy1InitPreMarket()
+    status = agent.simpleLongStrategy1InitPreMarket() # could take 60 seconds to timeout/complete
     if status < 0:
         logger.error(f"Pre-Initialization failed: {status}")
         sys.exit(1)
@@ -980,7 +980,7 @@ if __name__ == "__main__":
             # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
             agent.bars.updateEvent += agent.onBarUpdate
 
-            agent.simpleLongStrategy1Init()
+            status = agent.simpleLongStrategy1Init()
 
         # for x in contracts:
         #     if x.symbol in agent.symbol:
