@@ -62,30 +62,30 @@ from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
 
 ib_insync.ib.install_custom_repr_()
 
-    def bar_data_repr(self):
-        if isinstance(self.date, datetime.datetime):
-            dstr = self.date.astimezone(local_tz).strftime('%H:%M:%S')
-        else:
-            dstr = self.date.__repr__()
-        return f"BarData(date={dstr}, open={self.open}, high={self.high}, low={self.low}, close={self.close}, volume={self.volume:.0f}, average={self.average:.2f}, barCount={self.barCount})"
-    ib_insync.objects.BarData.__repr__ = bar_data_repr
-    # ib_insync.objects.BarData.__str__ = bar_data_repr
+# # asyncio
+# # asyncio.run() cannot be nested
+# # get_event_loop() is deprecated in Python 3.12
+# # get_running_loop() is preferred to get_event_loop() in callbacks (and coro?)
+# def run_asyncio_task(task):
+#     try:
+#         loop = asyncio.get_running_loop()
+#     except RuntimeError:  # No running event loop
+#         loop = asyncio.new_event_loop()
+#         asyncio.set_event_loop(loop)
+#         loop.run_until_complete(task)
+#     else:
+#         loop.run_until_complete(task)
 
-    def order_status_repr(self: ib_insync.order.OrderStatus):
-        return f"OrderStatus(orderId={self.orderId}, status='{self.status}'" \
-            + (f", filled={self.filled:.0f}" if self.filled != 0.0 else '') \
-            + (f", remaining={self.remaining:.0f}" if self.remaining != 0.0 else '') \
-            + (f", avgFillPrice={self.avgFillPrice:.2f}" if self.avgFillPrice != 0.0 else '') \
-            + (f", permId={self.permId}" if self.permId else '') \
-            + (f", parentId={self.parentId}" if self.parentId else '') \
-            + (f", lastFillPrice={self.lastFillPrice:.2f}" if self.lastFillPrice != 0.0 else '') \
-            + (f", clientId={self.clientId}" if self.clientId else '') \
-            + (f", whyHeld='{self.whyHeld}'" if self.whyHeld else '') \
-            + (f", mktCapPrice={self.mktCapPrice:.2f}" if self.mktCapPrice != 0.0 else '') \
-            + ")"
-    ib_insync.order.OrderStatus.__repr__ = order_status_repr
+# def run_asyncio_task_in_foreground(task):
+#     loop = asyncio.get_event_loop()
+#     loop.run_until_complete(task)
 
-install_custom_repr_()
+# def run_asyncio_task_in_background(task):
+#     loop = asyncio.get_event_loop()
+#     loop.create_task(task)
+
+# hold strong references to tasks. remember to remove them when done
+background_tasks: set[asyncio.Task] = set()
 
 # globals
 ib = None
@@ -346,7 +346,8 @@ class Agent:
                         logger.info(f"Trade placed: {self.trade.log}")
                         loop = asyncio.get_running_loop()
                         task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
-                        self.background_tasks.add(task) # keep a reference to the task
+                        background_tasks.add(task) # keep a reference to the task
+                        task.add_done_callback(background_tasks.discard)
                         # asyncio.sleep(0.2)
                     else:
                         logger.error(f"No live trading, trade not placed: {self.order}")
@@ -458,7 +459,8 @@ class Agent:
                     task = loop.create_task(
                         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
                             , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
-                    self.background_tasks.add(task) # keep a reference to the task
+                    background_tasks.add(task) # keep a reference to the task
+                    task.add_done_callback(background_tasks.discard)
                 else:
                     logger.error(f"No live trading, trade not placed: {self.order}")
             elif self.trade in ib.openTrades():
@@ -609,6 +611,30 @@ def onPositionUpdate(newpos):
         logger.warning(f"ignoring stock position: {newpos}")
     else:
         logger.warning(f"ignoring new position: {newpos}")
+
+def onExecDetailsUpdate(trade, fill):
+    logtext = f"{trade}, {fill}"
+    logger.info(logtext)
+    logger.info(get_asyncio_running_loop('')) # expect <ProactorEventLoop running=True closed=False debug=False>
+    loop = asyncio.get_running_loop()
+    # loop = asyncio.get_event_loop()
+    task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    # future = asyncio.ensure_future(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+    # loop.run_until_complete(future)
+    # loop.call_soon(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+
+def onErrorEvent(reqId, errorCode, errorString, contract):
+    logger.info(get_asyncio_running_loop(''))
+    logtext = f"reqId={reqId}, errorCode={errorCode}, errorString={errorString}, contract={contract}"
+    logger.error(logtext)
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    # future = asyncio.ensure_future(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+    # asyncio.run(future)
 
 def symbolMktValue(tickerFilter=None):
     # get market value of portfolio
