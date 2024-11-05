@@ -937,9 +937,10 @@ def main():
 
     # must come before any logging calls
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s')
-    logging.basicConfig(level=args.loglevel
-        , format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s'
-    )
+    # moved to top level
+    # logging.basicConfig(level=args.loglevel
+    #     , format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s'
+    # )
     # create handlers
     # console_handler = logging.StreamHandler()
     # console_handler.setLevel(args.loglevel)
