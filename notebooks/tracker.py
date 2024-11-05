@@ -812,7 +812,24 @@ def load_spec_file(scriptdir: str = os.path.dirname(os.path.realpath(__file__))
     logger.info(f"spec file loaded: {specfile}")
     return spec
 
-if __name__ == "__main__":
+import ctypes
+import uuid
+from ctypes import wintypes
+
+# Constants from the Windows API
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+ES_DISPLAY_REQUIRED = 0x00000002
+
+def prevent_sleep() -> None:
+    # Prevent Windows from sleeping
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+
+def restore_sleep() -> None:
+    # Restore the default behavior
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+
+# https://stackoverflow.com/questions/72847468/ctypes-how-to-parser-buffer-content
 
     # parse command line arguments
     argparser = argparse.ArgumentParser()
@@ -1153,6 +1170,10 @@ if __name__ == "__main__":
 
     logger.info("Script has finished.")
 
+    # prevent system from sleeping
+    prevent_sleep()
+
+        restore_sleep()
 """
 open issues:
 - stop loss is susceptible to gap down
