@@ -120,6 +120,14 @@ def send_telegram_message(text):
 #     executor = ThreadPoolExecutor()
 #     executor.submit(run_async_task, chat_id, text)
 
+def plus(num: numbers.Real) -> numbers.Real:
+    """Return the positive part of the number"""
+    return max(0, num)
+
+def neg(num: numbers.Real) -> numbers.Real:
+    """Return the negative part of the number"""
+    return min(0, num)
+
 def singleton(cls):
     instances = {}
     def wrapper(*args, **kwargs):
