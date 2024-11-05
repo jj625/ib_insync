@@ -90,6 +90,7 @@ background_tasks: set[asyncio.Task] = set()
 # globals
 ib = None
 logger = None
+h5store = None
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
 telegram_bot = telegram.Bot(TELEGRAM_TOKEN)
@@ -602,7 +603,8 @@ class Agent:
                 self.trade = None
                 logger.error(logmsg + f", resetting trade to None")
 
-agent = None
+# global
+agent: Agent = None
 
 def onAccountValueUpdate(accountValue: ib_insync.objects.AccountValue):
     # every three minutes
@@ -831,6 +833,10 @@ def restore_sleep() -> None:
 
 # https://stackoverflow.com/questions/72847468/ctypes-how-to-parser-buffer-content
 
+def main():
+#if __name__ == "__main__":
+    # print(get_asyncio_running_loop('__main__: ')) # expect 'no running event loop'
+
     # parse command line arguments
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbol', type=str, help='Ticker symbol to trade')
@@ -857,6 +863,7 @@ def restore_sleep() -> None:
     file_handler.setFormatter(formatter)
 
     # # add handlers to logger
+    global logger
     logger = logging.getLogger()
     # # logger.addHandler(console_handler)
     logger.addHandler(file_handler)
@@ -877,6 +884,10 @@ def restore_sleep() -> None:
 
     spec = load_spec_file()
 
+    h5file = os.path.join(scriptdir, 'data', f'ibdata_{filesuffix}.h5')
+    global h5store
+    h5store = pd.HDFStore(h5file, 'a')
+
     # telegram
     TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
     if TELEGRAM_TOKEN == '':
@@ -891,16 +902,7 @@ def restore_sleep() -> None:
     # t.add_done_callback(lambda x: logger.info(f"Telegram user: {x.result()}"))
 
     # IB
-    ib = IB()
-    # util.logToConsole(logging.DEBUG) # show network traffic
-
-    # get IB client id from cmd line or spec file
-    if args.symbol not in spec['root']:
-        logger.error(f"Symbol {args.symbol} not found in spec file")
-        sys.exit(1)
-    clientid = args.clientid if args.clientid else spec['root'][args.symbol]['clientid']
-
-    # IB
+    global ib
     ib = IB()
     ib.connect(args.host, args.port, clientId=clientid)
 
@@ -914,6 +916,7 @@ def restore_sleep() -> None:
     # if len(sp_) == 0:
     #     logger.warning(f"Stock position not found for {args.symbol}")
 
+    global agent
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
                   , maxloss=args.maxloss[0] if args.maxloss else spec['root'][args.symbol]['maxloss']
                   , numshares=spec['root'][args.symbol]['numshares']
@@ -1170,10 +1173,42 @@ def restore_sleep() -> None:
 
     logger.info("Script has finished.")
 
+if __name__ == "__main__":
     # prevent system from sleeping
     prevent_sleep()
 
+    #logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO
+        , format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting main loop")
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Caught KeyboardInterrupt, exiting...") 
+    finally:
+        logger.info("Cleaning up...")
+        if ib is not None:
+            logger.info(f"{ib}")
+            ib.disconnect()
+            logger.info("IB disconnected")
+        if h5store is not None:
+            logger.info(f"{h5store}")
+            h5store.close()
+            logger.info("HDF5 store closed")
+        if logger is not None:
+            for handler in logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
+                    logger.removeHandler(handler)
+                    logger.info(f"{handler} closed")
+        
+        logger.info("End of main loop")
         restore_sleep()
+
+# if __name__ == "__main__":
 """
 open issues:
 - stop loss is susceptible to gap down
