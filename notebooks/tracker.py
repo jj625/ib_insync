@@ -833,6 +833,92 @@ def restore_sleep() -> None:
 
 # https://stackoverflow.com/questions/72847468/ctypes-how-to-parser-buffer-content
 
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_uint8 * 8)
+    ]
+
+# class GUID(ctypes.Structure):
+#     _fields_ = [
+#         ("Data1", wintypes.ULONG),
+#         ("Data2", wintypes.USHORT),
+#         ("Data3", wintypes.USHORT),
+#         ("Data4", wintypes.BYTE * 8)
+#     ]
+
+    # def __str__(self):
+    #     return f"{{{self.Data1:08X}-{self.Data2:04X}-{self.Data3:04X}-{''.join(f'{x:02X}' for x in self.Data4)}}}"
+    # def __repr__(self):
+    #     return f"GUID('{self}')"
+
+    def __str__(self):
+        return (f"{{{self.Data1:08x}-{self.Data2:04x}-{self.Data3:04x}-"
+                f"{bytes(self.Data4[:2]).hex()}-{bytes(self.Data4[2:]).hex()}}}")
+
+    # GUID_ptr = ctypes.POINTER['GUID']
+    @staticmethod
+    def to_string(guid_ptr) -> str:
+        return str(guid_ptr.contents)
+
+    def __init__(self, guid = None):
+        if guid is not None:
+            data = uuid.UUID(guid)
+            self.Data1 = data.time_low
+            self.Data2 = data.time_mid
+            self.Data3 = data.time_hi_version
+            self.Data4[0] = data.clock_seq_hi_variant
+            self.Data4[1] = data.clock_seq_low
+            self.Data4[2:] = data.node.to_bytes(6, "big")
+
+    def __bytes__(self):
+        return bytes(self.Data1.to_bytes(4, "little")
+                    + self.Data2.to_bytes(2, "little")
+                    + self.Data3.to_bytes(2, "little")
+                    + self.Data4)
+
+def GetPowerSetting() -> str:
+    # https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powergetactivescheme
+    # Define necessary constants and types
+    PowerGetActiveScheme = ctypes.windll.powrprof.PowerGetActiveScheme
+    # [out] A pointer that receives a pointer to a GUID structure. Use the LocalFree function to free this memory.
+    PowerGetActiveScheme.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.POINTER(GUID))]
+    PowerGetActiveScheme.restype = wintypes.DWORD
+
+    # Initialize variables
+    active_scheme_guid_ptr = ctypes.POINTER(GUID)() # Create a pointer to a GUID
+
+    # Call the function
+    result = PowerGetActiveScheme(None, ctypes.byref(active_scheme_guid_ptr))
+    if result == 0:  # ERROR_SUCCESS
+        return GUID.to_string(active_scheme_guid_ptr)
+    else:
+        raise ctypes.WinError(result)
+    # end of GetPowerSetting
+
+def get_friendly_name(scheme_guid: GUID) -> str:
+    PowerReadFriendlyName = ctypes.windll.powrprof.PowerReadFriendlyName
+    PowerReadFriendlyName.argtypes = [ctypes.c_void_p, ctypes.POINTER(GUID), ctypes.POINTER(GUID), ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_wchar), ctypes.POINTER(ctypes.c_uint32)]
+    PowerReadFriendlyName.restype = ctypes.c_uint32
+
+    buffer_size = ctypes.c_uint32(0)
+    PowerReadFriendlyName(None, ctypes.byref(scheme_guid), None, None, None, ctypes.byref(buffer_size))
+    # print(buffer_size.value)
+    # buffer = (ctypes.c_ubyte * buffer_size.value)()
+    buffer = ctypes.create_unicode_buffer(buffer_size.value)
+    result = PowerReadFriendlyName(None, ctypes.byref(scheme_guid), None, None, buffer, ctypes.byref(buffer_size))
+
+    if result == 0:  # ERROR_SUCCESS
+        return buffer.value
+    else:
+        raise ctypes.WinError(result)  
+    # end of get_friendly_name
+
+# friendly_name = get_friendly_name(active_scheme_guid_ptr.contents)
+# print(f"Active Power Scheme Friendly Name: {friendly_name}")
+
 def main():
 #if __name__ == "__main__":
     # print(get_asyncio_running_loop('__main__: ')) # expect 'no running event loop'
@@ -865,6 +951,13 @@ def main():
     # # add handlers to logger
     global logger
     logger = logging.getLogger()
+
+    # # in the meantime, remind user to set power setting to 'full'
+    # pwr = GetPowerSetting()
+    # if pwr != '{8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c}':
+    #     logger.error(f"Expect full power setting, got {pwr}")
+    #     sys.exit(1)
+
     # # logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
