@@ -88,9 +88,10 @@ ib_insync.ib.install_custom_repr_()
 background_tasks: set[asyncio.Task] = set()
 
 # globals
-ib = None
-logger = None
-h5store = None
+ib: IB = None
+logger: logging.Logger = None
+h5store: pd.HDFStore = None
+fpkl: typing.BinaryIO = None
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAMTOKEN', '')
 telegram_bot = telegram.Bot(TELEGRAM_TOKEN)
@@ -285,7 +286,19 @@ class Agent:
     def get_milestone(self) -> int:
         return self.idxMilestone
     
-    async def onBarUpdate(self, bars, hasNewBar):
+    def checkpoint(self, typ: str) -> None:
+        """Checkpoint agent's state and environment"""
+        logger.info(f"{typ}, {self.symbol}, {self.buyopen_bar1m_idx}, {self.sellclose_bar1m_idx}")
+        pkldump = {
+            'symbol': self.symbol,
+            'buyopen_bar1m_idx': self.buyopen_bar1m_idx,
+            'sellclose_bar1m_idx': self.sellclose_bar1m_idx
+        }
+        fpkl.seek(0)
+        pickle.dump(pkldump, fpkl)
+        fpkl.flush()
+
+    async def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         # reqHistoricalData with keepUpToDate=True always ticks every 5s
         self.lastPrice = bars[-1].close
@@ -1032,6 +1045,31 @@ def main():
         agent.state = 0
         logger.info(f"No position found for {args.symbol}")
 
+    # resume previous session
+    pklfile = os.path.join(scriptdir, 'data', f'tracker_{filesuffixdt}.pkl')
+    global fpkl
+    data = None
+    if not os.path.exists(pklfile) or os.path.getsize(pklfile) == 0:
+        fpkl = open(pklfile, 'wb') # write binary
+        pklinit = {
+            'symbol': 'init',
+            'buyopen_bar1m_idx': [],
+            'sellclose_bar1m_idx': []
+        }
+        pickle.dump(pklinit, fpkl) # initialize it
+    else:
+        fpkl = open(pklfile, 'r+b') # read/write binary
+        data = pickle.load(fpkl)
+        if data['symbol'] == 'init' and data['buyopen_bar1m_idx'] == [] and data['sellclose_bar1m_idx'] == []:
+            logger.info(f"Previous session didn't write anything, resetting")
+            data = None # continue as normal, previous session didn't write anything
+        elif data['symbol'] != args.symbol:
+            logger.error(f"Previous session symbol {data['symbol']} doesn't match {args.symbol}, resetting")
+        else:
+            logger.info(f"Previous session data: {data}")
+    if data:
+        agent.resume_session(data)
+
     logger.info(f"Agent State: {agent}")
 
     account = ib.managedAccounts()[0]
@@ -1300,6 +1338,8 @@ if __name__ == "__main__":
             logger.info(f"{h5store}")
             h5store.close()
             logger.info("HDF5 store closed")
+        if fpkl is not None:
+            fpkl.close()
         if logger is not None:
             for handler in logger.handlers:
                 if isinstance(handler, logging.FileHandler):
