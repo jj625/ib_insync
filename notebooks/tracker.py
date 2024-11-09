@@ -947,7 +947,8 @@ def main():
     # parse command line arguments
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbol', type=str, help='Ticker symbol to trade')
-    argparser.add_argument('maxloss', type=float, nargs='*', help='Max loss threshold')
+    argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
+    argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
     argparser.add_argument('--clientid', type=int, help='IBKR API Client ID')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
@@ -999,7 +1000,21 @@ def main():
 
     spec = load_spec_file()
 
-    h5file = os.path.join(scriptdir, 'data', f'ibdata_{filesuffix}.h5')
+    # util.logToConsole(logging.DEBUG) # show network traffic
+
+    # get IB client id from cmd line or spec file
+    speckey = args.symbol
+    if args.symbol not in spec['root'] and args.numshares and args.maxloss:
+        speckey = 'default'
+        logger.error(f"Symbol {args.symbol} not found in spec file, using default")
+    elif args.symbol not in spec['root']:
+        logger.error(f"Symbol {args.symbol} not found in spec file, must provide numshares and maxloss")
+        sys.exit(1)
+    spec_p = spec['root'][args.symbol]
+    spec_d = spec['root']['default']
+    clientid = args.clientid if args.clientid else spec_p['clientid']
+
+    h5file = os.path.join(scriptdir, 'data', f'tracker_{filesuffixdt}.h5')
     global h5store
     h5store = pd.HDFStore(h5file, 'a')
 
@@ -1033,10 +1048,13 @@ def main():
 
     global agent
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
-                  , maxloss=args.maxloss[0] if args.maxloss else spec['root'][args.symbol]['maxloss']
-                  , numshares=spec['root'][args.symbol]['numshares']
-                  , upPctMilestone=spec['root'][args.symbol]['upPctMilestone']
-                  , stopLossPct=spec['root'][args.symbol]['stopLossPct'])
+                  , maxloss=args.maxloss if args.maxloss else spec_p['maxloss']
+                  , numshares=args.numshares if args.numshares else spec_p['numshares']
+                  , upPctMilestone=spec['root'][speckey]['upPctMilestone']
+                  , stopLossPct=spec['root'][speckey]['stopLossPct']
+                  , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct'])
+                  , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct'])
+    )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
         agent.state = 1
