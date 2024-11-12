@@ -1,3 +1,5 @@
+import sys
+import pickle
 import inspect
 import asyncio
 def get_asyncio_running_loop(prefix: str = '') -> str:
@@ -17,15 +19,15 @@ np.set_printoptions(precision=2, suppress=True)
 import scipy
 import logging
 import datetime
-import time
 import dateutil
 import argparse
 import json
-import email.utils
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List
-import pdb
+from typing import List, Optional
+import typing
+import numbers
+# import pdb
 import telegram
 if telegram.__version__ < '20.0':
     print("Requires python-telegram-bot library version 20.0 or higher")
@@ -121,6 +123,18 @@ def send_telegram_message(text):
 #     executor = ThreadPoolExecutor()
 #     executor.submit(run_async_task, chat_id, text)
 
+def is_integer(value: numbers.Real) -> bool:
+    return value == int(value)
+
+def format_value(value: numbers.Real, intexpected: bool = False) -> str:
+    """
+    Format a float value to 2 decimal places if it has a decimal part, otherwise to 0 decimal places
+    intexpected: if True means we're expecting an integer value
+    """
+    if not isinstance(value, int) and intexpected and not is_integer(value):
+        logger.warning(f"Expected integer value, got {value}")
+    return f"{value:.2f}" if value % 1 != 0 else f"{value:.0f}"
+
 def plus(num: numbers.Real) -> numbers.Real:
     """Return the positive part of the number"""
     return max(0, num)
@@ -190,31 +204,75 @@ class Agent:
     prevstate: int = 0 # previous state
     recenthigh: tuple[int, BarData] = None
     recentlow: tuple[int, BarData] = None
-
+    # execdetailTrade: list[ib_insync.order.Trade] = field(default_factory=list)
+    # execdetailFill: list[ib_insync.objects.Fill] = field(default_factory=list)
+    buyopen_bar1m_idx: list[int] = field(default_factory=list)
+    sellclose_bar1m_idx: list[int] = field(default_factory=list)
+    mile0_max_retracement_pct: float = 0.0
+    mile0_max_retracement_absolute_min_pct: float = 0.0
+    lastSalePrice: float = 0.0
+    buyagainbuffer: float = 0.0 # buffer to buy again after selling
+    lastSellTrade: Optional[ib_insync.order.Trade] = None
+    lastSaleTime: Optional[datetime.datetime] = None
+ 
     def reset(self):
         pass
 
+    def resume_session(self, data: dict):
+        if not data:
+            logger.warning(f"previous session data is empty")
+            return
+        _ = data.pop('trade_list', None) # no need for this anymore
+        logger.info(f"Resuming session {data}")
+        self.buyopen_bar1m_idx = data['buyopen_bar1m_idx']
+        self.sellclose_bar1m_idx = data['sellclose_bar1m_idx']
+
+        # get all trades so far
+        t = sorted([t for t in ib.trades() if t.contract.symbol == self.symbol], key=lambda trade: max(fill.execution.time for fill in trade.fills))
+        if t:
+            if t[-1].order.action == 'SELL':
+                lt = t[-1]
+            elif t[-1].order.action == 'BUY' and (len(t) > 1 and t[-2].order.action == 'SELL'):
+                lt = t[-2]
+            else:
+                lt = None
+                logger.warning(f"no sell trade found")
+                return
+            self.lastSellTrade = lt
+            self.lastSaleTime = max(fill.execution.time for fill in lt.fills)
+            self.lastSalePrice = sum(fill.execution.price * fill.execution.shares for fill in lt.fills) / sum(fill.execution.shares for fill in lt.fills)
+            logger.info(f"last sell trade: {lt}, last sale time: {self.lastSaleTime}, last sale price: {self.lastSalePrice}")
+
     def simpleLongStrategy1InitPreMarket(self) -> int:
-        # get historical bars for the last 6 months
-        contract_ = Stock(self.symbol, 'SMART', 'USD')
-        self.histbars = ib.reqHistoricalData( # this method is blocking
-            contract_,
-            endDateTime=(datetime.datetime.now() + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
-            durationStr='6 M',
-            barSizeSetting='15 mins',
-            whatToShow='TRADES',
-            useRTH=True,
-            formatDate=1)
-        # and may timeout
-        if self.histbars is None or len(self.histbars) == 0:
-            logger.error(f"Failed to get historical bars for {self.symbol}")
-            # self.strategy1initstatus = -1
+        logger.info(f"Pre-market initialization for {self.symbol}")
+        # # get historical bars for the last 6 months
+        # contract_ = Stock(self.symbol, 'SMART', 'USD')
+        # self.histbars = ib.reqHistoricalData( # this method is blocking
+        #     contract_,
+        #     endDateTime=(datetime.datetime.now() + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
+        #     durationStr='3 M',
+        #     barSizeSetting='15 mins',
+        #     whatToShow='TRADES',
+        #     useRTH=True,
+        #     formatDate=1,
+        #     timeout=120) # 2 minutes timeout
+        # # and may timeout
+        # if self.histbars is None or len(self.histbars) == 0:
+        #     logger.error(f"Failed to get historical bars for {self.symbol}")
+        #     # self.strategy1initstatus = -1
+        #     return -1
+
+        histbars = pd.read_csv(f'./data/{self.symbol}_1d.csv', parse_dates=['date'])
+        yestdate = pd.to_datetime(datetime.datetime.now().date() + datetime.timedelta(days=-1))
+        if yestdate not in histbars['date'].values:
+            logger.error(f"Yesterday's date not found in historical bars")
             return -1
-        self.prevclose = self.histbars[-1].close
+        # at the moment, this is all we care about
+        self.prevclose = histbars[ histbars['date'] == yestdate ].close
         # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
         # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
 
-        logger.info(f"histbars len={len(self.histbars)}")
+        # logger.info(f"histbars len={len(self.histbars)}, histbars[0]={self.histbars[0]}, histbars[-1]={self.histbars[-1]}")
         return 0
 
     def simpleLongStrategy1Init(self) -> int:
@@ -308,13 +366,13 @@ class Agent:
         if (self.lowsincestart == 0.0) or (self.lowsincestart > bars[-1].low):
             self.lowsincestart = bars[-1].low
         self.testpnl = bars[-1].close - self.beginprice
-        logger.info(f"High since start: {self.highsincestart}, Low since start: {self.lowsincestart}, test pnl = {self.testpnl:.2f}")
+        logger.info(f"since start: hi/lo {self.highsincestart} {self.lowsincestart} ({self.highsincestart/self.lowsincestart:.2%})")
 
         # update agent's recent high and low
-        if self.recenthigh[1].high < bars[-1].high:
-            self.recenthigh = (len(bars)-1, bars[-1])
-        if self.recentlow[1].low > bars[-1].low:
-            self.recentlow = (len(bars)-1, bars[-1])
+        # if self.recenthigh[1].high < bars[-1].high:
+        #     self.recenthigh = (len(bars)-1, bars[-1])
+        # if self.recentlow[1].low > bars[-1].low:
+        #     self.recentlow = (len(bars)-1, bars[-1])
         
         # schedule strategy execution
         if self.strategy_tasks == set(): # if empty set, no tasks running
@@ -365,28 +423,34 @@ class Agent:
                     return True
             return False
 
-        def two_bars_green_with_one_close_near_high_2():
+        def two_bars_green_with_one_close_near_high_2() -> bool:
             """
             Check if the last two bars are green and at least one of them close near the high.
             Last two bars don't include the current bar.
             """
+            retval = False
             if len(self.bars) < 3:
-                return False
+                logging.warning(f"len(bars)={len(self.bars)} < 3")
+                return retval
             # check if the last two bars are green
-            cond1 = self.bars[-2].close > self.bars[-2].open and self.bars[-3].close > self.bars[-3].open
+            tbg = self.bars[-2].close > self.bars[-2].open and self.bars[-3].close > self.bars[-3].open
             # if one of them is yellow it's ok too
             # case in point: AMD 10/29/2024 9:35 and 9:36 bars
-            cond2 = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
+            tbg1y = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
                 self.bars[-2].close == self.bars[-2].open and self.bars[-3].close > self.bars[-3].open)
-            if cond1 or cond2:
-                if cond2:
-                    logger.warning(f"cond2={cond2}")
-                if (self.bars[-2].close > self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low)):
-                    return True
-                if (self.bars[-3].close > self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low)):
-                    return True
+            if tbg or tbg1y:
+                if tbg1y:
+                    logger.warning(f"tbg1y={tbg1y}")
+                # check if at least one of them close near the high
+                cnh = (self.bars[-2].close >= self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low) or
+                    self.bars[-3].close >= self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low))
+                if cnh:
+                    retval = True # (tbg or tbg1y) and cnh
+            
+            logger.warning(f"tbg={tbg} tbg1y={tbg1y} cnh={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
+            return retval
 
-        def low_to_high_inflection_point(n=15, m=5):
+        def low_to_high_inflection_point(n=15, m=5) -> bool:
             """check if there is a low to high inflection point in the last n bars.
             This is a sign of reversal. We want to catch the reversal early.
             Define inflection point as any of the last m bars lows is lower than any of the previous n-m bars lows
@@ -405,15 +469,58 @@ class Agent:
             if min(lows[-m:]) < min(lows[:-m]):
                 logger.info(f"low_to_high_inflection_point: {lows[-m:]} < {lows[:-m]}")
                 return True
-            return False
+            return False # no inflection point
         
-        def seekEntry():
+        def five_bars_green():
+            """Check if the last five bars are green"""
+            if len(self.bars) < 5:
+                return False
+            return all([bar.close > bar.open for bar in self.bars[-5:]])
+        
+        def lastn_bars_green(n=10, relax: bool=False) -> int:
+            """
+            examine the last n bars, count the longest string of successive green bars from the last
+            relax: if True, allow for a yellow bar in between green bars
+            """
+            if len(self.bars) < n:
+                return 0
+            count = 0
+            for bar in self.bars[-n:]:
+                if bar.close > bar.open:
+                    count += 1
+                elif relax and bar.close == bar.open:
+                    count += 1
+                else:
+                    break
+            return count
+        
+        def lastn_bars_red(n=10, relax: bool=False) -> int:
+            """examine the last n bars, count the longest string of successive red bars from the last"""
+            if len(self.bars) < n:
+                return 0
+            count = 0
+            for bar in self.bars[-n:]:
+                if bar.close < bar.open:
+                    count += 1
+                elif relax and bar.close == bar.open:
+                    count += 1
+                else:
+                    break
+            return count
+
+        def seekEntry(isFollowThrough: bool = False):
             """
             pre-condition: no position, no outstanding trades, milestone has been reset
             """
             assert self.trade is None, "Expect no outstanding trades"
-            if two_bars_green_with_one_close_near_high_2() and low_to_high_inflection_point(10, 5):
-                logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
+            isInflection_15_5 = low_to_high_inflection_point(15, 5)
+            isInflection_10_5 = low_to_high_inflection_point(10, 5)
+            isInflection_5_3 = low_to_high_inflection_point(5, 3)
+            cond1 = two_bars_green_with_one_close_near_high_2() and isInflection_10_5 # original condition 
+            cond2 = isFollowThrough and lastn_bars_green(3) >= 2 # don't need to check for inflection point
+            logger.info(f"cond1={cond1}, cond2={cond2}, isInflection_15_5={isInflection_15_5}, isInflection_10_5={isInflection_10_5}, isInflection_5_3={isInflection_5_3}")
+            if cond1 or cond2:
+                # logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
                 self.order = MarketOrder('BUY', agent.numshares)
                 contract_ = Stock(self.symbol, 'SMART', 'USD')
                 logger.info(f"Buying shares of {contract_} as {self.order}")
@@ -425,7 +532,9 @@ class Agent:
                     if self.liveTrading:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
-                        logger.info(f"Trade placed: {self.trade.log}")
+                        logger.info(f"Trade placed: {self.trade}")
+                        self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # record the bar index when we placed the trade
+                        self.checkpoint('buyopen')
                         loop = asyncio.get_running_loop()
                         task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
                         background_tasks.add(task) # keep a reference to the task
@@ -443,14 +552,16 @@ class Agent:
                     self.trade = None
                 # else:
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
+            return # end of seekEntry
 
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         logger.info(f"state={self.get_state()}")
-        if self.get_state() == 0:
+        if self.get_state() in [0, 2]:
             # no position, no outstanding trades and milestone has been reset
             if ((self.stkpos is None) or (self.stkpos.position == 0)) and self.idxMilestone == -1 and self.trade is None:
-                logger.info(f"No position, seeking entry...")
-                seekEntry()
+                isFollowThrough = (self.lastSaleTime is not None)
+                logger.info(f"No position, seeking {'follow through ' if isFollowThrough else ''}entry ...")
+                seekEntry(isFollowThrough=isFollowThrough)
                 return
             elif self.trade and self.trade in ib.openTrades():
                 logger.info(f"Trade is still open: {ib.openTrades()}") # wait for trade to complete
@@ -515,19 +626,62 @@ class Agent:
             newIdx_ -= 1  # Adjust because the loop exits after crossing the last milestone
         if newIdx_ > self.idxMilestone:
             self.set_milestone(newIdx_)
-            logger.info(f"Crossed milestone {self.idxMilestone} {self.upPctMilestone[self.idxMilestone]:.2%}: {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            logmsg = "Crossed milestone"
         else:
-            logger.info(f"Milestone unch: {self.idxMilestone} {self.upPctMilestone[self.idxMilestone]:.2%}: {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            logmsg = "Current milestone"
         assert self.idxMilestone >= 0, "idxMilestone should be greater than zero"
         
+        # calculate stop loss price
         # is the price below the upPctMilestone[i-1]+stopLossPct[i] for the current milestone?
         if self.idxMilestone > 0:
             stoplossPrice_ = avgCost_ * (1 + self.stopLossPct[self.idxMilestone] + self.upPctMilestone[self.idxMilestone-1])
         else:
             stoplossPrice_ = avgCost_ * (1 + self.stopLossPct[self.idxMilestone])
-        if lastPrice_ < stoplossPrice_:
+        logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%}, stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
+        
+        # calculate drawdown
+        # get the highest 1m close since we last buy. get the higher of that and current price. drawdownpct = min(0, (lastprice - highest)/highest)
+        # if we are below the highest, we are in drawdown
+        if not self.buyopen_bar1m_idx:
+            logger.warning(f"buyopen_bar1m_idx is not set")
+            j = None
+            j_timestamp = None
+            highest_since_buy = max([bar.close for bar in self.bars])
+        else:
+            j = self.buyopen_bar1m_idx[-1]
+            highest_since_buy = max([bar.close for bar in self.bars[j:]])
+            j_timestamp = self.bars[j].date
+            logger.info(f"highest_since_buy bar[{j}]={self.bars[j]}")
+        hwm = max(highest_since_buy, lastPrice_)
+        drawdown = min(0, lastPrice_ - hwm)
+        drawdown_pct = drawdown / hwm
+        pnl_hwm = hwm - avgCost_
+        pnl_hwm_pct = pnl_hwm / avgCost_
+        logger.info(f"drawdown {drawdown:.2f} {drawdown_pct:.2%}, pnl_hwm {pnl_hwm:.2f} {pnl_hwm_pct:.2%}")
+        logger.info(f"px_hwm {hwm}, px_highest_since_buy {highest_since_buy}")
+        # report if we are in drawdown
+        if drawdown_pct < 0:
+            logger.warning(f"Drawdown: {drawdown_pct:.2%}")
+        
+        # this is the original exit condition
+        # but this results in negative expected pnl because we are exiting at a loss
+        cond1 = lastPrice_ < stoplossPrice_
+
+        # to avoid negative expected pnl, we introduce drawdown condition from pnl high water mark
+        # allow some retracement from pnl high water mark
+        max_retracement_pct = -1.0 * self.mile0_max_retracement_pct * pnl_hwm_pct
+        # sometimes max_retracement_pct is too small (when pnl high water mark is close to zero), so we use the absolute min
+        cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone == 0
+        if self.idxMilestone == 0:
+            logger.info(f"{max_retracement_pct:.3%} {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
+        logger.info(f"cond1={cond1}, cond2={cond2}, idxMilestone={self.idxMilestone}")
+        
+        if cond1 or cond2:
             # crossed below milestone, we should liquidate
-            logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            if cond1: 
+                logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            elif cond2:
+                logger.warning(f"Crossed below max retracement {drawdown_pct:.2%}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
             self.order = LimitOrder('SELL', self.stkpos.position, lastPrice_)
             contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
             logger.warning(f"Selling shares of {contract_} as {self.order}")
@@ -536,7 +690,9 @@ class Agent:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                     self.set_state(0) # reset state
-                    logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
+                    logger.info(f"Trade placed: {self.trade}, state reset to 0")
+                    self.sellclose_bar1m_idx.append(len(self.bars) - 1)
+                    self.checkpoint('sellclose')
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(
                         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
@@ -581,6 +737,7 @@ class Agent:
         if maxloss_ is None:
             maxloss_ = self.maxloss
         currentPnl = (lastPrice - self.stkpos.avgCost) * self.stkpos.position
+        logging.info(f"last {lastPrice}, pnl: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
         if currentPnl < maxloss_:
             logger.warning(f"Current loss: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
             if self.stkpos.position > 0 and self.trade is None:
@@ -598,7 +755,9 @@ class Agent:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                     self.set_state(0) # reset state
-                    logger.info(f"Trade placed: {self.trade.log}, state reset to 0")
+                    logger.info(f"Trade placed: {self.trade}, state reset to 0")
+                    self.sellclose_bar1m_idx.append(len(self.bars) - 1) # record the bar index when we placed the trade
+                    self.checkpoint('enforceMaxLoss')
                     loop = asyncio.get_event_loop()
                     logger.debug(get_asyncio_running_loop('get_event_loop()')) # expect 'no running event loop'
                     future = asyncio.ensure_future(
@@ -623,6 +782,7 @@ class Agent:
                 logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
                 self.trade = None
                 logger.error(logmsg + f", resetting trade to None")
+        return # end of enforceMaxLoss
 
 # global
 agent: Agent = None
@@ -632,28 +792,61 @@ def onAccountValueUpdate(accountValue: ib_insync.objects.AccountValue):
     logger.debug(get_asyncio_running_loop(''))
     logger.debug(f"{accountValue}")
     # pdb.set_trace()
+    return # end of onAccountValueUpdate
 
 def onAccountSummaryUpdate(acctValue: ib_insync.objects.AccountValue):
     logger.debug(get_asyncio_running_loop(''))
     logger.info(f"{acctValue}")
+    return # end of onAccountSummaryUpdate
 
-def onPnlUpdate(pnl):
+def onPnlUpdate(pnl: ib_insync.objects.PnL):
     logger.debug(get_asyncio_running_loop(''))
     logger.info(f"{pnl}")
     # pdb.set_trace()
+    return # end of onPnlUpdate
 
-def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem):
-    # every three minutes, usually following onAccountValueUpdate
-    logger.debug(get_asyncio_running_loop(''))
-    logger.debug(f"{portfolio}")
+def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem) -> None:
+    """
+    every three minutes, usually following onAccountValueUpdate
+    not doing significant function yet, just doing checkings, confirming that we are in sync with IB
+    we do the work in onPositionUpdate
+    """
+
+    # logger.debug(get_asyncio_running_loop(''))
+    # logger.debug(f"{portfolio}")
+    if agent is None:
+        logger.error(f"agent not initialized, expected {portfolio}")
+        return
+    if portfolio.contract.symbol == agent.symbol:
+        # ensure we agree with IB on the stock position
+        if agent.stkpos is None:
+            logger.error(f"agent.stkpos is None, expected {portfolio}")
+            return
+        if portfolio.position != agent.stkpos.position:
+            logger.error(f"portfolio.position={portfolio.position} != agent.stkpos.position={agent.stkpos.position}")
+            agent.set_state(99) # bail out of main loop
+            return
+        if portfolio.averageCost != agent.stkpos.avgCost:
+            logger.warning(f"portfolio.averageCost={portfolio.averageCost} != agent.stkpos.avgCost={agent.stkpos.avgCost}")
+            # agent.set_state(99) # bail out of main loop
+            return
+    else:
+        logger.debug(f"skipping {portfolio.contract.symbol} {format_value(portfolio.position, True)}")
     # ib.sleep(30) # simulate blocking
     # pdb.set_trace()
+    return # end of onPortfolioUpdate
 
-def onPositionUpdate(newpos):
+def onPositionUpdate(newpos: ib_insync.objects.Position):
     # only care about specific stock positions for now
-    logger.debug(get_asyncio_running_loop(''))
+    # logger.debug(get_asyncio_running_loop(''))
+    if agent is None:
+        logger.error(f"agent not initialized")
+        return
     if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK')):
-        logger.info(f"don't care {newpos}")
+        if newpos.contract.secType == 'STK':
+            logger.debug(f"skipping {newpos.contract.symbol}")
+        else:
+            logger.warning(f"unexpected secType: {newpos}")
         return
     logmsg = f"{newpos} id={id(newpos)}"
     if agent:
@@ -669,12 +862,15 @@ def onPositionUpdate(newpos):
                 
     logger.info(logmsg)
     # traceback.print_stack()
-    if agent is None:
-        logger.error(f"agent not initialized yet")
-        # just move on
-        return
     # only care about specific stock positions for now
     if (newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK'):
+        # sanity check
+        if newpos.position != 0 and newpos.avgCost == 0.0:
+            p = [p for p in ib.positions() if p.contract.symbol == agent.symbol]
+            logger.error(f"ib.positions={p}")
+            logger.error(f"position={newpos.position} but avgCost=0.0")
+            agent.set_state(99) # bail out of main loop
+            return
         # agent.state = 1
         prevstkpos = agent.stkpos
         agent.stkpos = newpos
@@ -698,10 +894,22 @@ def onPositionUpdate(newpos):
         logger.warning(f"ignoring stock position: {newpos}")
     else:
         logger.warning(f"ignoring new position: {newpos}")
+    return # end of onPositionUpdate
 
-def onExecDetailsUpdate(trade, fill):
+def onExecDetailsUpdate(trade: ib_insync.order.Trade, fill: ib_insync.objects.Fill):
     logtext = f"{trade}, {fill}"
     logger.info(logtext)
+    if trade.contract.symbol != agent.symbol:
+        logger.warning(f"ignoring trade: {trade.contract.symbol}")
+        return
+    if agent is None:
+        logger.error(f"agent not initialized yet")
+        return
+    # if trade not in agent.execdetailTrade:
+    #     agent.execdetailTrade.append(trade)
+    # if fill not in agent.execdetailFill:
+    #     agent.execdetailFill.append(fill)
+    
     logger.info(get_asyncio_running_loop('')) # expect <ProactorEventLoop running=True closed=False debug=False>
     loop = asyncio.get_running_loop()
     # loop = asyncio.get_event_loop()
@@ -711,8 +919,92 @@ def onExecDetailsUpdate(trade, fill):
     # future = asyncio.ensure_future(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
     # loop.run_until_complete(future)
     # loop.call_soon(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
+    return # end of onExecDetailsUpdate
+
+def onCancelOrder(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onCancelOrder
+
+def onTradeCancelledEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeCancelledEvent
+
+def onTradeCancelEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeCancelEvent
+
+def onTradeFilledEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeFilledEvent
+
+def onTradeFillEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeFillEvent
+
+def onTradeModifyEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeModifyEvent
+
+def onTradeStatusEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeStatusEvent
+
+def onTradeCommissionReportEvent(trade: ib_insync.order.Trade):
+    logger.info(f"{trade}")
+    return # end of onTradeCommissionReportEvent
+
+def onOrderStatus(trade: ib_insync.order.Trade):
+    if agent is None:
+        logger.error(f"agent not initialized yet")
+        return
+    if trade.contract.symbol != agent.symbol:
+        logger.warning(f"not my trade: {trade.contract.symbol}")
+        return
+    logger.info((f"{trade.order.action} {trade.contract.symbol} orderId={trade.order.orderId} permId={trade.order.permId} "
+        f"status={trade.orderStatus.status} "
+        f"filled={format_value(trade.orderStatus.filled, True)} "
+        f"remaining={format_value(trade.orderStatus.remaining, True)} "
+        f"avgFillPrice={trade.orderStatus.avgFillPrice} "
+        f"lastFillPrice={trade.orderStatus.lastFillPrice}"))
+    if agent.trade is None:
+        logger.error(f"agent's trade is None, shouldn't happen: {trade}")
+        return
+    if agent.trade.order.orderId != trade.order.orderId:
+        logger.error(f"order id mismatch: agent's {agent.trade.order.orderId} != {trade.order.orderId}")
+        return
+    if trade.orderStatus.status == 'Cancelled':
+        if trade.orderStatus.filled == 0:
+            logmsg = f"Order was cancelled, nothing done, agent state={agent.state}, resetting agent's trade to None"
+            if agent.state == 1:
+                agent.state = agent.prevstate # undo state change
+                logmsg += f", undoing state change"
+            agent.trade = None
+            logger.warning(logmsg)
+        else:
+            logger.warning(f"Order was cancelled but partially filled: {trade}")
+    elif trade.orderStatus.status == 'Filled':
+        assert trade.orderStatus.remaining == 0, "Expect remaining to be zero"
+        sumvalue, sumqty, saleTimestamp = 0.0, 0, datetime.datetime(2024, 1, 1).astimezone()
+        for fill in trade.fills:
+            sumqty += fill.execution.shares
+            sumvalue += fill.execution.shares * fill.execution.price
+            saleTimestamp = max(fill.execution.time, saleTimestamp)
+        agent.lastSalePrice = sumvalue / sumqty
+        agent.lastSellTrade = trade
+        agent.lastSaleTime = saleTimestamp
+        logger.info(f"Order was filled")
+    elif trade.orderStatus.status in {'PreSubmitted','Submitted'} and trade.orderStatus.remaining > 0:
+        pass
+        # logger.info(f"Order {trade.orderStatus.status}") # already reported above
+    else:
+        logger.warning(f"Order {trade.orderStatus.status} (not handled)")
+    
+    return # end of onOrderStatus
 
 def onErrorEvent(reqId, errorCode, errorString, contract):
+    # https://interactivebrokers.github.io/tws-api/message_codes.html#system_codes
+    if errorCode in [2104, 2106, 2107, 2108, 2158]: # not a real error
+        return
     logger.info(get_asyncio_running_loop(''))
     logtext = f"reqId={reqId}, errorCode={errorCode}, errorString={errorString}, contract={contract}"
     logger.error(logtext)
@@ -722,6 +1014,7 @@ def onErrorEvent(reqId, errorCode, errorString, contract):
     task.add_done_callback(background_tasks.discard)
     # future = asyncio.ensure_future(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=logtext))
     # asyncio.run(future)
+    return
 
 def symbolMktValue(tickerFilter=None):
     # get market value of portfolio
@@ -967,7 +1260,11 @@ def main():
     # console_handler = logging.StreamHandler()
     # console_handler.setLevel(args.loglevel)
     # console_handler.setFormatter(formatter)
-    file_handler = logging.FileHandler(f'tracker_{args.symbol}_{datetime.datetime.now():%Y%m%d_%H%M}.log')
+    scriptdir = os.path.dirname(os.path.realpath(__file__))
+    filesuffix = f'{args.symbol}_{datetime.datetime.now():%Y%m%d_%H%M}'
+    filesuffixdt = f'{args.symbol}_{datetime.datetime.now():%Y%m%d}'
+    logfilename = os.path.join(scriptdir, 'logs', f'tracker_{filesuffix}.log')
+    file_handler = logging.FileHandler(logfilename)
     file_handler.setLevel(args.loglevel)
     file_handler.setFormatter(formatter)
 
@@ -1035,10 +1332,12 @@ def main():
     global ib
     ib = IB()
     ib.connect(args.host, args.port, clientId=clientid)
-
+    # to test connection
+    # https://www.interactivebrokers.com/cgi-bin/conn_test.pl
 
     # print portfolio
-    logger.info(f"Portfolio: {ib.portfolio()}")
+    sp_ = [p for p in ib.portfolio() if p.contract.symbol in [args.symbol]]
+    logger.info(f"Portfolio: {sp_}")
 
     # find stock position of a given symbol in the portfolio
     sp_ = [p for p in ib.positions() if p.contract.symbol in [args.symbol] and p.contract.secType == 'STK']
@@ -1097,6 +1396,10 @@ def main():
     ib.accountValueEvent += onAccountValueUpdate
     ib.updatePortfolioEvent += onPortfolioUpdate
     ib.execDetailsEvent += onExecDetailsUpdate
+    # https://interactivebrokers.github.io/tws-api/automated_considerations.html#order_placement
+    ib.cancelOrderEvent += onCancelOrder
+    ib.orderStatusEvent += onOrderStatus
+
     ib.accountSummaryEvent += onAccountSummaryUpdate
     ib.pnlEvent += onPnlUpdate
     ib.errorEvent += onErrorEvent
@@ -1122,8 +1425,10 @@ def main():
     if args.run_until:
         untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.datetime.strptime(args.run_until, '%H:%M').time())
     else:           
+        if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
+            untilTime = datetime.datetime.now() + datetime.timedelta(minutes=1) # run for 10 minutes
         # untilTime = datetime.datetime.now() + datetime.timedelta(hours=2.2)
-        if dateutil.parser.parse('20:00:00') < datetime.datetime.now(): # after 8:00 PM, run until 11:59 PM
+        elif dateutil.parser.parse('20:00:00') < datetime.datetime.now(): # after 8:00 PM, run until 11:59 PM
             untilTime = dateutil.parser.parse('23:59:00') # 11:59 PM
         elif dateutil.parser.parse('16:16:00') < datetime.datetime.now(): # after 4:16 PM, run until 8:00 PM
             untilTime = dateutil.parser.parse('20:02:00') # 8:00 PM
@@ -1137,20 +1442,24 @@ def main():
         logger.error(f"Pre-Initialization failed: {status}")
         sys.exit(1)
     else:
-        logger.info(f"Pre-Initialization successful: {status}")
+        logger.info(f"Pre-Initialization successful")
 
-    # wait until market open
-    waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(minutes=1)
-    if datetime.datetime.now() < waitUntil:
-        logger.info(f"Waiting until {waitUntil}")
-        util.waitUntil(waitUntil)
+    if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
+        pass
+    else:
+        # wait until market open
+        waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
+        if datetime.datetime.now() < waitUntil:
+            logger.info(f"Waiting until {waitUntil}")
+            util.waitUntil(waitUntil)
 
-    waitUntil2 = dateutil.parser.parse('17:00:00') - datetime.timedelta(minutes=1)
-    if datetime.datetime.now() < waitUntil2 and dateutil.parser.parse('16:16:00') < datetime.datetime.now():
-        logger.info(f"Waiting until {waitUntil}")
-        util.waitUntil(waitUntil)
+        waitUntil2 = dateutil.parser.parse('17:00:00') - datetime.timedelta(minutes=1)
+        #if datetime.datetime.now() < waitUntil2 and dateutil.parser.parse('16:16:00') < datetime.datetime.now():
+        if dateutil.parser.parse('16:16:00') < datetime.datetime.now() < waitUntil2:
+            logger.info(f"Waiting until {waitUntil2}")
+            util.waitUntil(waitUntil2)
 
-    logger.info(f"Running until {untilTime}")
+    logger.info(f"Running until {untilTime:%H:%M:%S}")
     while datetime.datetime.now() < untilTime and agent.get_state() != 99:
         logger.debug(get_asyncio_running_loop('main loop: ')) # expect 'no running event loop'
         # get market data for all positions
@@ -1172,7 +1481,7 @@ def main():
                     logger.warning(f"Waiting for trades to cancel: {ot}")
                     ib.sleep(np.random.uniform(low=2.0, high=20.0))
 
-            # request market data
+            # request live market data
             contract_1 = Stock(agent.symbol, 'SMART', 'USD')
             agent.bars = ib.reqHistoricalData(
                 contract_1,
@@ -1185,12 +1494,15 @@ def main():
                 keepUpToDate=True)
 
             if len(agent.bars) > 0:
-                assert agent.bars[0].date.date() == datetime.datetime.now().date(), "Expect first bar to be today"
+                if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
+                    logging.warning(f"{datetime.datetime.now().weekday()} is not trading today")
+                else:
+                    assert agent.bars[0].date.date() == datetime.datetime.now().date(), f"Expect first bar {agent.bars[0]} to be today"
             else:
                 assert False, "Expect at least one bar"
             agent.barsstartidx = len(agent.bars) - 1
             agent.beginprice = agent.bars[agent.barsstartidx].close
-            logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}")
+            logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}, bar[-1]={agent.bars[-1]}")
             # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
             agent.bars.updateEvent += agent.onBarUpdate
 
@@ -1218,7 +1530,7 @@ def main():
         # # p_dfg['mv'] = p_dfg.index.map(mv)
         # logger.debug(f"Portfolio:\n{p_dfg}")
         # logger.info(f"Market Value: {mv[agent.symbol]:.2f}")
-        if agent.stkpos:
+        if agent.stkpos and agent.stkpos.position != 0:
             logger.info(f"Market Value: {agent.bars[-1].close * agent.stkpos.position:.2f}")
         logger.debug(f"Bars: len={len(agent.bars)} last={agent.bars[-1]}")
 
