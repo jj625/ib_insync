@@ -17,6 +17,7 @@ import numpy as np
 import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
 import scipy
+import math
 import logging
 import datetime
 import dateutil
@@ -886,15 +887,11 @@ def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem) -> None:
         return
     if portfolio.contract.symbol == agent.symbol:
         # ensure we agree with IB on the stock position
-        if agent.stkpos is None:
-            logger.error(f"agent.stkpos is None, expected {portfolio}")
+        if portfolioItem.position != agent.stkpos.position:
+            logger.warning(f"portfolioItem.position={portfolioItem.position} != agent.stkpos.position={agent.stkpos.position}")
             return
-        if portfolio.position != agent.stkpos.position:
-            logger.error(f"portfolio.position={portfolio.position} != agent.stkpos.position={agent.stkpos.position}")
-            agent.set_state(99) # bail out of main loop
-            return
-        if portfolio.averageCost != agent.stkpos.avgCost:
-            logger.warning(f"portfolio.averageCost={portfolio.averageCost} != agent.stkpos.avgCost={agent.stkpos.avgCost}")
+        if not math.isclose(portfolioItem.averageCost, agent.stkpos.avgCost, abs_tol=.001):
+            logger.warning(f"portfolioItem.averageCost={portfolioItem.averageCost:.4f} != agent.stkpos.avgCost={agent.stkpos.avgCost:.4f}")
             # agent.set_state(99) # bail out of main loop
             return
     else:
