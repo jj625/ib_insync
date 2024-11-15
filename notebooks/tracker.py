@@ -235,6 +235,7 @@ class Agent:
         self.buyopen_bar1m = data.get('buyopen_bar1m', []) or data['buyopen_bar1m'] # the bar1m where buy was recorded, valid across days
         self.sellclose_bar1m_idx = data.get('sellclose_bar1m_idx', []) or data['sellclose_bar1m_idx']
         self.sellclose_bar1m = data.get('sellclose_bar1m', []) or data['sellclose_bar1m'] # the bar1m where sell was recorded, valid across days
+        self.high_since_buy_bar1m = data.get('high_since_buy_bar1m', []) or data['high_since_buy_bar1m']
         logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
         # get all trades so far
@@ -365,6 +366,7 @@ class Agent:
             'buyopen_bar1m': self.buyopen_bar1m, # the bar1m where buy was recorded, valid across days
             'sellclose_bar1m_idx': self.sellclose_bar1m_idx, # current day only, not valid the next day
             'sellclose_bar1m': self.sellclose_bar1m, # the bar1m where sell was recorded, valid across days
+            'high_since_buy_bar1m': self.high_since_buy_bar1m, # the bar1m where the high since buy was recorded, valid across days
         }
         fpkl.seek(0)
         pickle.dump(pkldump, fpkl)
@@ -375,12 +377,39 @@ class Agent:
         # reqHistoricalData with keepUpToDate=True always ticks every 5s
         self.lastPrice = bars[-1].close
         logger.info(f"hasNewBar={hasNewBar}, {bars[-1]}")
-        if (self.highsincestart == 0.0) or (self.highsincestart < bars[-1].high):
-            self.highsincestart = bars[-1].high
-        if (self.lowsincestart == 0.0) or (self.lowsincestart > bars[-1].low):
-            self.lowsincestart = bars[-1].low
-        self.testpnl = bars[-1].close - self.beginprice
-        logger.info(f"since start: hi/lo {self.highsincestart} {self.lowsincestart} ({self.highsincestart/self.lowsincestart:.2%})")
+
+        currentBar = bars[-1] # bar that is being built, never full
+        currentFullBar = bars[-2] # the most recent fully formed bar
+        self.hml.append(currentBar.high - currentBar.low)
+        # self.lastPrice = get_market_price() # sample the market price # was bars[-1].close
+
+        # update high water mark since last buy, for the purpose of calculating drawdown
+        needCheckpoint = False
+        if self.high_since_buy_bar1m:
+            if self.high_since_buy_bar1m[-1].high <= currentBar.high:
+                prev = self.high_since_buy_bar1m[-1]
+                self.high_since_buy_bar1m[-1] = currentBar
+                needCheckpoint = True
+                logger.info(f"high_since_buy_bar1m from {prev} to {currentBar}")
+            if self.high_since_buy_bar1m[-1].high <= currentFullBar.high:
+                prev = self.high_since_buy_bar1m[-1]
+                self.high_since_buy_bar1m[-1] = currentFullBar
+                needCheckpoint = True
+                logger.info(f"high_since_buy_bar1m from {prev} to {currentFullBar}")
+        else:
+            self.high_since_buy_bar1m.append(currentBar)
+            needCheckpoint = True
+        # checkpoint as needed
+        if needCheckpoint:
+            # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
+            self.checkpoint('high_since_buy_bar1m')
+
+        # if (self.highsincestart == 0.0) or (self.highsincestart < bars[-1].high):
+        #     self.highsincestart = bars[-1].high
+        # if (self.lowsincestart == 0.0) or (self.lowsincestart > bars[-1].low):
+        #     self.lowsincestart = bars[-1].low
+        # self.testpnl = bars[-1].close - self.beginprice
+        # logger.info(f"since start: hi/lo {self.highsincestart} {self.lowsincestart} ({self.highsincestart/self.lowsincestart:.2%})")
 
         # update agent's recent high and low
         # if self.recenthigh[1].high < bars[-1].high:
@@ -1392,6 +1421,7 @@ def main():
             'sellclose_bar1m_idx': [],
             'buyopen_bar1m': [],
             'sellclose_bar1m': [],
+            'high_since_buy_bar1m': [],
         }
         pickle.dump(pklinit, fpkl) # initialize it
         logger.info(f"Initialized pkl file: {pklfile}")
