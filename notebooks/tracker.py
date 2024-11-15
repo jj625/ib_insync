@@ -181,6 +181,8 @@ class Agent:
     # realized_pnl: float
     # unrealized_pnl: float
     # daily_pnl: float
+    session_start: List[datetime.datetime] = field(default_factory=list)
+    session_end: List[datetime.datetime] = field(default_factory=list)
     bars: List[BarData] = field(default_factory=list)
     highs: List[float] = field(default_factory=list)
     lows: List[float] = field(default_factory=list)
@@ -224,8 +226,10 @@ class Agent:
             return
         _ = data.pop('trade_list', None) # no need for this anymore
         logger.info(f"Resuming session {data}")
-        self.buyopen_bar1m_idx = data['buyopen_bar1m_idx']
-        self.sellclose_bar1m_idx = data['sellclose_bar1m_idx']
+        self.session_start = data.get('session_start', []).append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or data['session_start']
+        self.session_end = data.get('session_end', []) or data['session_end']
+        self.buyopen_bar1m_idx = data['buyopen_bar1m_idx'] or data['buyopen_bar1m_idx']
+        logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
         # get all trades so far
         t = sorted([t for t in ib.trades() if t.contract.symbol == self.symbol], key=lambda trade: max(fill.execution.time for fill in trade.fills))
@@ -346,11 +350,12 @@ class Agent:
     
     def checkpoint(self, typ: str) -> None:
         """Checkpoint agent's state and environment"""
-        logger.info(f"{typ}, {self.symbol}, {self.buyopen_bar1m_idx}, {self.sellclose_bar1m_idx}")
+        logger.info(f"{typ}")
         pkldump = {
             'symbol': self.symbol,
-            'buyopen_bar1m_idx': self.buyopen_bar1m_idx,
-            'sellclose_bar1m_idx': self.sellclose_bar1m_idx
+            'session_start': self.session_start,
+            'session_end': self.session_end.append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or self.session_end,
+            'buyopen_bar1m_idx': self.buyopen_bar1m_idx, # current day only, not valid the next day
         }
         fpkl.seek(0)
         pickle.dump(pkldump, fpkl)
@@ -1370,10 +1375,13 @@ def main():
         fpkl = open(pklfile, 'wb') # write binary
         pklinit = {
             'symbol': 'init',
+            'session_start': [datetime.datetime.now(datetime.timezone.utc).astimezone()],
+            'session_end': [],
             'buyopen_bar1m_idx': [],
             'sellclose_bar1m_idx': []
         }
         pickle.dump(pklinit, fpkl) # initialize it
+        logger.info(f"Initialized pkl file: {pklfile}")
     else:
         fpkl = open(pklfile, 'r+b') # read/write binary
         data = pickle.load(fpkl)
