@@ -239,20 +239,42 @@ class Agent:
         logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
         # get all trades so far
-        t = sorted([t for t in ib.trades() if t.contract.symbol == self.symbol], key=lambda trade: max(fill.execution.time for fill in trade.fills))
-        if t:
-            if t[-1].order.action == 'SELL':
-                lt = t[-1]
-            elif t[-1].order.action == 'BUY' and (len(t) > 1 and t[-2].order.action == 'SELL'):
-                lt = t[-2]
-            else:
-                lt = None
-                logger.warning(f"no sell trade found")
-                return
-            self.lastSellTrade = lt
-            self.lastSaleTime = max(fill.execution.time for fill in lt.fills)
-            self.lastSalePrice = sum(fill.execution.price * fill.execution.shares for fill in lt.fills) / sum(fill.execution.shares for fill in lt.fills)
-            logger.info(f"last sell trade: {lt}, last sale time: {self.lastSaleTime}, last sale price: {self.lastSalePrice}")
+        trades = [t for t in ib.trades() if t.contract.symbol == self.symbol]
+        # ensure each trade has fills
+        tt = []
+        for trade in trades:
+            if not trade.fills and trade.orderStatus.status != 'Cancelled':
+                logger.error(f"Trade has no fills and orderStatus is not cancelled: {trade}")
+            elif not trade.fills and trade.orderStatus.status == 'Cancelled':
+                pass # ignore cancelled trades
+                logger.info(f"Skipping cancelled trade: {trade}")
+            else: # trade has fills
+                # logger.debug(f"Trade has fills: {trade}")
+                tt.append(trade)
+        # trades_df = ibtrades_to_df(t)
+        # logger.info(f"trades: {trades_df}")
+        if tt:
+            t = sorted(tt, key=lambda trade: max([fill.execution.time for fill in trade.fills]))
+        else:
+            t = tt
+        if t: # sorted or empty
+            for trade in reversed(t):
+                if trade.order.action == 'SELL':
+                    self.lastSellTrade = trade
+                    self.lastSaleTime = max(fill.execution.time for fill in trade.fills)
+                    self.lastSalePrice = sum(fill.execution.price * fill.execution.shares for fill in trade.fills) / sum(fill.execution.shares for fill in trade.fills)
+                    logger.info(f"last sell trade: {trade}, last sale time: {self.lastSaleTime.astimezone()}, last sale price: {self.lastSalePrice}")
+                    break
+            for trade in reversed(t):
+                if trade.order.action == 'BUY':
+                    self.lastBuyTrade = trade
+                    self.lastBuyTime = max(fill.execution.time for fill in trade.fills)
+                    self.lastBuyPrice = sum(fill.execution.price * fill.execution.shares for fill in trade.fills) / sum(fill.execution.shares for fill in trade.fills)
+                    logger.info(f"last buy trade: {trade}, last buy time: {self.lastBuyTime.astimezone()}, last buy price: {self.lastBuyPrice}")
+                    break
+        else:
+            logger.info(f"no trades found")
+        return # end of resume_session
 
     def simpleLongStrategy1InitPreMarket(self) -> int:
         logger.info(f"Pre-market initialization for {self.symbol}")
