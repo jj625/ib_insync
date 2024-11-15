@@ -209,7 +209,10 @@ class Agent:
     # execdetailTrade: list[ib_insync.order.Trade] = field(default_factory=list)
     # execdetailFill: list[ib_insync.objects.Fill] = field(default_factory=list)
     buyopen_bar1m_idx: list[int] = field(default_factory=list)
+    buyopen_bar1m: list[ib_insync.objects.BarData] = field(default_factory=list) # the bar1m where buy was recorded, valid across days
+    high_since_buy_bar1m: list[ib_insync.objects.BarData] = field(default_factory=list) # the bar1m where the high since buy was recorded, valid across days
     sellclose_bar1m_idx: list[int] = field(default_factory=list)
+    sellclose_bar1m: list[ib_insync.objects.BarData] = field(default_factory=list) # the bar1m where sell was recorded, valid across days
     mile0_max_retracement_pct: float = 0.0
     mile0_max_retracement_absolute_min_pct: float = 0.0
     lastSalePrice: float = 0.0
@@ -228,7 +231,10 @@ class Agent:
         logger.info(f"Resuming session {data}")
         self.session_start = data.get('session_start', []).append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or data['session_start']
         self.session_end = data.get('session_end', []) or data['session_end']
-        self.buyopen_bar1m_idx = data['buyopen_bar1m_idx'] or data['buyopen_bar1m_idx']
+        self.buyopen_bar1m_idx = data.get('buyopen_bar1m_idx', []) or data['buyopen_bar1m_idx']
+        self.buyopen_bar1m = data.get('buyopen_bar1m', []) or data['buyopen_bar1m'] # the bar1m where buy was recorded, valid across days
+        self.sellclose_bar1m_idx = data.get('sellclose_bar1m_idx', []) or data['sellclose_bar1m_idx']
+        self.sellclose_bar1m = data.get('sellclose_bar1m', []) or data['sellclose_bar1m'] # the bar1m where sell was recorded, valid across days
         logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
         # get all trades so far
@@ -356,6 +362,9 @@ class Agent:
             'session_start': self.session_start,
             'session_end': self.session_end.append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or self.session_end,
             'buyopen_bar1m_idx': self.buyopen_bar1m_idx, # current day only, not valid the next day
+            'buyopen_bar1m': self.buyopen_bar1m, # the bar1m where buy was recorded, valid across days
+            'sellclose_bar1m_idx': self.sellclose_bar1m_idx, # current day only, not valid the next day
+            'sellclose_bar1m': self.sellclose_bar1m, # the bar1m where sell was recorded, valid across days
         }
         fpkl.seek(0)
         pickle.dump(pkldump, fpkl)
@@ -539,8 +548,10 @@ class Agent:
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade}")
                         self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # record the bar index when we placed the trade
+                        self.buyopen_bar1m.append(agent.bars[-1]) # record the bar when we placed the trade
                         self.checkpoint('buyopen')
                         loop = asyncio.get_running_loop()
+                        # https://github.com/python/cpython/issues/104091
                         task = loop.create_task(telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"Buying shares of {contract_} as {self.order} {self.trade.log}"))
                         background_tasks.add(task) # keep a reference to the task
                         task.add_done_callback(background_tasks.discard)
@@ -1378,7 +1389,9 @@ def main():
             'session_start': [datetime.datetime.now(datetime.timezone.utc).astimezone()],
             'session_end': [],
             'buyopen_bar1m_idx': [],
-            'sellclose_bar1m_idx': []
+            'sellclose_bar1m_idx': [],
+            'buyopen_bar1m': [],
+            'sellclose_bar1m': [],
         }
         pickle.dump(pklinit, fpkl) # initialize it
         logger.info(f"Initialized pkl file: {pklfile}")
