@@ -348,6 +348,11 @@ class Agent:
         self.high_since_buy_bar1m = data.get('high_since_buy_bar1m', []) or data['high_since_buy_bar1m']
         logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
+        # if self.high_since_buy_bar1m is None:
+        #     logger.warning(f"high_since_buy_bar1m is None")
+        #     if len(self.bars) > 0:
+        #         self.high_since_buy_bar1m = max(self.bars, key=lambda bar: bar.close)
+
         # get all trades so far
         trades = [t for t in ib.trades() if t.contract.symbol == self.symbol]
         # ensure each trade has fills
@@ -542,19 +547,20 @@ class Agent:
         # update high water mark since last buy, for the purpose of calculating drawdown
         needCheckpoint = False
         if self.high_since_buy_bar1m:
-            if self.high_since_buy_bar1m[-1].high <= currentBar.high:
-                prev = self.high_since_buy_bar1m[-1]
+            if self.high_since_buy_bar1m[-1].average <= currentBar.average:
+                prev = self.high_since_buy_bar1m[-1].copy()
                 self.high_since_buy_bar1m[-1] = currentBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentBar}")
-            if self.high_since_buy_bar1m[-1].high <= currentFullBar.high:
-                prev = self.high_since_buy_bar1m[-1]
+            if self.high_since_buy_bar1m[-1].average <= currentFullBar.average:
+                prev = self.high_since_buy_bar1m[-1].copy()
                 self.high_since_buy_bar1m[-1] = currentFullBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentFullBar}")
-        else:
-            self.high_since_buy_bar1m.append(currentBar)
-            needCheckpoint = True
+        # we initialize it when we buy
+        # else:
+        #     self.high_since_buy_bar1m.append(currentBar)
+        #     needCheckpoint = True
         # checkpoint as needed
         if needCheckpoint:
             # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
@@ -731,8 +737,7 @@ class Agent:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade}")
-                        self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # record the bar index when we placed the trade
-                        self.buyopen_bar1m.append(agent.bars[-1]) # record the bar when we placed the trade
+                        self.high_since_buy_bar1m.append(agent.bars[-1]) # initialize high since buy
                         self.checkpoint('buyopen')
                         loop = asyncio.get_running_loop()
                         # https://github.com/python/cpython/issues/104091
@@ -776,6 +781,7 @@ class Agent:
                     logmsg = f"Trade status: {self.trade}"
                     self.trade = None
                     logger.info(logmsg + f", resetting trade to None")
+                    self.high_since_buy_bar1m = [] # reset high since buy
                     # allow to proceed
                 elif self.trade.orderStatus.status == 'Cancelled':
                     logger.error(f"Trade was cancelled: {self.trade}, undoing state change")
@@ -856,7 +862,14 @@ class Agent:
             highest_since_buy = max([bar.close for bar in self.bars[j:]])
             j_timestamp = self.bars[j].date
             logger.info(f"highest_since_buy bar[{j}]={self.bars[j]}")
+        
+        if self.high_since_buy_bar1m:
+            highest_since_buy = self.high_since_buy_bar1m[-1].average # using average is more realistic
+        else:
+            logger.warning(f"high_since_buy_bar1m is not set")
+            highest_since_buy = lastPrice_
         hwm = max(highest_since_buy, lastPrice_)
+        logger.info(f"highest_since_buy={highest_since_buy:.2f} vs hwm={hwm:.2f}")
         drawdown = min(0, lastPrice_ - hwm)
         drawdown_pct = drawdown / hwm
         pnl_hwm = hwm - avgCost_
