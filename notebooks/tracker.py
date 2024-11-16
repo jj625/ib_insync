@@ -755,6 +755,11 @@ class Agent:
             return # end of seekEntry
 
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
+        t = ib.tickers()[0]
+        tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
+        if abs(tdiff) > 1.0:
+            logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
+        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:.2%} volume {t.volume:n}")
         logger.info(f"state={self.get_state()}")
         if self.get_state() in [0, 2]:
             # no position, no outstanding trades and milestone has been reset
