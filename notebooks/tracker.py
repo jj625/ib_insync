@@ -901,7 +901,8 @@ class Agent:
                 logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
             elif cond2:
                 logger.warning(f"Crossed below max retracement {drawdown_pct:.2%}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
-            self.order = LimitOrder('SELL', self.stkpos.position, lastPrice_)
+            bid_price = get_bid_price()
+            self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
             contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
             logger.warning(f"Selling shares of {contract_} as {self.order}")
             # before we place the order, make sure no outstanding trades
@@ -962,7 +963,8 @@ class Agent:
             if self.stkpos.position > 0 and self.trade is None:
                 # self.order = MarketOrder('SELL', self.stkpos.position)
                 # watch out, with limit order we may not get filled
-                self.order = LimitOrder('SELL', self.stkpos.position, lastPrice)
+                bid_price = get_bid_price()
+                self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 logger.warning(f"Selling shares of {contract_} as {self.order} ...")
             if self.stkpos.position < 0 and self.trade is None:
