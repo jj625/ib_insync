@@ -685,7 +685,7 @@ class Agent:
         
         # update milestone index
         newIdx_ = 0
-        lastPrice_ = self.lastPrice
+        lastPrice_ = get_market_price()
         avgCost_ = self.stkpos.avgCost
         while newIdx_ < len(self.upPctMilestone) and lastPrice_ > avgCost_ * (1 + self.upPctMilestone[newIdx_]):
             newIdx_ += 1
@@ -729,7 +729,7 @@ class Agent:
         logger.info(f"px_hwm {hwm}, px_highest_since_buy {highest_since_buy}")
         # report if we are in drawdown
         if drawdown_pct < 0:
-            logger.warning(f"Drawdown: {drawdown_pct:.2%}")
+            logger.info(f"Drawdown: {drawdown_pct:.2%}")
         
         # this is the original exit condition
         # but this results in negative expected pnl because we are exiting at a loss
@@ -742,7 +742,7 @@ class Agent:
         cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone == 0
         if self.idxMilestone == 0:
             logger.info(f"{max_retracement_pct:.3%} {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
-        logger.info(f"cond1={cond1}, cond2={cond2}, idxMilestone={self.idxMilestone}")
+        logger.info(f"stpls={cond1}, ddrtrc={cond2}, idxMilestone={self.idxMilestone}")
         
         if cond1 or cond2:
             # crossed below milestone, we should liquidate
@@ -801,7 +801,7 @@ class Agent:
     def enforceMaxLoss(self, lastPrice=None, maxloss_=None):
         logger.debug(get_asyncio_running_loop('')) # expect 'no running event loop'
         if lastPrice is None:
-            lastPrice = self.lastPrice
+            lastPrice = get_market_price()
         if maxloss_ is None:
             maxloss_ = self.maxloss
         currentPnl = (lastPrice - self.stkpos.avgCost) * self.stkpos.position
