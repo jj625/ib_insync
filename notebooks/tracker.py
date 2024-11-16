@@ -802,7 +802,6 @@ class Agent:
                     logger.info(f"Trade is still open: {ib.openTrades()}")
                 elif self.trade not in ib.openTrades() and self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade is filled: {self.trade.log}"
-                    logger.info(logmsg)
                     # self.state = 1
                     self.trade = None
                     logger.info(logmsg + f", resetting trade to None")
