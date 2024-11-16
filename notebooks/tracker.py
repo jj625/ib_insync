@@ -1788,7 +1788,9 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Caught KeyboardInterrupt, exiting...") 
+        logger.info("Caught KeyboardInterrupt, exiting...")
+    except Exception as e:
+        logger.exception(f"Caught exception {e}", exc_info=True, stack_info=True)
     finally:
         logger.info("Cleaning up...")
         if ib is not None:
