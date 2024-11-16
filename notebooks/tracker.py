@@ -873,7 +873,7 @@ def onPnlUpdate(pnl: ib_insync.objects.PnL):
     # pdb.set_trace()
     return # end of onPnlUpdate
 
-def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem) -> None:
+def onPortfolioUpdate(portfolioItem: ib_insync.objects.PortfolioItem) -> None:
     """
     every three minutes, usually following onAccountValueUpdate
     not doing significant function yet, just doing checkings, confirming that we are in sync with IB
@@ -881,21 +881,28 @@ def onPortfolioUpdate(portfolio: ib_insync.objects.PortfolioItem) -> None:
     """
 
     # logger.debug(get_asyncio_running_loop(''))
-    # logger.debug(f"{portfolio}")
+    # logger.debug(f"{portfolioItem}")
     if agent is None:
-        logger.error(f"agent not initialized, expected {portfolio}")
+        logger.error(f"agent not initialized, expected {portfolioItem}")
         return
-    if portfolio.contract.symbol == agent.symbol:
+    elif agent.stkpos is None:
+        if agent.stkpos.position == 0 and portfolioItem.position == 0:
+            pass # no position, it's fine
+            return
+        elif agent.stkpos.position == 0 and portfolioItem.position != 0:
+            logger.error(f"agent.stkpos.position is zero, expected {portfolioItem}")
+            return
+    if portfolioItem.contract.symbol == agent.symbol:
         # ensure we agree with IB on the stock position
         if portfolioItem.position != agent.stkpos.position:
             logger.warning(f"portfolioItem.position={portfolioItem.position} != agent.stkpos.position={agent.stkpos.position}")
+            # could be partially filled
             return
-        if not math.isclose(portfolioItem.averageCost, agent.stkpos.avgCost, abs_tol=.001):
+        elif not math.isclose(portfolioItem.averageCost, agent.stkpos.avgCost, abs_tol=.001):
             logger.warning(f"portfolioItem.averageCost={portfolioItem.averageCost:.4f} != agent.stkpos.avgCost={agent.stkpos.avgCost:.4f}")
-            # agent.set_state(99) # bail out of main loop
             return
     else:
-        logger.debug(f"skipping {portfolio.contract.symbol} {format_value(portfolio.position, True)}")
+        logger.debug(f"skipping {portfolioItem.contract.symbol} {format_value(portfolioItem.position, True)}")
     # ib.sleep(30) # simulate blocking
     # pdb.set_trace()
     return # end of onPortfolioUpdate
