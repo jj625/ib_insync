@@ -199,6 +199,8 @@ class Agent:
     symbol: str
     # position: ib_insync.objects.Position = None
     stkpos: ib_insync.objects.Position = None
+    ibcontract: ib_insync.contract.Contract = None
+    prevclose: float = 0.0
     begintime: datetime.datetime = datetime.datetime.now()
     barsstartidx: int = 0
     beginprice: float = 0.0
@@ -325,13 +327,37 @@ class Agent:
         #     # self.strategy1initstatus = -1
         #     return -1
 
-        histbars = pd.read_csv(f'./data/{self.symbol}_1d.csv', parse_dates=['date'])
-        yestdate = pd.to_datetime(datetime.datetime.now().date() + datetime.timedelta(days=-1))
-        if yestdate not in histbars['date'].values:
-            logger.error(f"Yesterday's date not found in historical bars")
+        filename = f'./data/{self.symbol}_1d.csv'
+        if os.path.exists(filename):
+            histbars = pd.read_csv(filename, parse_dates=['date'])
+            yestdate = pd.to_datetime(last_business_dt())
+            if yestdate not in histbars['date'].values:
+                logger.error(f"Yesterday's date not found in historical bars")
+                return -1
+            else:
+                self.prevclose = (histbars[ histbars['date'] == yestdate ].close).values[0]
+        
+        agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
+        ib.qualifyContracts(contract_1)
+        # request market data
+        ib.reqMarketDataType(1)
+        ib.reqMktData(contract_1, '', False, False, None)
+        ib.sleep(1)
+        if len(ib.tickers()) != 1:
+            logger.error(f"{ib.tickers()}: expected 1 ticker")
             return -1
-        # at the moment, this is all we care about
-        self.prevclose = histbars[ histbars['date'] == yestdate ].close
+        t = ib.tickers()[0]
+
+        tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
+        if abs(tdiff) > 2.0:
+            # report clock skew
+            logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
+        logger.info(f"{t.contract.localSymbol}: {t.time:%H:%M:%S} bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:.2%} close {t.close} volume {t.volume:n}")
+
+        if self.prevclose > 0 and t.close != self.prevclose:
+            logger.warning(f"ticker.close={t.close} != histbars.close={self.prevclose}")
+            # not fatal, just a warning
+        self.prevclose = t.close
         # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
         # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
 
