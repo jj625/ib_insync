@@ -14,6 +14,8 @@ def get_asyncio_running_loop(prefix: str = '') -> str:
 import ibapi
 import pandas as pd
 import numpy as np
+from numpy.typing import NDArray
+np_pct = {'float_kind': lambda x: f"{x:.2%}"}
 import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
 import scipy
@@ -35,8 +37,10 @@ if telegram.__version__ < '20.0':
     sys.exit(1)
 
 from concurrent.futures import ThreadPoolExecutor
-import pytz
-local_tz = pytz.timezone('US/Eastern')  # Adjust for your local timezone, America/New_York
+import zoneinfo
+local_tz = zoneinfo.ZoneInfo('US/Eastern')  # Adjust for your local timezone, America/New_York
+# import pytz
+# local_tz = pytz.timezone('US/Eastern')  # Adjust for your local timezone, America/New_York
 
 # to import local code
 # https://stackoverflow.com/questions/61058798/python-relative-import-in-jupyter-notebook
