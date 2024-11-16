@@ -148,6 +148,31 @@ def neg(num: numbers.Real) -> numbers.Real:
     """Return the negative part of the number"""
     return min(0, num)
 
+def last_5m_hml(bars: List[BarData]) -> NDArray[np.float64]:
+    """high minus low for the last 5 bars"""
+    return np.array([bar.high - bar.low for bar in bars[-5:]])
+
+def get_mid_price() -> float:
+    return ib.tickers()[0].midpoint()
+
+def get_market_price() -> float:
+    return ib.tickers()[0].marketPrice()
+
+def get_bid_price() -> float:
+    return ib.tickers()[0].bid
+
+def average_price(trade: ib_insync.order.Trade) -> float:
+    return sum(fill.execution.price * fill.execution.shares for fill in trade.fills) / sum(fill.execution.shares for fill in trade.fills)
+
+def max_exec_time(trade: ib_insync.order.Trade) -> datetime.datetime:
+    return max(fill.execution.time for fill in trade.fills)
+
+def trade_commision(trade: ib_insync.order.Trade) -> float:
+    return sum(fill.commissionReport.commission for fill in trade.fills)
+
+def trade_realized_pnl(trade: ib_insync.order.Trade) -> float:
+    return sum(fill.commissionReport.realizedPNL for fill in trade.fills)
+
 def singleton(cls):
     instances = {}
     def wrapper(*args, **kwargs):
