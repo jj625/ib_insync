@@ -148,6 +148,84 @@ def neg(num: numbers.Real) -> numbers.Real:
     """Return the negative part of the number"""
     return min(0, num)
 
+def last_business_dt() -> datetime.date:
+    """Return the last business date"""
+    today = datetime.datetime.now().date()
+    if today.weekday() == 0: # Monday
+        return today + datetime.timedelta(days=-3)
+    else:
+        return today + datetime.timedelta(days=-1)
+
+# Function to flatten the trade structure
+def flatten_trade(trade: ib_insync.order.Trade):
+    trade_dict = {
+        'contract_symbol': trade.contract.symbol,
+        'contract_secType': trade.contract.secType,
+        'contract_exchange': trade.contract.exchange,
+        'contract_currency': trade.contract.currency,
+        'order_action': trade.order.action,
+        # 'order_totalQuantity': trade.order.totalQuantity,
+        'order_orderType': trade.order.orderType,
+        'order_lmtPrice': trade.order.lmtPrice,
+        # 'order_auxPrice': trade.order.auxPrice,
+        # 'order_tif': trade.order.tif,
+        # 'order_status': trade.orderStatus.status,
+        # 'order_filled': trade.orderStatus.filled,
+        # 'order_remaining': trade.orderStatus.remaining,
+        # 'order_avgFillPrice': trade.orderStatus.avgFillPrice,
+        # 'order_lastFillPrice': trade.orderStatus.lastFillPrice,
+        'order_permId': trade.order.permId,
+        # 'order_clientId': trade.order.clientId,
+        # 'order_orderId': trade.order.orderId,
+        # 'order_parentId': trade.order.parentId,
+        # 'order_whyHeld': trade.orderStatus.whyHeld,
+        # 'order_mktCapPrice': trade.orderStatus.mktCapPrice
+    }
+    return trade_dict
+
+# Function to flatten the fill structure
+def flatten_fill(fill: ib_insync.objects.Fill):
+    fill_dict = {
+        'exec_execId': fill.execution.execId,
+        'exec_time': fill.execution.time.astimezone(),
+        'exec_acctNumber': fill.execution.acctNumber,
+        'exec_exchange': fill.execution.exchange,
+        'exec_side': fill.execution.side,
+        'exec_shares': fill.execution.shares,
+        'exec_price': fill.execution.price,
+        'exec_permId': fill.execution.permId,
+        # 'exec_clientId': fill.execution.clientId,
+        'exec_orderId': fill.execution.orderId,
+        'exec_liquidation': fill.execution.liquidation,
+        'exec_cumQty': fill.execution.cumQty,
+        'exec_avgPrice': fill.execution.avgPrice,
+        'exec_orderRef': fill.execution.orderRef,
+        # 'exec_evRule': fill.execution.evRule,
+        # 'exec_evMultiplier': fill.execution.evMultiplier,
+        'commission_report_commission': fill.commissionReport.commission,
+        'commission_report_currency': fill.commissionReport.currency,
+        'commission_report_realizedPNL': fill.commissionReport.realizedPNL,
+        # 'commission_report_yield': fill.commissionReport.yield_,
+        # 'commission_report_yieldRedemptionDate': fill.commissionReport.yieldRedemptionDate
+    }
+    return fill_dict
+
+def ibtrades_to_df(trades: list[ib_insync.order.Trade]) -> pd.DataFrame:
+    if trades is None or len(trades) == 0:
+        trades = ib.trades()
+
+    # Flatten all trades and fills
+    flattened_trades = [flatten_trade(trade) for trade in trades]
+    flattened_fills = [flatten_fill(fill) for trade in trades for fill in trade.fills]
+
+    # Create hierarchical pandas DataFrames
+    df_trades = pd.DataFrame(flattened_trades)
+    df_fills = pd.DataFrame(flattened_fills)
+
+    # Merge trades and fills DataFrames
+    df_merged = pd.merge(df_trades, df_fills, left_on='order_permId', right_on='exec_permId', how='outer')
+    return df_merged
+
 def last_5m_hml(bars: List[BarData]) -> NDArray[np.float64]:
     """high minus low for the last 5 bars"""
     return np.array([bar.high - bar.low for bar in bars[-5:]])
