@@ -559,16 +559,14 @@ class Agent:
             # case in point: AMD 10/29/2024 9:35 and 9:36 bars
             tbg1y = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
                 self.bars[-2].close == self.bars[-2].open and self.bars[-3].close > self.bars[-3].open)
-            if tbg or tbg1y:
-                if tbg1y:
-                    logger.warning(f"tbg1y={tbg1y}")
-                # check if at least one of them close near the high
-                cnh = (self.bars[-2].close >= self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low) or
-                    self.bars[-3].close >= self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low))
-                if cnh:
-                    retval = True # (tbg or tbg1y) and cnh
+            # check if at least one of them close near the high
+            cnh = (self.bars[-2].close >= self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low) or
+                self.bars[-3].close >= self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low))
+            if (tbg or tbg1y) and cnh:
+                retval = True
             
-            logger.warning(f"tbg={tbg} tbg1y={tbg1y} cnh={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
+            if tbg or tbg1y or cnh:
+                logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
             return retval
 
         def low_to_high_inflection_point(n=15, m=5) -> bool:
@@ -637,10 +635,11 @@ class Agent:
             isInflection_15_5 = low_to_high_inflection_point(15, 5)
             isInflection_10_5 = low_to_high_inflection_point(10, 5)
             isInflection_5_3 = low_to_high_inflection_point(5, 3)
+            tgb1cnh = two_bars_green_with_one_close_near_high_2()
             cond1 = two_bars_green_with_one_close_near_high_2() and isInflection_10_5 # original condition 
-            cond2 = isFollowThrough and lastn_bars_green(3) >= 2 # don't need to check for inflection point
-            logger.info(f"cond1={cond1}, cond2={cond2}, isInflection_15_5={isInflection_15_5}, isInflection_10_5={isInflection_10_5}, isInflection_5_3={isInflection_5_3}")
-            if cond1 or cond2:
+            ft_gb32 = isFollowThrough and lastn_bars_green(3) >= 2 # don't need to check for inflection point
+            logger.info(f"tgb1cnh={tgb1cnh}, ft_gb32={ft_gb32}, isInflection_10_5={isInflection_10_5}, isInflection_15_5={isInflection_15_5}, isInflection_5_3={isInflection_5_3}")
+            if tgb1cnh and isInflection_10_5 or ft_gb32:
                 # logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
                 self.order = MarketOrder('BUY', agent.numshares)
                 contract_ = Stock(self.symbol, 'SMART', 'USD')
