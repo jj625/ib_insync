@@ -737,6 +737,8 @@ class Agent:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
                         logger.info(f"Trade placed: {self.trade}")
+                        self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # remember the bar index when we placed the trade
+                        self.buyopen_bar1m.append(agent.bars[-1]) # remember the bar when we placed the trade
                         self.high_since_buy_bar1m.append(agent.bars[-1]) # initialize high since buy
                         self.checkpoint('buyopen')
                         loop = asyncio.get_running_loop()
@@ -852,17 +854,17 @@ class Agent:
         # calculate drawdown
         # get the highest 1m close since we last buy. get the higher of that and current price. drawdownpct = min(0, (lastprice - highest)/highest)
         # if we are below the highest, we are in drawdown
-        if not self.buyopen_bar1m_idx:
-            logger.warning(f"buyopen_bar1m_idx is not set")
-            j = None
-            j_timestamp = None
-            highest_since_buy = max([bar.close for bar in self.bars])
-        else:
-            j = self.buyopen_bar1m_idx[-1]
-            highest_since_buy = max([bar.close for bar in self.bars[j:]])
-            j_timestamp = self.bars[j].date
-            logger.info(f"highest_since_buy bar[{j}]={self.bars[j]}")
-        
+        # if not self.buyopen_bar1m_idx:
+        #     logger.warning(f"buyopen_bar1m_idx is not set")
+        #     j = None
+        #     j_timestamp = None
+        #     highest_since_buy = max([bar.close for bar in self.bars])
+        # else:
+        #     j = self.buyopen_bar1m_idx[-1]
+        #     highest_since_buy = max([bar.close for bar in self.bars[j:]])
+        #     j_timestamp = self.bars[j].date
+        #     logger.info(f"highest_since_buy bar[{j}]={self.bars[j]}")
+
         if self.high_since_buy_bar1m:
             highest_since_buy = self.high_since_buy_bar1m[-1].average # using average is more realistic
         else:
