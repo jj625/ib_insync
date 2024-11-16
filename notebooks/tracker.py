@@ -912,6 +912,7 @@ class Agent:
                     self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade}, state reset to 0")
                     self.sellclose_bar1m_idx.append(len(self.bars) - 1)
+                    self.sellclose_bar1m.append(self.bars[-1]) # record the bar1m where we placed the trade
                     self.checkpoint('sellclose')
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(
@@ -978,6 +979,7 @@ class Agent:
                     self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade}, state reset to 0")
                     self.sellclose_bar1m_idx.append(len(self.bars) - 1) # record the bar index when we placed the trade
+                    self.sellclose_bar1m.append(self.bars[-1]) # record the bar1m where we placed the trade
                     self.checkpoint('enforceMaxLoss')
                     loop = asyncio.get_event_loop()
                     logger.debug(get_asyncio_running_loop('get_event_loop()')) # expect 'no running event loop'
