@@ -1,3 +1,4 @@
+import os
 import sys
 import pickle
 import inspect
@@ -36,7 +37,8 @@ import telegram
 if telegram.__version__ < '20.0':
     print("Requires python-telegram-bot library version 20.0 or higher")
     sys.exit(1)
-
+import rich
+from rich.logging import RichHandler
 from concurrent.futures import ThreadPoolExecutor
 import zoneinfo
 local_tz = zoneinfo.ZoneInfo('US/Eastern') # Adjust for your local timezone, America/New_York
@@ -54,12 +56,26 @@ if parent_dir not in sys.path:
 
 # cmd /c mklink /D "eventkit" "C:\Users\Jimmy\source\erdewit\eventkit"
 import pathlib
-mpl_dir = pathlib.Path('../eventkit').resolve()
-if mpl_dir.exists() and mpl_dir.is_dir() and str(mpl_dir) not in sys.path:
-    sys.path.insert(0, str(mpl_dir))
-    mpl_dir
-elif not mpl_dir.exists():
-    print(f"Expected {mpl_dir} does not exist")
+
+search_dirs = ['..', '../..', '../../..']
+pkg_needed = ['eventkit', 'rlabbe/filterpy', 'jj625/python-telegram-bot', 'jj625/mplfinance']
+pkg_dirs = {}
+
+for pkg in pkg_needed:
+    for dir in search_dirs:
+        potential_dir = pathlib.Path(dir, pkg).resolve()
+        if potential_dir.exists() and potential_dir.is_dir():
+            pkg_dirs[pkg] = potential_dir
+            break
+
+for pkg, pkg_dir in pkg_dirs.items():
+    if str(pkg_dir) not in sys.path:
+        sys.path.insert(0, str(pkg_dir))
+        print(f"{pkg_dir} added to sys.path")
+
+missing_pkgs = [pkg for pkg in pkg_needed if pkg not in pkg_dirs]
+if missing_pkgs:
+    print(f"Expected directories not found for: {', '.join(missing_pkgs)}")
 
 import eventkit
 import ib_insync
@@ -71,6 +87,84 @@ from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
 import filterpy
 from filterpy.kalman import KalmanFilter as kf
 
+
+class OnlineStatsInt:
+    def __init__(self, val_max: int = 1000):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+        self.val_max = val_max
+        self.counts = np.zeros(val_max + 1, dtype=int)
+
+    def update(self, x: int):
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+        self.counts[x] += 1
+
+    def variance(self):
+        return self.M2 / self.n if self.n > 1 else 0.0
+
+    def stddev(self):
+        return np.sqrt(self.variance())
+
+    def skewness(self):
+        return skew(self.counts)
+
+    def kurtosis(self):
+        return kurtosis(self.counts)
+
+    def mode(self):
+        return np.argmax(self.counts)
+
+    def quartiles(self):
+        cumulative_counts = np.cumsum(self.counts)
+        total = cumulative_counts[-1]
+        return [np.searchsorted(cumulative_counts, total * q / 4) for q in range(1, 4)]
+
+    def deciles(self):
+        cumulative_counts = np.cumsum(self.counts)
+        total = cumulative_counts[-1]
+        return [np.searchsorted(cumulative_counts, total * d / 10) for d in range(1, 10)]
+
+class OnlineStatsReal:
+    def __init__(self, qlen=1000):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+        self.values = deque(maxlen=qlen)  # Keep a limited history for mode, quartiles, and deciles
+
+    def update(self, x: numbers.Real):
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+        self.values.append(x)
+
+    def variance(self):
+        return self.M2 / self.n if self.n > 1 else 0.0
+
+    def stddev(self):
+        return np.sqrt(self.variance())
+
+    def skewness(self):
+        return skew(self.values)
+
+    def kurtosis(self):
+        return kurtosis(self.values)
+
+    def mode(self):
+        return mode(self.values, keepdims=True).mode[0]
+
+    def quartiles(self):
+        return np.percentile(self.values, [25, 50, 75])
+
+    def deciles(self):
+        return np.percentile(self.values, np.arange(10, 100, 10))
+
 # Global variables
 logger = None
 
@@ -78,7 +172,43 @@ bars5s: List[BarData] = []
 resampled: List[BarData] = [] # resampled 1m bars
 bars1m: List[BarData] = []
 
-def downsample(bars: List[BarData], b, n: int):
+hml: list[float] = [] # high minus low
+hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
+
+def onError(reqId, errorCode, errorString, contract):
+    logger.error(f"Error. Id: {reqId}, Code: {errorCode}, Msg: {errorString}")
+
+def onBarUpdate1m(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"bars1m[-1]={bars1m[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        logger.info(f"bars1m[-2]={bars1m[-2]}") # the one just closed
+
+    # high minus low
+    currentBar = bars[-1] # bar that is being built, never full
+    currentFullBar = bars[-2] # the most recent fully formed bar
+    hmlfb_ = currentFullBar.high - currentFullBar.low
+    hml_ = currentBar.high - currentBar.low
+    logger.info(f"hmlfb={hmlfb_:0.2f} hml={hml_:0.2f}")
+    if hasNewBar or hml == []: # new bar or first bar
+        fbhml_ = currentFullBar.high - currentFullBar.low
+        # if hml and fbhml_ != hml[-1]:
+        #     logger.warning(f"currentFullBar hml != hml[-1]: {currentFullBar} != {hml[-1]}")
+        #     hml[-1] = currentFullBar.high - currentFullBar.low
+        hml.append(hml_)
+        # hml_pct.append(hml_ / prevclose)
+    else:
+        hml[-1] = hml_ # update the last element
+        # hml_pct[-1] = hml_ / prevclose
+    # lastPrice = get_market_price() # sample the market price # was bars[-1].close
+    hmlstat.update(int(hml_*100.))
+    logger.info(f"hml={hml[-1]:0.2f} mean={hmlstat.mean:0.3f} stddev={hmlstat.stddev():0.3f} quartiles={hmlstat.quartiles()}")
+
+def onResampledBar(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+
+def resample(bars: List[BarData], b, n: int):
     if b.date.minute % n == 0:
         # resample to n minutes
         bars.append(b)
@@ -90,20 +220,32 @@ def downsample(bars: List[BarData], b, n: int):
             bars[-1].low = b.low
         bars[-1].volume += b.volume
 
-def onBarUpdate1m(bars: List[BarData], hasNewBar: bool):
-    logger.info(f"bars1m[-1]={bars1m[-1]} hasNewBar={hasNewBar}")
 
 def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
     """
     bars: ohlcv every 5 seconds
     """
-    b = bars[-1]
+    logging.info("-"*40)
+    msg = f"bars[-1]={bars[-1]}"
+    if hasNewBar == False: # we don't expect False for 5s
+        msg += " hasNewBar=False" # in case it happens, print warning
+        logging.warning(msg)
+    else:
+        logging.info(msg)
+    resampledHasNewBar = False
+    z = bars[-1]
+    b: BarData = BarData(z.date, z.open, z.high, z.low, z.close
+        , z.volume, z.average, z.barCount) # make sure b is a copy so we don't inadvertently change bar5s
     # logger.info(f"{bars[-1]} hasNewBar={hasNewBar}")
-
-    if b.date.second % 60 == 0 or resampled == []:
+    at5s = b.date.second % 60 == 0
+    if at5s or resampled == []:
         # resample to 60 seconds/1 min
+        if at5s and resampled:
+            logger.debug(f"resampled[-2]={resampled[-1]}") # the one just closed
         resampled.append(b)
-        logger.info(f"resampled[-1]={b} hasNewBar=True")
+        assert b == resampled[-1]
+        resampledHasNewBar = True
+        logger.debug(f"resampled[-1]={resampled[-1]} hasNewBar=True")
     elif resampled:
         sumVolume = resampled[-1].volume + b.volume
         sumValues = resampled[-1].volume * resampled[-1].average + b.volume * b.average
@@ -115,7 +257,8 @@ def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
         resampled[-1].volume += b.volume
         resampled[-1].barCount += b.barCount
         resampled[-1].average = sumValues / sumVolume if sumVolume > 0 else 0
-        logger.info(f"resampled[-1]={resampled[-1]} hasNewBar=False")
+        logger.debug(f"resampled[-1]={resampled[-1]} hasNewBar=False")
+    onResampledBar(resampled, resampledHasNewBar) # forward to resampled bar event
 
 class LoggerFilter(logging.Filter):
     def __init__(self, logger_name, pattern=r'.*'):
@@ -131,6 +274,24 @@ class LoggerFilter(logging.Filter):
         )
 
 def main():
+    # Get the program's file name without the extension 
+    program_name = os.path.splitext(os.path.basename(__file__))[0] 
+    scriptdir = os.path.dirname(os.path.realpath(__file__))
+    filesuffix = f'_{datetime.datetime.now():%y%m%d_%H%M}'
+    log_file = os.path.join(scriptdir, 'logs', f'{program_name}_{filesuffix}.log')
+
+    # Initial logging setup
+    # Set up logging to file and console
+    logging.basicConfig(
+        level=logging.INFO,
+        format=('%(asctime)s:%(levelname)s:%(funcName)s:%(message)s'), #  + logging.BASIC_FORMAT
+        handlers=[
+            logging.FileHandler(log_file),
+            #RichHandler(markup=True)
+            logging.StreamHandler()
+        ]
+    )
+
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
     # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
@@ -149,6 +310,9 @@ def main():
     global logger
     logger = logging.getLogger(__name__)
     
+    if args.loglevel != 'INFO':
+        logger.setLevel(args.loglevel)
+
     wlogger = logging.getLogger('ib_insync.wrapper')
     wlogger.addFilter(LoggerFilter('ib_insync.wrapper', 
         r'^(connectAck|nextValidId|accountDownloadEnd|execDetailsEnd|updateAccountTime|accountUpdateMulti|execDetails'
@@ -158,6 +322,7 @@ def main():
     # Connect to IB Gateway
     ib = IB()
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
+    ib.errorEvent += onError
 
     dtnow = datetime.datetime.now()
     syms = args.symbols or ['SPY']
@@ -200,8 +365,10 @@ def main():
                 formatDate=1)
         bars1m.updateEvent += onBarUpdate1m
     
-    ib.sleep(5 * 60)
-    # ib.waitUntil(datetime.time(16, 2, 0))
+    if datetime.datetime.now().time() < datetime.time(16, 0, 0):
+        ib.waitUntil(datetime.time(16, 2, 0))
+    else:
+        ib.sleep(3 * 60)
 
     # # compare with the real 1m bars
     # bars1m_real = ib.reqHistoricalData(
