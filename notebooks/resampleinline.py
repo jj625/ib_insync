@@ -1,5 +1,8 @@
 import os
+# Get the program's file name without the extension 
+program_name = os.path.splitext(os.path.basename(__file__))[0] 
 import sys
+import io
 import pickle
 import inspect
 import re
@@ -20,8 +23,11 @@ import numpy as np
 import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
 import scipy
+from scipy.ndimage import gaussian_filter1d
 import logging
 import datetime
+MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
+MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
 # import time
 import dateutil
 import argparse
@@ -87,6 +93,50 @@ from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
 import filterpy
 from filterpy.kalman import KalmanFilter as kf
 
+from collections import deque
+from scipy.stats import skew, kurtosis, mode
+
+import time
+import functools
+
+# Works with regular functions, instance methods, class methods, static methods, and coroutines.
+# Correctly identifies and displays the class name for methods.
+# Distinguishes between functions and coroutines in the output.
+
+def measure_time(func):
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        print_result(func, args, execution_time)
+        return result
+
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        print_result(func, args, execution_time)
+        return result
+
+    def print_result(func, args, execution_time):
+        if inspect.ismethod(func):
+            func_name = f"{func.__self__.__class__.__name__}.{func.__name__}"
+        elif args and hasattr(args[0].__class__, func.__name__):
+            func_name = f"{args[0].__class__.__name__}.{func.__name__}"
+        else:
+            func_name = func.__name__
+
+        print(f"{'Coroutine' if asyncio.iscoroutinefunction(func) else 'Function'} "
+              f"'{func_name}' took {execution_time:.6f} seconds to execute.")
+
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
 
 class OnlineStatsInt:
     def __init__(self, val_max: int = 1000):
@@ -165,10 +215,29 @@ class OnlineStatsReal:
     def deciles(self):
         return np.percentile(self.values, np.arange(10, 100, 10))
 
+class BarEventHandler:
+    def __init__(self):
+        self.first_call = True
+    
+    def __call__(self, bars: List[BarData], hasNewBar: bool):
+        if self.first_call:
+            self.first_call = False
+            self.onFirstCall(bars, hasNewBar)
+        self.onBarUpdate(bars, hasNewBar)
+
+    def onFirstCall(self, bars: List[BarData], hasNewBar: bool):
+        logger.info(f"bars[-1]={bars[-1]} hasNewBar={hasNewBar}")
+        # for b in bars:
+            
+
+    def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
+        onBarUpdate5s(bars, hasNewBar)
+
 # Global variables
 logger = None
 
 bars5s: List[BarData] = []
+b5s_eventhandler = BarEventHandler()
 resampled: List[BarData] = [] # resampled 1m bars
 bars1m: List[BarData] = []
 
@@ -206,7 +275,10 @@ def onBarUpdate1m(bars: List[BarData], hasNewBar: bool):
 def onResampledBar(bars: List[BarData], hasNewBar: bool):
     logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
     if hasNewBar:
-        logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+        if len(bars) <= 1:
+            logger.info("bars[-2] is not available")
+        else:
+            logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
 
 def resample(bars: List[BarData], b, n: int):
     if b.date.minute % n == 0:
@@ -274,8 +346,6 @@ class LoggerFilter(logging.Filter):
         )
 
 def main():
-    # Get the program's file name without the extension 
-    program_name = os.path.splitext(os.path.basename(__file__))[0] 
     scriptdir = os.path.dirname(os.path.realpath(__file__))
     filesuffix = f'_{datetime.datetime.now():%y%m%d_%H%M}'
     log_file = os.path.join(scriptdir, 'logs', f'{program_name}_{filesuffix}.log')
@@ -352,7 +422,7 @@ def main():
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
                 formatDate=1)
-        bars5s.updateEvent += onBarUpdate5s
+        bars5s.updateEvent += b5s_eventhandler.__call__ # onBarUpdate5s
 
         bars1m = ib.reqHistoricalData(
                 contract_,
@@ -381,8 +451,6 @@ def main():
     #         keepUpToDate=keepUpToDate,
     #         formatDate=1)
     
-    ib.disconnect()
-
     filename5s = f"./data/{sym}_5s_{dtnow:%y%m%d_%H%M}.csv"
     filename1m = f"./data/{sym}_1m_{dtnow:%y%m%d_%H%M}.csv"
     filename1m_resampled = f"./data/{sym}_resampled_{dtnow:%y%m%d_%H%M}.csv"
@@ -391,8 +459,16 @@ def main():
     resampled_df = util.df(resampled)
     bars5s_df.to_csv(filename5s, index=False)
     bars1m_df.to_csv(filename1m, index=False)
-    resampled_df.to_csv(filename1m_resampled, index=False)
+    if resampled_df is not None:
+        resampled_df.to_csv(filename1m_resampled, index=False)
+        buf = io.StringIO()
+        resampled_df.info(buf=buf, verbose=True)
+        logger.info(f"\n{buf}")
+        logger.info(f"\n{resampled_df.describe().to_string()}")
     logger.info(f"Script done. Files saved to:\n{filename5s}\n{filename1m}\n{filename1m_resampled}")
+
+    ib.disconnect()
+
     return # end of main
 
 if __name__ == '__main__':
