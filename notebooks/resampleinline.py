@@ -328,7 +328,7 @@ def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
             resampled[-1].low = b.low
         resampled[-1].volume += b.volume
         resampled[-1].barCount += b.barCount
-        resampled[-1].average = sumValues / sumVolume if sumVolume > 0 else 0
+        resampled[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close # has average even if volume is 0
         logger.debug(f"resampled[-1]={resampled[-1]} hasNewBar=False")
     onResampledBar(resampled, resampledHasNewBar) # forward to resampled bar event
 
