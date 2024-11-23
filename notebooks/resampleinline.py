@@ -229,9 +229,46 @@ class BarEventHandler:
         logger.info(f"bars[-1]={bars[-1]} hasNewBar={hasNewBar}")
         # for b in bars:
             
-
     def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
         onBarUpdate5s(bars, hasNewBar)
+        r, h = self.resampler_5s_1m(bars, resampled)
+        return # end of onBarUpdate
+
+    def resampler_5s_1m(self, inBars: List[BarData], outBars: List[BarData]):
+        """
+        we don't need hasNewBar because 5s bars are always complete
+        inBars: 5s bars
+        outBars: 1m bars
+        """
+        outBarsHasNewBar = False
+        z = inBars[-1]
+        b: BarData = BarData(z.date, z.open, z.high, z.low, z.close
+            , z.volume, z.average, z.barCount) # make sure b is a copy so we don't inadvertently change bar5s
+        # logger.info(f"{inBars[-1]} hasNewBar={hasNewBar}")
+        atTopMinute = b.date.second % 60 == 0 # at the top of the minute
+        if atTopMinute or outBars == []:
+            # resample to 60 seconds/1 min
+            if atTopMinute and outBars:
+                logger.debug(f"outBars[-2]={outBars[-1]}") # the one just closed
+            outBars.append(b)
+            assert b == outBars[-1]
+            outBarsHasNewBar = True
+            logger.debug(f"outBars[-1]={outBars[-1]} hasNewBar=True")
+        elif outBars:
+            sumVolume = outBars[-1].volume + b.volume
+            sumValues = outBars[-1].volume * outBars[-1].average + b.volume * b.average
+            outBars[-1].close = b.close
+            if b.high > outBars[-1].high:
+                outBars[-1].high = b.high
+            if b.low < outBars[-1].low:
+                outBars[-1].low = b.low
+            outBars[-1].volume += b.volume
+            outBars[-1].barCount += b.barCount
+            outBars[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close # has average even if volume is 0
+            logger.debug(f"outBars[-1]={outBars[-1]} hasNewBar=False")
+
+        onResampledBar(outBars, outBarsHasNewBar) # forward to resampled bar event
+        return (outBars, outBarsHasNewBar)
 
 # Global variables
 logger = None
@@ -243,6 +280,18 @@ bars1m: List[BarData] = []
 
 hml: list[float] = [] # high minus low
 hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
+
+# def downsample(bars: List[BarData], b, n: int):
+#     if b.date.minute % n == 0:
+#         # resample to n minutes
+#         bars.append(b)
+#     else:
+#         bars[-1].close = b.close
+#         if b.high > bars[-1].high:
+#             bars[-1].high = b.high
+#         if b.low < bars[-1].low:
+#             bars[-1].low = b.low
+#         bars[-1].volume += b.volume
 
 def onError(reqId, errorCode, errorString, contract):
     logger.error(f"Error. Id: {reqId}, Code: {errorCode}, Msg: {errorString}")
@@ -276,22 +325,21 @@ def onResampledBar(bars: List[BarData], hasNewBar: bool):
     logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
     if hasNewBar:
         if len(bars) <= 1:
-            logger.info("bars[-2] is not available")
+            logger.info("resampled[-2] is not available")
         else:
             logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
 
-def resample(bars: List[BarData], b, n: int):
-    if b.date.minute % n == 0:
-        # resample to n minutes
-        bars.append(b)
-    else:
-        bars[-1].close = b.close
-        if b.high > bars[-1].high:
-            bars[-1].high = b.high
-        if b.low < bars[-1].low:
-            bars[-1].low = b.low
-        bars[-1].volume += b.volume
-
+# def resample(bars: List[BarData], b, n: int):
+#     if b.date.minute % n == 0:
+#         # resample to n minutes
+#         bars.append(b)
+#     else:
+#         bars[-1].close = b.close
+#         if b.high > bars[-1].high:
+#             bars[-1].high = b.high
+#         if b.low < bars[-1].low:
+#             bars[-1].low = b.low
+#         bars[-1].volume += b.volume
 
 def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
     """
@@ -304,33 +352,7 @@ def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
         logging.warning(msg)
     else:
         logging.info(msg)
-    resampledHasNewBar = False
-    z = bars[-1]
-    b: BarData = BarData(z.date, z.open, z.high, z.low, z.close
-        , z.volume, z.average, z.barCount) # make sure b is a copy so we don't inadvertently change bar5s
-    # logger.info(f"{bars[-1]} hasNewBar={hasNewBar}")
-    at5s = b.date.second % 60 == 0
-    if at5s or resampled == []:
-        # resample to 60 seconds/1 min
-        if at5s and resampled:
-            logger.debug(f"resampled[-2]={resampled[-1]}") # the one just closed
-        resampled.append(b)
-        assert b == resampled[-1]
-        resampledHasNewBar = True
-        logger.debug(f"resampled[-1]={resampled[-1]} hasNewBar=True")
-    elif resampled:
-        sumVolume = resampled[-1].volume + b.volume
-        sumValues = resampled[-1].volume * resampled[-1].average + b.volume * b.average
-        resampled[-1].close = b.close
-        if b.high > resampled[-1].high:
-            resampled[-1].high = b.high
-        if b.low < resampled[-1].low:
-            resampled[-1].low = b.low
-        resampled[-1].volume += b.volume
-        resampled[-1].barCount += b.barCount
-        resampled[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close # has average even if volume is 0
-        logger.debug(f"resampled[-1]={resampled[-1]} hasNewBar=False")
-    onResampledBar(resampled, resampledHasNewBar) # forward to resampled bar event
+    return # end of onBarUpdate5s
 
 class LoggerFilter(logging.Filter):
     def __init__(self, logger_name, pattern=r'.*'):
@@ -422,7 +444,8 @@ def main():
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
                 formatDate=1)
-        bars5s.updateEvent += b5s_eventhandler.__call__ # onBarUpdate5s
+        bars5s.updateEvent += b5s_resampler.__call__
+        # bars5s.updateEvent += onBarUpdate5s
 
         bars1m = ib.reqHistoricalData(
                 contract_,
