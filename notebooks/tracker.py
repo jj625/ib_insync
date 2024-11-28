@@ -388,7 +388,7 @@ class Agent:
                     logger.info(f"last buy trade: {trade}, last buy time: {self.lastBuyTime.astimezone()}, last buy price: {self.lastBuyPrice}")
                     break
         else:
-            logger.info(f"no trades found")
+            logger.info(f"no trades done today")
         return # end of resume_session
 
     def simpleLongStrategy1InitPreMarket(self) -> int:
@@ -599,6 +599,7 @@ class Agent:
         
         return
 
+    # @measure_time
     async def simpleLongStrategy1(self):
         """
         Simple long strategy
@@ -614,8 +615,13 @@ class Agent:
           while keeping the position open, hoping to go to the next milestone
         when to exit? when we hit the stopLossPct for the current milestone or we hit the maxloss
         """
+        # these variables are visible to the strategy
+        currentBar = self.bars[-1] # bar that is being built, never full
+        prevBar = self.bars[-2] # the previous bar
+        lastPrice_ = get_market_price()
+
         def lastPctReturn():
-            return (lastPrice_ - self.stkpos.avgCost) / self.stkpos.avgCost
+            return (lastPrice_ / self.stkpos.avgCost) - 1.0
 
         def two_bars_green_with_one_close_near_high():
             """Check if the last two bars are green and at least one of them close near the high"""
@@ -644,13 +650,15 @@ class Agent:
             tbg1y = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
                 self.bars[-2].close == self.bars[-2].open and self.bars[-3].close > self.bars[-3].open)
             # check if at least one of them close near the high
-            cnh = (self.bars[-2].close >= self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low) or
-                self.bars[-3].close >= self.bars[-3].low + 0.8 * (self.bars[-3].high - self.bars[-3].low))
+            cnhratio = 0.8
+            cnh = (self.bars[-2].close >= self.bars[-2].low + cnhratio * (self.bars[-2].high - self.bars[-2].low) or
+                self.bars[-3].close >= self.bars[-3].low + cnhratio * (self.bars[-3].high - self.bars[-3].low))
+            cnhration_actual = (self.bars[-2].close - self.bars[-2].low) / (self.bars[-2].high - self.bars[-2].low)
             if (tbg or tbg1y) and cnh:
                 retval = True
             
             if tbg or tbg1y or cnh:
-                logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
+                logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh ({cnhration_actual:.3})={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
             return retval
 
         def low_to_high_inflection_point(n=15, m=5) -> bool:
@@ -720,12 +728,79 @@ class Agent:
             isInflection_10_5 = low_to_high_inflection_point(10, 5)
             isInflection_5_3 = low_to_high_inflection_point(5, 3)
             tgb1cnh = two_bars_green_with_one_close_near_high_2()
-            cond1 = two_bars_green_with_one_close_near_high_2() and isInflection_10_5 # original condition 
+            orig_cond = tgb1cnh and isInflection_10_5 # original condition 
             ft_gb32 = isFollowThrough and lastn_bars_green(3) >= 2 # don't need to check for inflection point
+            # this is a stopgap until trapdoor or better follow-through is fully implemented
+            blw_lsp: bool = False
+            blw_lsp_pct: float = 0.0
+            if self.lastSalePrice:
+                blw_lsp_pct = lastPrice_ / self.lastSalePrice - 1.0
+                blw_lsp = lastPrice_ < self.lastSalePrice # below last sold price
+                logger.info(f"below_last_sold_price({self.lastSalePrice:.2f}, {blw_lsp_pct:.2%})={blw_lsp}")
+            elif not self.lastSalePrice and isFollowThrough: # expect last sale price is set when follow-through, warn if not
+                logger.warning(f"lastSalePrice is not set, isFollowThrough is set")
             logger.info(f"tgb1cnh={tgb1cnh}, ft_gb32={ft_gb32}, isInflection_10_5={isInflection_10_5}, isInflection_15_5={isInflection_15_5}, isInflection_5_3={isInflection_5_3}")
-            if tgb1cnh and isInflection_10_5 or ft_gb32:
+            # if orig_cond or ft_gb32: # ft_gb32 is broken, don't use it yet
+            # when "following through" (ft), basically we got stoppped out near recent low
+            # we should wait for the next opportunity to buy below last sold price and avoid trashing
+
+            # 11/26/24: when to buy? ft=True, near low of the day, last 4 bars are not green, 
+            #   follow by one green, and current bar average is higher than previous at the bottom of current minute
+            #   nvda 14:26
+            def mn_bars_red(bars: List[BarData], start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
+                """
+                start, end are negative list index
+                count the number of consecutive red bars from start to end
+                """
+                # if len(bars) < abs(start) or len(bars) < abs(end):
+                #     return False
+                count = 0
+                for bar in bars[start:end:-1]: # from the tail end
+                    if bar.close < bar.open:
+                        count += 1
+                    elif relax and bar.close == bar.open: # yellow bar ok if relax
+                        count += 1
+                    elif not relax and bar.close == bar.open: # yellow bar not ok if not relax
+                        break
+                    elif consecutive: # we're looking for consecutive red bars
+                        break
+                return count
+            lkbk = -3
+            nbr_actual: int = mn_bars_red(self.bars[lkbk-20:], lkbk, lkbk-20, relax=True, consecutive=True)
+            nbr4 = nbr_actual >= 4 # looking for strings of 4+ red bars, starting from -3
+            pbonl_threshold = 0.2
+            pbonl_realized: float = (prevBar.open - prevBar.low) / (prevBar.high - prevBar.low) # previous bar open near low
+            pbonl = pbonl_realized <= pbonl_threshold # previous bar open near low
+            pbg = prevBar.close > prevBar.open # previous bar green
+            cbah = currentBar.average > prevBar.average # current bar average higher (than previous bar average)
+            at30s = datetime.datetime.now().second >= 30 # at 30 seconds (or later)
+            if orig_cond or isFollowThrough: # must add additional check when isFollowThrough
+                if isFollowThrough:
+                    # fyi
+                    ft1 = nbr4 and pbonl and pbg and cbah and at30s
+                    logger.info(f"ft1: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
+                    if not blw_lsp:
+                        logger.info(f"probably should buy, waiting for below last sold price")
+                        return
+                    elif blw_lsp:
+                        # we are below last sold price, we can buy
+                        # but only if ...
+                        if ft1:
+                            # using limit order
+                            t = ib.tickers()[0]
+                            self.order = LimitOrder('BUY', agent.numshares, t.marketPrice(), discretionaryAmt=round(0.0002 * t.ask, 2))
+                        else:
+                            return
+                elif not isFollowThrough: # original condition
+                    # ok using market order
+                    self.order = MarketOrder('BUY', agent.numshares)
+
                 # logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
-                self.order = MarketOrder('BUY', agent.numshares)
+                # last_5m_hml_ = last_5m_hml(self.bars)
+                # logger.info(f"trailing 5m hml {last_5m_hml_} ({np.array2string(last_5m_hml_ / self.lastPrice, formatter=np_pct)})")
+                # check if these two are the same
+
+                # self.order = MarketOrder('BUY', agent.numshares) # see elaboration above
                 contract_ = Stock(self.symbol, 'SMART', 'USD')
                 logger.info(f"Buying shares of {contract_} as {self.order}")
                 # before we place the order, make sure no outstanding trades
@@ -749,6 +824,7 @@ class Agent:
                         # asyncio.sleep(0.2)
                     else:
                         logger.error(f"No live trading, trade not placed: {self.order}")
+                        return # just return, don't change state
                 else:
                     assert False, f"Impossible state: trade outstanding: {self.trade}"
                 if self.trade and self.trade in ib.openTrades():
@@ -761,12 +837,15 @@ class Agent:
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
             return # end of seekEntry
 
+        # set lastPrice_
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
         t = ib.tickers()[0]
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
-        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:.2%} volume {t.volume:n}")
+        logger.info(f"{t.contract.localSymbol} {t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) volume {t.volume:n}")
+        # lastPrice_ = get_market_price() # move to the top
+
         logger.info(f"state={self.get_state()}")
         if self.get_state() in [0, 2]:
             # no position, no outstanding trades and milestone has been reset
@@ -829,7 +908,7 @@ class Agent:
         
         # update milestone index
         newIdx_ = 0
-        lastPrice_ = get_market_price()
+        # lastPrice_ = get_market_price()
         avgCost_ = self.stkpos.avgCost
         while newIdx_ < len(self.upPctMilestone) and lastPrice_ > avgCost_ * (1 + self.upPctMilestone[newIdx_]):
             newIdx_ += 1
