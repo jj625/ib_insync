@@ -1917,9 +1917,9 @@ def main():
     # console_handler.setLevel(args.loglevel)
     # console_handler.setFormatter(formatter)
     scriptdir = os.path.dirname(os.path.realpath(__file__))
-    filesuffix = f'{args.symbol}_{datetime.datetime.now():%Y%m%d_%H%M}'
-    filesuffixdt = f'{args.symbol}_{datetime.datetime.now():%Y%m%d}'
-    logfilename = os.path.join(scriptdir, 'logs', f'tracker_{filesuffix}.log')
+    filesuffix = f'{args.symbol}_{datetime.datetime.now():%y%m%d_%H%M}'
+    filesuffixdt = f'{args.symbol}_{datetime.datetime.now():%y%m%d}'
+    logfilename = os.path.join(scriptdir, 'logs', f'{program_name}_{filesuffix}.log')
     file_handler = logging.FileHandler(logfilename)
     file_handler.setLevel(args.loglevel)
     file_handler.setFormatter(formatter)
