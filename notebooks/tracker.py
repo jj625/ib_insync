@@ -392,10 +392,29 @@ def get_mid_price() -> float:
     return ib.tickers()[0].midpoint()
 
 def get_market_price() -> float:
-    return ib.tickers()[0].marketPrice()
+    t = ib.tickers()[0]
+    mktprice = t.marketPrice()
+    if mktprice is None or np.isnan(mktprice) or mktprice <= 0:
+        # if market price is not available, use close price
+        if t.close is None or np.isnan(t.close) or t.close <= 0:
+            # if close price is not available, use bars[-1].close
+            # TODO implement this
+            return 0
+        else:
+            return t.close
+    else:
+        return mktprice
 
 def get_bid_price() -> float:
-    return ib.tickers()[0].bid
+    t = ib.tickers()[0]
+    if t.bid is None or np.isnan(t.bid) or t.bid <= 0:
+        # if bid is not available, use market price
+        return get_market_price()
+    else:
+        return t.bid
+
+def get_ask_price() -> float:
+    return ib.tickers()[0].ask
 
 def average_price(trade: ib_insync.order.Trade) -> float:
     return sum(fill.execution.price * fill.execution.shares for fill in trade.fills) / sum(fill.execution.shares for fill in trade.fills)
@@ -490,6 +509,10 @@ class Agent:
     buyagainbuffer: float = 0.0 # buffer to buy again after selling
     lastSellTrade: Optional[ib_insync.order.Trade] = None
     lastSaleTime: Optional[datetime.datetime] = None
+    lastSellPrice: float = 0.0
+    lastBuyTrade: Optional[ib_insync.order.Trade] = None
+    lastBuyTime: Optional[datetime.datetime] = None
+    lastBuyPrice: float = 0.0
  
     def reset(self):
         pass
