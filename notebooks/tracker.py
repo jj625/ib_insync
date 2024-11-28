@@ -1106,13 +1106,16 @@ class Agent:
                         return # just return, don't change state
                 else:
                     assert False, f"Impossible state: trade outstanding: {self.trade}"
-                if self.trade and self.trade in ib.openTrades():
-                    logger.info(f"Trade is still open: {ib.openTrades()}")
-                if self.trade and self.trade not in ib.openTrades() and self.trade.orderStatus.status == 'Filled':
+                # ib.sleep(0) # allow time for trade to complete # can't run this in async function?
+                openTrades = [t for t in ib.openTrades() if t.contract.symbol == self.symbol]
+                if self.trade and self.trade in openTrades:
+                    logger.info(f"Trade is still open: {openTrades}")
+                elif self.trade and self.trade not in openTrades and self.trade.orderStatus.status == 'Filled':
                     logger.info(f"Trade is filled: {self.trade.log}")
                     self.set_state(1)
                     self.trade = None
-                # else:
+                else:
+                    logger.warning(f"should not reach here {self.trade}")
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
             return # end of seekEntry
 
@@ -1124,6 +1127,11 @@ class Agent:
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
         logger.info(f"{t.contract.localSymbol} {t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
+
+        # volatility
+        last_5m_hml_ = last_5m_hml(self.bars)
+        logger.info(f"last 5m hml {last_5m_hml_} ({np.array2string(last_5m_hml_ / lastPrice_, formatter=np_pct)})")
+        logger.info(f"hml {np.asarray(self.hml[-5:])} hml_pct {np.array2string(np.asarray(self.hml_pct[-5:]), formatter=np_pct)}")
 
        # calculate trapdoor index
         trdrIdx_ = 0
@@ -1168,8 +1176,8 @@ class Agent:
                 logger.info(f"No position, seeking {'follow through ' if isFollowThrough else ''}entry ...")
                 seekEntry(isFollowThrough=isFollowThrough)
                 return
-            elif self.trade and self.trade in ib.openTrades():
-                logger.info(f"Trade is still open: {ib.openTrades()}") # wait for trade to complete
+            elif self.trade and self.trade in (openTrades := [t for t in ib.openTrades() if t.contract.symbol == self.symbol]):
+                logger.info(f"Trade is still open: {openTrades}") # wait for trade to complete
                 return
             elif self.trade and not (self.trade in ib.openTrades()):
                 if self.trade.orderStatus.status == 'Filled':
@@ -1179,24 +1187,46 @@ class Agent:
                     self.high_since_buy_bar1m = [] # reset high since buy
                     # allow to proceed
                 elif self.trade.orderStatus.status == 'Cancelled':
-                    logger.error(f"Trade was cancelled: {self.trade}, undoing state change")
+                    logger.error(f"Trade was cancelled: {self.trade}, undoing state change, resetting trade to None")
                     self.state = self.prevstate # undo state change
+                    self.trade = None
                     return
-            else:
-                logger.error(f"Impossible state: state=0 but position={self.stkpos} and idxMilestone={self.idxMilestone}")
+            else: # self.trade is None, stkpos is not None
+                logger.error(f"Impossible state: state=0 but self.trade={self.trade} position={self.stkpos} and idxMilestone={self.idxMilestone}")
                 return # don't allow to proceed
             
+        elif self.get_state() == 2: # proper follow through, using trapdoor and tripwire
+            # update trapdoor index
+            newIdx_ = 0
+            # lastPrice_ = get_market_price()
+            refPrice_ = self.lastSalePrice # trapdoor reference price
+            while newIdx_ < len(self.trapdoor) and lastPrice_ > refPrice_ * (1 + self.trapdoor[newIdx_]):
+                newIdx_ += 1
+            assert lastPctReturn() <= self.trapdoor[newIdx_], "last price should be at or below current milestone"
+            if newIdx_ > 0:
+                newIdx_ -= 1  # Adjust because the loop exits after crossing the last milestone
+            if newIdx_ > self.idxMilestone:
+                self.set_milestone(newIdx_)
+                logmsg = "Crossed milestone"
+            else:
+                logmsg = "Current milestone"
+            assert self.idxMilestone >= 0, "idxMilestone should be greater than zero"
+
+            pass
         elif self.get_state() == 1:
             # we have a position
-            if self.stkpos is None and self.trade and self.trade in ib.openTrades():
+            if (self.stkpos is None or self.stkpos.position == 0) and self.trade and self.trade in ib.openTrades():
                 logger.info(f"Waiting for position update to complete...")
                 return
-            elif self.stkpos is None:
-                logger.error(f"Impossible state: state=1 waiting for position update to complete but no outstanding trade")
+            elif (self.stkpos is None or self.stkpos.position == 0) and self.trade and self.trade not in ib.openTrades():
+                logger.error(f"Impossible state: state=1 but trade not in openTrades {self.trade}")
                 return
-            if self.stkpos.position == 0:
-                logger.error(f"Impossible state: state=1 but position={self.stkpos}")
+            elif self.stkpos is None and not self.trade:
+                logger.error(f"Impossible state: state=1 but no outstanding trade")
                 return
+            # if self.stkpos.position == 0:
+            #     logger.error(f"Impossible state: state=1 but position={self.stkpos}")
+            #     return
             # ensure no outstanding trades
             if self.trade:
                 if self.trade in ib.openTrades():
