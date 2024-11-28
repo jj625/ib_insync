@@ -1504,13 +1504,38 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
         # let's just warn about possible state change for now
         if (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position != 0 and agent.state == 0:
             logger.info(f"agent state change: 0 -> 1")
-            agent.state = 1
+            agent.set_state(1)
+            # agent.state = 1
             # print stack trace
+        elif (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position != 0 and agent.state == 1:
+            # nothing's wrong or inconsistent here
+            pass
+        elif (prevstkpos is not None and (prevstkpos.position != 0)) and newpos.position > prevstkpos.position and agent.state == 1:
+            # also nothing's wrong or inconsistent here
+            # we are adding to the position
+            logger.info(f"adding to the position: {prevstkpos.position} -> {newpos.position}")
+            pass
+        elif (prevstkpos is not None and (prevstkpos.position != 0)) and newpos.position < prevstkpos.position and agent.state == 0:
+            # we are reducing the position, to possibly zero
+            logger.info(f"reducing the position: {prevstkpos.position} -> {newpos.position}")
+            pass
         elif not (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position == 0 and agent.state == 1:
-            logger.info(f"agent state should change: 1 -> 0")
-            agent.state = 0
-        elif not (prevstkpos is None) and (prevstkpos.position == newpos.position):
-            logger.warning(f"newpos.position == prevpos.position, agent state: {agent.state}")
+            logger.info(f"forcing agent state: 1 -> 0")
+            agent.set_state(0)
+            # agent.state = 0
+            if agent.idxMilestone >= 0:
+                agent.reset_milestone()
+                logger.info(f"resetting strategy1 milestone {agent.idxMilestone} to -1")
+        elif not (prevstkpos is None) and (prevstkpos.position == newpos.position) and (prevstkpos.avgCost == newpos.avgCost):
+            # why are we getting the same position update?
+            logger.warning(f"position and avgCost are the same, why update, prev={prevstkpos} new={newpos}, agent state: {agent.state}")
+        elif not (prevstkpos is None) and (prevstkpos.position == newpos.position) and (prevstkpos.avgCost != newpos.avgCost):
+            # avgCost changed, no big deal
+            pass
+            logger.info(f"avgCost changed: {prevstkpos.avgCost} -> {newpos.avgCost}")
+        else:
+            # why are we getting this?
+            logger.warning(f"shouldn't be here: prev={prevstkpos} new={newpos}, agent state: {agent.state}")
 
         # if prevstkpos is None:
         #     logger.info(f"onPositionUpdate: agent initialized with stock position: {agent.stkpos}, state={agent.state}")
