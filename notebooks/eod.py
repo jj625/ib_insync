@@ -117,26 +117,45 @@ def main():
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
 
     # download today's trades
-    trades = ib.trades()
-
-    # Flatten all trades and fills
-    flattened_trades = [flatten_trade(trade) for trade in trades]
-    flattened_fills = [flatten_fill(fill) for trade in trades for fill in trade.fills]
-
-    # Create hierarchical pandas DataFrames
-    df_trades = pd.DataFrame(flattened_trades)
-    df_fills = pd.DataFrame(flattened_fills)
-
-    # Merge trades and fills DataFrames
-    df_merged = pd.merge(df_trades, df_fills, left_on='order_permId', right_on='exec_permId', how='outer')
-
     suffix = f"{datetime.datetime.now():%y%m%d_%H%M}"
-    df_merged.to_csv(f'trades_{suffix}.csv', index=False)
-    logger.info(f"Saved trades_{suffix}.csv")
+    trades = ib.trades()
+    logger.info(f"Downloaded {len(trades)} trades")
 
-    with open(f'trades_{suffix}.json', 'w') as fp:
-        json.dump(util.tree(trades), fp, indent=4)
-    logger.info(f"Saved trades_{suffix}.json")
+    if len(trades) > 0:
+        # Flatten all trades and fills
+        flattened_trades = [flatten_trade(trade) for trade in trades]
+        flattened_fills = [flatten_fill(fill) for trade in trades for fill in trade.fills]
+
+        # Create hierarchical pandas DataFrames
+        df_trades = pd.DataFrame(flattened_trades)
+        logger.info(f"df_trades shape: {df_trades.shape}")
+        df_fills = pd.DataFrame(flattened_fills)
+        logger.info(f"df_fills shape: {df_fills.shape}")
+
+        # Merge trades and fills DataFrames
+        df_merged = pd.merge(df_trades, df_fills, left_on='order_permId', right_on='exec_permId', how='outer')
+        logger.info(f"df_merged shape: {df_merged.shape}")
+
+        df_merged.to_csv(f'trades_{suffix}.csv', index=False)
+        logger.info(f"Saved trades_{suffix}.csv")
+
+        with open(f'trades_{suffix}.json', 'w') as fp:
+            json.dump(util.tree(trades), fp, indent=4)
+        logger.info(f"Saved trades_{suffix}.json")
+
+    execs = ib.executions()
+    logger.info(f"Downloaded {len(execs)} executions")
+    if len(execs) > 0:
+        execs_df = util.df(execs)
+        logger.info(f"execs_df shape: {execs_df.shape}")
+        execs_df.to_csv(f'execs_{suffix}.csv', index=False)
+        logger.info(f"Saved execs_{suffix}.csv")
+
+        with open(f'execs_{suffix}.json', 'w') as fp:
+            json.dump(util.tree(execs), fp, indent=4)
+        logger.info(f"Saved execs_{suffix}.json")
+
+    ib.disconnect()
 
     return # end of main
 
