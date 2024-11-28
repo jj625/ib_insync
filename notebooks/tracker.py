@@ -1384,13 +1384,20 @@ class Agent:
             lastPrice = get_market_price()
         if maxloss_ is None:
             maxloss_ = self.maxloss
+        if lastPrice <= 0:
+            logger.error(f"lastPrice is zero or negative: {lastPrice}, can't proceed")
+            return
+        maxlossPct_ = maxloss_ / self.stkpos.avgCost / self.stkpos.position
         currentPnl = (lastPrice - self.stkpos.avgCost) * self.stkpos.position
-        logging.info(f"last {lastPrice}, pnl: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
+        currentPnlPct = lastPrice / self.stkpos.avgCost - 1.
+        logging.info(f"last {lastPrice}, pnl: {currentPnl:.2f} ({currentPnlPct:.2%}), max loss limit: {maxloss_:.2f} ({maxlossPct_:.2%})")
         if currentPnl < maxloss_:
-            logger.warning(f"Current loss: {currentPnl:.2f}, max loss: {maxloss_:.2f}")
+            logger.warning(f"Current loss: {currentPnl:.2f}, max loss limit: {maxloss_:.2f}")
             if self.stkpos.position > 0 and self.trade is None:
                 # self.order = MarketOrder('SELL', self.stkpos.position)
                 # watch out, with limit order we may not get filled
+                # last_5m_hml_ = last_5m_hml(self.bars)
+                # logger.info(f"trailing 5m hml {last_5m_hml_} ({np.array2string(last_5m_hml_ / self.lastPrice, formatter=np_pct)})")
                 bid_price = get_bid_price()
                 self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
