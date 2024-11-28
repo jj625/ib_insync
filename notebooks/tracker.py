@@ -19,6 +19,7 @@ np_pct = {'float_kind': lambda x: f"{x:.2%}"}
 import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
 import scipy
+from scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d
 import math
 import logging
 import datetime
@@ -561,6 +562,44 @@ class Agent:
         # else:
         #     self.high_since_buy_bar1m.append(currentBar)
         #     needCheckpoint = True
+        
+        # blur filter
+        if hasNewBar: # at the minute
+            # vec = np.array([bar.average for bar in bars[-5:]])
+            vec_raw = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN])
+            vec = (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
+            # if len(vec) >= 5:
+            mult = 1000.0/self.prevclose
+            trunc_param = 6.0
+            mode_param = 'nearest'
+            # model = GaussianHMM(n_components=3, covariance_type="full", n_iter=1000)
+            # model.fit(vec.reshape(-1, 1))
+            # logger.info(f"model.means_={model.means_}, model.covars_={model.covars_}, model.transmat_={model.transmat_}")
+            smoothed_1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, truncate=trunc_param)
+            smoothed_1_der1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+            smoothed_2 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, truncate=trunc_param)
+            smoothed_2_der1 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+            smoothed_3 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, truncate=trunc_param)
+            smoothed_3_der1 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+            smoothed_4 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, truncate=trunc_param)
+            smoothed_4_der1 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+            smoothed_5 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, truncate=trunc_param)
+            smoothed_5_der1 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+            logger.info(f"vec: {vec[-7:]}")
+            logger.info(f"smoothed_1: {smoothed_1[-7:]}")
+            logger.info(f"smoothed_1_der1: {smoothed_1_der1[-7:]}")
+            logger.info(f"smoothed_2: {smoothed_2[-7:]}")
+            logger.info(f"smoothed_2_der1: {smoothed_2_der1[-7:]}")
+            logger.info(f"smoothed_3: {smoothed_3[-7:]}")
+            logger.info(f"smoothed_3_der1: {smoothed_3_der1[-7:]}")
+            logger.info(f"smoothed_4: {smoothed_4[-7:]}")
+            logger.info(f"smoothed_4_der1: {smoothed_4_der1[-7:]}")
+            logger.info(f"smoothed_5: {smoothed_5[-7:]}")
+            logger.info(f"smoothed_5_der1: {smoothed_5_der1[-7:]}")
+
+            max5m = maximum_filter1d(vec, size=5, mode=mode_param)
+            min5m = minimum_filter1d(vec, size=5, mode=mode_param)
+  
         # checkpoint as needed
         if needCheckpoint:
             # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
