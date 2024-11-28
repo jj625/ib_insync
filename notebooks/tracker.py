@@ -308,10 +308,13 @@ class Agent:
     strategy1initstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
     numshares: int = 0
     upPctMilestone: List[float] = field(default_factory=list)
+    dnPctMilestone: List[float] = field(default_factory=list)
     # upPriceMilestone: List[float] = field(default_factory=list)
     stopLossPct: List[float] = field(default_factory=list)
     # stopLossPrice: List[float] = field(default_factory=list)
     idxMilestone: int = -1 # initialize to an impossible value
+    trapdoorIdx: int = -1 # initialize to an impossible value
+    tripwireIdx: int = -1 # if set, ok to buy again
     # avgCost: float = 0.0
     state: int = 0 # state machine: 0 = seek entry, 1 = maintain position, keep ratchet up until stop loss
     prevstate: int = 0 # previous state
@@ -884,6 +887,41 @@ class Agent:
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
         logger.info(f"{t.contract.localSymbol} {t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
+
+       # calculate trapdoor index
+        trdrIdx_ = 0
+        # find the highest (down) milestone crossed, i.e. dnPctMilestone[trdrIdx_] > lastPrice_ > dnPctMilestone[trdrIdx_+1]
+        ret = (lastPrice_/self.prevclose-1.)
+        logger.info(f"lastPrice_={lastPrice_:.2f}, prevclose={self.prevclose:.2f}, ret={ret:.2%}")
+        while trdrIdx_ < len(self.dnPctMilestone) and ret < self.dnPctMilestone[trdrIdx_]:
+            trdrIdx_ += 1
+            ret = (lastPrice_/self.prevclose-1.)
+        logger.info(f"trdrIdx_={trdrIdx_}, dnPctMilestone[trdrIdx_]={self.dnPctMilestone[trdrIdx_]:.2%}")
+        if trdrIdx_ > 0:
+            trdrIdx_ -= 1 # Adjust because when the loop exits, dnPctMilestone[trdrIdx_] > lastPrice_
+        if trdrIdx_ > self.trapdoorIdx:
+            self.trapdoorIdx = trdrIdx_
+            wiretripped = False
+            logmsg = "Drop below trapdoor"
+        elif trdrIdx_ == self.trapdoorIdx:
+            wiretripped = False
+            logmsg = "Current trapdoor"
+        else:
+            # crossing above, this is important.
+            wiretripped = True
+            if self.tripwireIdx == -1:
+                self.tripwireIdx = trdrIdx_
+                logmsg = "Tripwire tripped"
+            else:
+                logmsg = "Tripwire already"
+        assert self.trapdoorIdx >= 0, "trapdoorIdx should be greater than zero"
+
+        if self.trapdoorIdx > 0:
+            trapdoorPrice_ = self.prevclose * (1 - self.dnPctMilestone[self.trapdoorIdx])
+        else:
+            trapdoorPrice_ = self.prevclose * (1 - self.dnPctMilestone[self.trapdoorIdx])
+        logger.info(f"{logmsg} {self.trapdoorIdx} ({self.dnPctMilestone[self.trapdoorIdx]:.2%}) last {lastPrice_:.2f}, return {ret:.2%}, trapdoor {trapdoorPrice_:.2f} ({trapdoorPrice_/lastPrice_-1:.2%})")
+
 
         logger.info(f"state={self.get_state()}")
         if self.get_state() in [0, 2]:
@@ -1694,6 +1732,7 @@ def main():
                   , maxloss=args.maxloss if args.maxloss else spec_p['maxloss']
                   , numshares=args.numshares if args.numshares else spec_p['numshares']
                   , upPctMilestone=spec['root'][speckey]['upPctMilestone']
+                  , dnPctMilestone=spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])
                   , stopLossPct=spec['root'][speckey]['stopLossPct']
                   , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct'])
                   , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct'])
