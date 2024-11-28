@@ -1430,24 +1430,33 @@ def onPortfolioUpdate(portfolioItem: ib_insync.objects.PortfolioItem) -> None:
     if agent is None:
         logger.error(f"agent not initialized, expected {portfolioItem}")
         return
+    elif portfolioItem.contract.symbol != agent.symbol:
+        pass # not our name
+        # logger.debug(f"skipping {portfolioItem.contract.symbol} {format_value(portfolioItem.position, True)}")
+        return
     elif agent.stkpos is None:
+        if portfolioItem.position == 0:
+            pass # no position
+            return
+        else: # portfolioItem.position != 0:
+            logger.error(f"agent.stkpos is None, expected {portfolioItem}")
+            return
+    else: # agent.stkpos is not None and agent is not None
         if agent.stkpos.position == 0 and portfolioItem.position == 0:
             pass # no position, it's fine
             return
         elif agent.stkpos.position == 0 and portfolioItem.position != 0:
             logger.error(f"agent.stkpos.position is zero, expected {portfolioItem}")
             return
-    if portfolioItem.contract.symbol == agent.symbol:
+    # if portfolioItem.contract.symbol == agent.symbol:
         # ensure we agree with IB on the stock position
-        if portfolioItem.position != agent.stkpos.position:
+        elif portfolioItem.position != agent.stkpos.position:
             logger.warning(f"portfolioItem.position={portfolioItem.position} != agent.stkpos.position={agent.stkpos.position}")
             # could be partially filled
             return
         elif not math.isclose(portfolioItem.averageCost, agent.stkpos.avgCost, abs_tol=.001):
             logger.warning(f"portfolioItem.averageCost={portfolioItem.averageCost:.4f} != agent.stkpos.avgCost={agent.stkpos.avgCost:.4f}")
             return
-    else:
-        logger.debug(f"skipping {portfolioItem.contract.symbol} {format_value(portfolioItem.position, True)}")
     # ib.sleep(30) # simulate blocking
     # pdb.set_trace()
     return # end of onPortfolioUpdate
