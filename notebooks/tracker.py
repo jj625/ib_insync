@@ -595,17 +595,22 @@ class Agent:
         #     return -1
 
         filename = f'./data/{self.symbol}_1d.csv'
+        dailyclose = None
+        yestdate = pd.to_datetime(last_business_dt())
         if os.path.exists(filename):
-            histbars = pd.read_csv(filename, parse_dates=['date'])
-            yestdate = pd.to_datetime(last_business_dt())
-            if yestdate not in histbars['date'].values:
-                logger.error(f"Yesterday's date not found in historical bars")
+            dailyclose = pd.read_csv(filename, parse_dates=['date'])
+            if yestdate not in dailyclose['date'].values:
+                logger.error(f"{yestdate} not found in historical bars")
                 return -1
             else:
-                self.prevclose = (histbars[ histbars['date'] == yestdate ].close).values[0]
-        
+                self.prevclose = (dailyclose[ dailyclose['date'] == yestdate ].close).values[0]
+        else:
+            logger.warning(f"{filename} not found")
+
         agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
         ib.qualifyContracts(contract_1)
+        agent.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
+
         # request market data
         ib.reqMarketDataType(1)
         ib.reqMktData(contract_1, '', False, False, None)
@@ -619,16 +624,29 @@ class Agent:
         if abs(tdiff) > 2.0:
             # report clock skew
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
-        logger.info(f"{t.contract.localSymbol}: {t.time:%H:%M:%S} bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:.2%} close {t.close} volume {t.volume:n}")
+        if np.isnan(t.bid) or np.isnan(t.ask) or np.isnan(t.last) or np.isnan(t.close) or np.isnan(t.open):
+            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open}"
+        else:
+            bidasklast = f"{t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) open {t.open} close {t.close} volume {t.volume:n}"
+        logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
 
-        if self.prevclose > 0 and t.close != self.prevclose:
-            logger.warning(f"ticker.close={t.close} != histbars.close={self.prevclose}")
+        if t.close > 0:
+            self.prevclose = t.close
+        elif dailyclose is None:
+            logger.error(f"closing price is not available")
+        elif t.close != dailyclose.close:
+            logger.warning(f"ticker.close={t.close} != dailyclose.close={self.prevclose}")
+            if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
+                logger.warning(f"Weekend using dailyclose.close as ticker.close is not reliable")
+                self.prevclose = dailyclose.close
+            else: # weekday
+                logger.warning(f"Using ticker.close={t.close} as prevclose")
+                self.prevclose = t.close
             # not fatal, just a warning
-        self.prevclose = t.close
-        # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
-        # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
+        # self.recenthigh = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
+        # self.recentlow = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
 
-        # logger.info(f"histbars len={len(self.histbars)}, histbars[0]={self.histbars[0]}, histbars[-1]={self.histbars[-1]}")
+        # logger.info(f"dailyclose len={len(self.dailyclose)}, dailyclose[0]={self.dailyclose[0]}, dailyclose[-1]={self.dailyclose[-1]}")
         return 0
 
     def simpleLongStrategy1Init(self) -> int:
