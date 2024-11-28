@@ -776,17 +776,20 @@ class Agent:
         # update high water mark since last buy, for the purpose of calculating drawdown
         needCheckpoint = False
         if self.high_since_buy_bar1m:
+            b = self.high_since_buy_bar1m[-1]
             if self.high_since_buy_bar1m[-1].average <= currentBar.average:
-                prev = self.high_since_buy_bar1m[-1].copy()
+                # prev = self.high_since_buy_bar1m[-1].copy()
+                prev = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average)
                 self.high_since_buy_bar1m[-1] = currentBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentBar}")
             if self.high_since_buy_bar1m[-1].average <= currentFullBar.average:
-                prev = self.high_since_buy_bar1m[-1].copy()
+                # prev = self.high_since_buy_bar1m[-1].copy()
+                prev = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average)
                 self.high_since_buy_bar1m[-1] = currentFullBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentFullBar}")
-        # we initialize it when we buy
+        # we initialize it when we buy or when session starts and have position
         # else:
         #     self.high_since_buy_bar1m.append(currentBar)
         #     needCheckpoint = True
@@ -1257,11 +1260,11 @@ class Agent:
         drawdown_pct = drawdown / hwm
         pnl_hwm = hwm - avgCost_
         pnl_hwm_pct = pnl_hwm / avgCost_
+        logger.info(f"px_hwm {hwm:.2f}, px_highest_since_buy {highest_since_buy:.2f}")
         logger.info(f"drawdown {drawdown:.2f} {drawdown_pct:.2%}, pnl_hwm {pnl_hwm:.2f} {pnl_hwm_pct:.2%}")
-        logger.info(f"px_hwm {hwm}, px_highest_since_buy {highest_since_buy}")
-        # report if we are in drawdown
-        if drawdown_pct < 0:
-            logger.info(f"Drawdown: {drawdown_pct:.2%}")
+        # # report if we are in drawdown
+        # if drawdown_pct < 0:
+        #     logger.info(f"Drawdown: {drawdown_pct:.2%}")
         
         # this is the original exit condition
         # but this results in negative expected pnl because we are exiting at a loss
