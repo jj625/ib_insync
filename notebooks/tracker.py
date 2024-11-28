@@ -23,6 +23,8 @@ from scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d
 import math
 import logging
 import datetime
+MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
+MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
 import dateutil
 import argparse
 import json
@@ -92,6 +94,9 @@ ib_insync.ib.install_custom_repr_()
 #     loop = asyncio.get_event_loop()
 #     loop.create_task(task)
 
+# Get the program's file name without the extension 
+program_name = os.path.splitext(os.path.basename(__file__))[0] 
+
 # hold strong references to tasks. remember to remove them when done
 background_tasks: set[asyncio.Task] = set()
 
@@ -108,15 +113,160 @@ TELEGRAM_CHAT_ID = '5215848738'
 
 import traceback
 
-async def send_telegram_message_async(text):
-    # bot = Bot(token='YOUR_BOT_TOKEN')
-    return await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+def fmt_elapsed_time(elapsed_time: float) -> str:
+    if elapsed_time >= 1:
+        s = f"{elapsed_time:.2f} s"
+    elif elapsed_time >= 1e-3:
+        s = f"{elapsed_time * 1e3:.2f} ms"
+    elif elapsed_time >= 1e-6:
+        s = f"{elapsed_time * 1e6:.2f} µs"
+    else:
+        s = f"{elapsed_time * 1e9:.2f} ns"
+    return s
 
-def send_telegram_message(text):
-    util.run(send_telegram_message_async(text))
-    # task = asyncio.create_task(send_telegram_message_async(text))
-    # telegram_tasks.add(task)
-    # task.add_done_callback(telegram_tasks.discard)
+import time
+import functools
+
+# Works with regular functions, instance methods, class methods, static methods, and coroutines.
+# Correctly identifies and displays the class name for methods.
+# Distinguishes between functions and coroutines in the output.
+
+def measure_time(func):
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        print_result(func, args, execution_time)
+        return result
+
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = await func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        print_result(func, args, execution_time)
+        return result
+
+    def print_result(func, args, execution_time, printfn=print):
+        if inspect.ismethod(func):
+            func_name = f"{func.__self__.__class__.__name__}.{func.__name__}"
+        elif args and hasattr(args[0].__class__, func.__name__):
+            func_name = f"{args[0].__class__.__name__}.{func.__name__}"
+        else:
+            func_name = func.__name__
+
+        printfn(f"{'Coroutine' if asyncio.iscoroutinefunction(func) else 'Function'} "
+              f"'{func_name}' took {fmt_elapsed_time(execution_time)} to execute.")
+
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
+
+from collections import deque
+from scipy.stats import skew, kurtosis, mode
+class OnlineStatsInt:
+    def __init__(self, val_max: int = 1000):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+        self.val_max = val_max
+        self.counts = np.zeros(val_max + 1, dtype=int)
+
+    def update(self, x: int):
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+        self.counts[x] += 1
+
+    def variance(self):
+        return self.M2 / self.n if self.n > 1 else 0.0
+
+    def stddev(self):
+        return np.sqrt(self.variance())
+
+    def skewness(self):
+        return skew(self.counts)
+
+    def kurtosis(self):
+        return kurtosis(self.counts)
+
+    def mode(self):
+        return np.argmax(self.counts)
+
+    def quartiles(self):
+        cumulative_counts = np.cumsum(self.counts)
+        total = cumulative_counts[-1]
+        return [np.searchsorted(cumulative_counts, total * q / 4) for q in range(1, 4)]
+
+    def deciles(self):
+        cumulative_counts = np.cumsum(self.counts)
+        total = cumulative_counts[-1]
+        return [np.searchsorted(cumulative_counts, total * d / 10) for d in range(1, 10)]
+
+class OnlineStatsReal:
+    def __init__(self, qlen=1000):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+        self.values = deque(maxlen=qlen)  # Keep a limited history for mode, quartiles, and deciles
+
+    def update(self, x: numbers.Real):
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+        self.values.append(x)
+
+    def variance(self):
+        return self.M2 / self.n if self.n > 1 else 0.0
+
+    def stddev(self):
+        return np.sqrt(self.variance())
+
+    def skewness(self):
+        return skew(self.values)
+
+    def kurtosis(self):
+        return kurtosis(self.values)
+
+    def mode(self):
+        return mode(self.values, keepdims=True).mode[0]
+
+    def quartiles(self):
+        return np.percentile(self.values, [25, 50, 75])
+
+    def deciles(self):
+        return np.percentile(self.values, np.arange(10, 100, 10))
+
+# async def send_telegram_message_async(text):
+#     # bot = Bot(token='YOUR_BOT_TOKEN')
+#     return await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+
+# def send_telegram_message(text):
+#     util.run(send_telegram_message_async(text))
+#     # task = asyncio.create_task(send_telegram_message_async(text))
+#     # telegram_tasks.add(task)
+#     # task.add_done_callback(telegram_tasks.discard)
+
+def send_telegram_message(chat_id: str, text: str):
+    # https://github.com/python/cpython/issues/104091
+    # https://superfastpython.com/asyncio-task-exceptions/
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(telegram_bot.send_message(chat_id=chat_id, text=text))
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+        exception = task.exception()
+    except Exception as e:
+        logger.error(f"Failed to send telegram message: {e}")
+        logger.error(traceback.format_exc())
 
 # def run_async_task(chat_id, text):
 #     loop = asyncio.get_event_loop()
@@ -152,10 +302,17 @@ def neg(num: numbers.Real) -> numbers.Real:
 def last_business_dt() -> datetime.date:
     """Return the last business date"""
     today = datetime.datetime.now().date()
-    if today.weekday() == 0: # Monday
-        return today + datetime.timedelta(days=-3)
-    else:
-        return today + datetime.timedelta(days=-1)
+    # before 9:30am, use previous business day
+    if datetime.datetime.now().time() < datetime.time(16, 0):
+        today -= datetime.timedelta(days=1)
+    # if today is Saturday or Sunday, use Friday
+    while today.weekday() >= 5:  # Saturday or Sunday
+        today -= datetime.timedelta(days=1)
+    return today
+    # if today.weekday() == 0: # Monday
+    #     return today + datetime.timedelta(days=-3)
+    # else:
+    #     return today + datetime.timedelta(days=-1)
 
 # Function to flatten the trade structure
 def flatten_trade(trade: ib_insync.order.Trade):
