@@ -454,7 +454,9 @@ class Agent:
     symbol: str
     # position: ib_insync.objects.Position = None
     stkpos: ib_insync.objects.Position = None
+    rput: float = 0.0 # if we have position, earning rate = return per unit time (rput)
     ibcontract: ib_insync.contract.Contract = None
+    ibcontractDetails: ib_insync.contract.ContractDetails = None
     prevclose: float = 0.0
     begintime: datetime.datetime = datetime.datetime.now()
     barsstartidx: int = 0
@@ -1233,7 +1235,11 @@ class Agent:
             stoplossPrice_ = avgCost_ * (1 + self.stopLossPct[self.idxMilestone] + self.upPctMilestone[self.idxMilestone-1])
         else:
             stoplossPrice_ = avgCost_ * (1 + self.stopLossPct[self.idxMilestone])
-        logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%}, stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
+
+        if self.lastBuyTrade: # if we have a last buy trade
+            T = (datetime.datetime.now().astimezone() - max_exec_time(self.lastBuyTrade)).total_seconds() / 60.0 * 5.0 # in minutes * 5
+            rput = lastPctReturn() / T # return per unit time
+            logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%} ({rput:.2%}/5min), stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
         
         # calculate drawdown
         # get the highest 1m close since we last buy. get the higher of that and current price. drawdownpct = min(0, (lastprice - highest)/highest)
@@ -1276,10 +1282,10 @@ class Agent:
         # sometimes max_retracement_pct is too small (when pnl high water mark is close to zero), so we use the absolute min
         cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone == 0
         if self.idxMilestone == 0:
-            logger.info(f"{max_retracement_pct:.3%} {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
+            logger.info(f"max retrc% {max_retracement_pct:.3%} floor {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
         logger.info(f"stpls={cond1}, ddrtrc={cond2}, idxMilestone={self.idxMilestone}")
         
-        if cond1 or cond2:
+        if cond1: # or cond2 # (disabled for now)
             # crossed below milestone, we should liquidate
             if cond1: 
                 logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
@@ -1995,12 +2001,15 @@ def main():
         fpkl = open(pklfile, 'r+b') # read/write binary
         data = pickle.load(fpkl)
         if data['symbol'] == 'init' and data['buyopen_bar1m_idx'] == [] and data['sellclose_bar1m_idx'] == []:
+            # TODO why got here
             logger.info(f"Previous session didn't write anything, resetting")
-            data = None # continue as normal, previous session didn't write anything
+            # data = None # continue as normal, previous session didn't write anything
         elif data['symbol'] != args.symbol:
             logger.error(f"Previous session symbol {data['symbol']} doesn't match {args.symbol}, resetting")
+            # continue as normal
         else:
-            logger.info(f"Previous session data: {data}")
+            pass # all good
+            # logger.info(f"Previous session data: {data}")
     if data:
         agent.resume_session(data)
 
@@ -2099,7 +2108,9 @@ def main():
                     ib.sleep(np.random.uniform(low=2.0, high=20.0))
 
             # request live market data
-            contract_1 = Stock(agent.symbol, 'SMART', 'USD')
+            # agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
+            contract_1 = agent.ibcontract
+            ib.qualifyContracts(contract_1)
             agent.bars = ib.reqHistoricalData(
                 contract_1,
                 endDateTime='',
@@ -2112,7 +2123,7 @@ def main():
 
             if len(agent.bars) > 0:
                 if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
-                    logging.warning(f"{datetime.datetime.now().weekday()} is not trading today")
+                    logging.warning(f"{datetime.datetime.now().strftime('%A')} is not trading today")
                 else:
                     assert agent.bars[0].date.date() == datetime.datetime.now().date(), f"Expect first bar {agent.bars[0]} to be today"
             else:
