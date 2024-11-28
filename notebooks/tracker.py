@@ -675,6 +675,14 @@ class Agent:
         self.reset_milestone() # initialize to an impossible value
         logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone}, stopLossPct={self.stopLossPct}")
         
+        if self.stkpos and self.stkpos.position != 0:
+            if self.high_since_buy_bar1m == []:
+                if self.bars:
+                    # self.high_since_buy_bar1m.append(self.bars[-1])
+                    self.high_since_buy_bar1m.append(max(self.bars, key=lambda bar: bar.average))
+                    logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
+                else:
+                    logger.warning(f"has position, bars is not set and high_since_buy_bar1m is empty")
         # stockpos = [p for p in ib.positions() if p.contract.symbol in [self.symbol] and p.contract.secType == 'STK']
         # assert len(stockpos) == 1, 'Stock position not found'
         # self.avgCost = stockpos[0].avgCost
@@ -747,10 +755,9 @@ class Agent:
         pickle.dump(pkldump, fpkl)
         fpkl.flush()
 
+    @measure_time
     async def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
-        # reqHistoricalData with keepUpToDate=True always ticks every 5s
-        self.lastPrice = bars[-1].close
         logger.info(f"hasNewBar={hasNewBar}, {bars[-1]}")
 
         currentBar = bars[-1] # bar that is being built, never full
@@ -2329,6 +2336,8 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception(f"Caught exception {e}", exc_info=True, stack_info=True)
     finally:
+        if agent:
+            agent.checkpoint('final')
         logger.info("Cleaning up...")
         if ib is not None:
             logger.info(f"{ib}")
