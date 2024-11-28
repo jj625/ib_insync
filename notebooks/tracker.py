@@ -1616,22 +1616,25 @@ def onOrderStatus(trade: ib_insync.order.Trade):
         f"remaining={format_value(trade.orderStatus.remaining, True)} "
         f"avgFillPrice={trade.orderStatus.avgFillPrice} "
         f"lastFillPrice={trade.orderStatus.lastFillPrice}"))
-    if agent.trade is None:
+    if agent.trade is None and trade.orderStatus.status in {'Cancelled', 'Inactive'} and trade.orderStatus.filled == 0:
+        pass # it's okay
+        return
+    elif agent.trade is None:
         logger.error(f"agent's trade is None, shouldn't happen: {trade}")
         return
     if agent.trade.order.orderId != trade.order.orderId:
         logger.error(f"order id mismatch: agent's {agent.trade.order.orderId} != {trade.order.orderId}")
         return
-    if trade.orderStatus.status == 'Cancelled':
+    if trade.orderStatus.status in {'Cancelled', 'Inactive'}:
         if trade.orderStatus.filled == 0:
-            logmsg = f"Order was cancelled, nothing done, agent state={agent.state}, resetting agent's trade to None"
+            logmsg = f"Order was {trade.orderStatus.status}, nothing done, agent state={agent.state}, resetting agent's trade to None"
             if agent.state == 1:
                 agent.state = agent.prevstate # undo state change
                 logmsg += f", undoing state change"
             agent.trade = None
             logger.warning(logmsg)
         else:
-            logger.warning(f"Order was cancelled but partially filled: {trade}")
+            logger.warning(f"Order was {trade.orderStatus.status} but partially filled: {trade}")
     elif trade.orderStatus.status == 'Filled':
         assert trade.orderStatus.remaining == 0, "Expect remaining to be zero"
         sumvalue, sumqty, saleTimestamp = 0.0, 0, datetime.datetime(2024, 1, 1).astimezone()
