@@ -471,6 +471,16 @@ class Agent:
     session_start: List[datetime.datetime] = field(default_factory=list)
     session_end: List[datetime.datetime] = field(default_factory=list)
     bars: List[BarData] = field(default_factory=list)
+    hml: List[float] = field(default_factory=list) # high minus low, parallel to bars
+    hml_pct: List[float] = field(default_factory=list) # high minus low as percentage of close
+    hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
+    # resampled bars
+    bars1m: List[BarData] = field(default_factory=list)
+    bars5m: List[BarData] = field(default_factory=list)
+    bars10m: List[BarData] = field(default_factory=list)
+    bars15m: List[BarData] = field(default_factory=list)
+    # gblur bars
+    bars_gb: List[BarData] = field(default_factory=list) 
     highs: List[float] = field(default_factory=list)
     lows: List[float] = field(default_factory=list)
     lastPrice: float = 0.0 # cache bars[-1].close
@@ -743,8 +753,25 @@ class Agent:
 
         currentBar = bars[-1] # bar that is being built, never full
         currentFullBar = bars[-2] # the most recent fully formed bar
-        self.hml.append(currentBar.high - currentBar.low)
+        
+        # rate of change
+        roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
+        logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
+        # high minus low
+        hml_ = currentBar.high - currentBar.low
+        hmlpct_ = hml_ / self.prevclose
+        if hasNewBar or self.hml == []: # new bar or first bar
+            fbhml_ = currentFullBar.high - currentFullBar.low
+            # if self.hml and fbhml_ != self.hml[-1]:
+            #     logger.warning(f"currentFullBar hml != hml[-1]: {currentFullBar} != {self.hml[-1]}")
+            #     self.hml[-1] = currentFullBar.high - currentFullBar.low
+            self.hml.append(hml_)
+            self.hml_pct.append(hmlpct_)
+        else:
+            self.hml[-1] = hml_ # update the last element
+            self.hml_pct[-1] = hmlpct_
         # self.lastPrice = get_market_price() # sample the market price # was bars[-1].close
+        self.hmlstat.update(int(hmlpct_ * 100.0)) # update hml in cents
 
         # update high water mark since last buy, for the purpose of calculating drawdown
         needCheckpoint = False
