@@ -70,8 +70,14 @@ def main():
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
 
     syms = args.symbols or ['SPY','QQQ','IWM','TLT','NVDA','TSLA','AMD','META','MSFT','GOOG','AAPL','PLTR','MSTR','ANET','COIN']
-    useRTH = False # from 4:00am
-    endDateTime = datetime.datetime.now() + datetime.timedelta(days=0)
+    dayoffset: int = 0
+    if datetime.datetime.now().time() < datetime.time(20, 0):
+        dayoffset = -1
+    else:
+        dayoffset = 0
+    endDateTime = datetime.datetime.combine(datetime.datetime.now().date() + datetime.timedelta(days=dayoffset), datetime.time(21, 0))
+    # endDateTime = datetime.datetime.now() + datetime.timedelta(days=0)
+    # endDateTime = pd.to_datetime('2024-11-20 21:00:00-05:00')
     for sym in syms:
         contract_ = Stock(sym, 'SMART', 'USD')
         temp = ib.reqContractDetails(contract_)
@@ -90,7 +96,7 @@ def main():
             durationStr='1 D',
             barSizeSetting='1 day',
             whatToShow='TRADES',
-            useRTH=useRTH,
+            useRTH=True,
             formatDate=1,
         )
         if histbars is None or len(histbars) == 0:
@@ -105,7 +111,7 @@ def main():
             durationStr='1 D',
             barSizeSetting='1 min',
             whatToShow='TRADES',
-            useRTH=True,
+            useRTH=False,
             formatDate=1,
         )
         if histbars is None or len(histbars) == 0:
@@ -120,7 +126,7 @@ def main():
             durationStr='1 D',
             barSizeSetting='5 secs',
             whatToShow='TRADES',
-            useRTH=True,
+            useRTH=False,
             formatDate=1,
         )
         if histbars is None or len(histbars) == 0:
