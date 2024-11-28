@@ -1658,6 +1658,9 @@ def onErrorEvent(reqId, errorCode, errorString, contract):
     # https://interactivebrokers.github.io/tws-api/message_codes.html#system_codes
     if errorCode in [2104, 2106, 2107, 2108, 2158]: # not a real error
         return
+    if errorCode == 202:
+        # https://interactivebrokers.github.io/tws-api/automated_considerations.html#order_placement
+        logger.error("order is subject to price check, too far from current price?")
     logger.info(get_asyncio_running_loop(''))
     logtext = f"reqId={reqId}, errorCode={errorCode}, errorString={errorString}, contract={contract}"
     logger.error(logtext)
