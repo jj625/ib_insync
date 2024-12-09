@@ -27,7 +27,10 @@ import math
 import logging
 import datetime
 MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
+NPMKTOPEN = np.datetime64(MKTOPEN.astimezone(datetime.timezone.utc).replace(tzinfo=None), 's')
+NPMKTOPENIDX = -1
 MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
+NPMKTCLOSE = np.datetime64(MKTCLOSE.astimezone(datetime.timezone.utc).replace(tzinfo=None), 's')
 import dateutil
 import argparse
 import json
@@ -436,6 +439,53 @@ def trade_commision(trade: ib_insync.order.Trade) -> float:
 def trade_realized_pnl(trade: ib_insync.order.Trade) -> float:
     return sum(fill.commissionReport.realizedPNL for fill in trade.fills)
 
+# https://dynamiproject.wordpress.com/wp-content/uploads/2016/01/measuring_historic_volatility.pdf
+
+np_log_2 = np.log(2)
+tnpln2m1 = 2 * np_log_2 - 1
+
+def parkinson_volatility(high, low, n):
+    return np.sqrt(1 / (4 * np_log_2) * np.sum(np.log(high / low)**2) / n)
+
+def garman_klass_volatility(open_, high, low, close, n):
+    return np.sqrt(np.sum(0.5 * np.log(high / low)**2 - tnpln2m1 * np.log(close / open_)**2) / n)
+
+def rogers_satchell_volatility(open_, high, low, close, n):
+    return np.sqrt(np.sum((np.log(high / open_) * np.log(high / close) + np.log(low / open_) * np.log(low / close)) / n))
+
+def yang_zhang_volatility(open_, high, low, close, n):
+    return np.sqrt(0.511 * np.log(high / low)**2 - 0.019 * np.log(close / open_)**2 + 0.386 * np.log(close / open_) * np.log(high / low))
+
+# Annualize volatilities (assuming 252 trading days and 1440 minutes per day)
+annualization_factor = np.sqrt(252 * 1440)
+annualization_factor_252 = np.sqrt(252)
+annualization_factor_252_390 = np.sqrt(252 * 390)
+annualization_factor_390 = np.sqrt(390)
+class KalmanFilter:
+    def __init__(self, A, B, H, Q, R, P, x0):
+        self.A = A  # State transition matrix
+        self.B = B  # Control input matrix
+        self.H = H  # Observation matrix
+        self.Q = Q  # Process noise covariance
+        self.R = R  # Measurement noise covariance
+        self.P = P  # Estimate error covariance
+        self.x = x0  # Initial state estimate
+
+    def predict(self, u=0):
+        # Predict the next state
+        self.x = np.dot(self.A, self.x) + np.dot(self.B, u)
+        self.P = np.dot(np.dot(self.A, self.P), self.A.T) + self.Q
+
+    def update(self, z):
+        # Update the state with a new measurement
+        y = z - np.dot(self.H, self.x)  # Measurement residual
+        S = np.dot(self.H, np.dot(self.P, self.H.T)) + self.R  # Residual covariance
+        K = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S))  # Kalman gain
+        self.x = self.x + np.dot(K, y)
+        self.P = self.P - np.dot(np.dot(K, self.H), self.P)
+
+# Example usage
+dt = 1.0  # Time step
 def singleton(cls):
     instances = {}
     def wrapper(*args, **kwargs):
@@ -485,6 +535,10 @@ class Agent:
     hml: List[float] = field(default_factory=list) # high minus low, parallel to bars
     hml_pct: List[float] = field(default_factory=list) # high minus low as percentage of close
     hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
+
+    # hi/lo ratio, range
+    dayhilopct: deque = field(default_factory=deque) # 30 minutes (maxlen=12*30)
+    # dayhilopct: OnlineDeque = field(default_factory=OnlineDeque)
     # resampled bars
     bars1m: BarDataList = field(default_factory=list)
     # bars5m: BarDataList = field(default_factory=list)
@@ -764,14 +818,87 @@ class Agent:
         pickle.dump(pkldump, fpkl)
         fpkl.flush()
 
-    @measure_time
-    async def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
-        logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
-        logger.info(f"hasNewBar={hasNewBar}, {bars[-1]}")
+    async def onBarUpdate(self, bars: BarDataList, hasNewBar: bool):
+        def dayhilo(bars: BarDataList) -> tuple:
+            """Calculate day high/low"""
+            currentBar = bars[-1]
+            bars_avg = [bar.average for bar in bars if bar.date >= MKTOPEN]
+            bars_high = [bar.high for bar in bars if bar.date >= MKTOPEN]
+            bars_low = [bar.low for bar in bars if bar.date >= MKTOPEN]
+            bars_close = [bar.close for bar in bars if bar.date >= MKTOPEN]
+            dayhigh_avg = max(bars_avg)
+            daylow_avg = min(bars_avg)
+            dayhigh_high = max(bars_high)
+            daylow_high = min(bars_high)
+            dayhigh_low = max(bars_low)
+            daylow_low = min(bars_low)
+            dayhigh_close = max(bars_close)
+            daylow_close = min(bars_close)
+
+            dayhml_avg = dayhigh_avg - daylow_avg
+            dayhml_high = dayhigh_high - daylow_high
+            dayhml_low = dayhigh_low - daylow_low
+            dayhml_close = dayhigh_close - daylow_close
+
+            dayhl_avg = dayhigh_avg / daylow_avg
+            dayhl_high = dayhigh_high / daylow_high
+            dayhl_low = dayhigh_low / daylow_low
+            dayhl_close = dayhigh_close / daylow_close
+
+            dayloghl_avg = np.log(dayhl_avg)
+            dayloghl_high = np.log(dayhl_high)
+            dayloghl_low = np.log(dayhl_low)
+            dayloghl_close = np.log(dayhl_close)
+
+            curratio_avg = (currentBar.average - daylow_avg)/dayhml_avg if dayhml_avg > 0 else 0.0
+            curratio_high = (currentBar.high - daylow_high)/dayhml_high if dayhml_high > 0 else 0.0
+            curratio_low = (currentBar.low - daylow_low)/dayhml_low if dayhml_low > 0 else 0.0
+            curratio_close = (currentBar.close - daylow_close)/dayhml_close if dayhml_close > 0 else 0.0
+
+            return (dayhigh_avg, dayhigh_high, dayhigh_low, dayhigh_close, 
+                    daylow_avg, daylow_high, daylow_low, daylow_close, 
+                    dayhl_avg, dayhl_high, dayhl_low, dayhl_close, 
+                    dayloghl_avg, dayloghl_high, dayloghl_low, dayloghl_close, 
+                    curratio_avg, curratio_high, curratio_low, curratio_close)
+
 
         currentBar = bars[-1] # bar that is being built, never full
         currentFullBar = bars[-2] # the most recent fully formed bar
         
+        if hasNewBar:
+            logger.info(f"vol gk {garman_klass_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1):.3%}"
+                f"rs {rogers_satchell_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1):.3%}"
+                f"pk {parkinson_volatility(currentFullBar.high, currentFullBar.low, 1):.3%}"
+            )
+        if currentBar.date >= MKTOPEN:
+            if not self.dayhilopct: # initialize
+                logger.info(f"initialize dayhilopct")
+                self.dayhilopct = deque(maxlen=int(12*60*6.5))
+                z = []
+                for d in [b.date for b in bars if b.date >= MKTOPEN]:
+                    # calculate running high/low pct
+                    x = [b for b in bars if b.date >= MKTOPEN and b.date <= d]
+                    y = dayhilo(x)[16:20] + (d,)
+                    z.append(y)
+                logger.info(f"len(z)={len(z)}")
+                logger.info(f"z.head={z[:5]} z.tail={z[-5:]}")
+                self.dayhilopct.extend(z)
+
+            (dayhigh_avg, dayhigh_high, dayhigh_low, dayhigh_close, 
+             daylow_avg, daylow_high, daylow_low, daylow_close, 
+             dayhl_avg, dayhl_high, dayhl_low, dayhl_close, 
+             dayloghl_avg, dayloghl_high, dayloghl_low, dayloghl_close, 
+             curratio_avg, curratio_high, curratio_low, curratio_close) = dayhilo(bars)
+            #logger.debug(f"self.dayhilopct={self.dayhilopct[-5:]}")
+            if hasNewBar or not self.dayhilopct: # new bar or first bar
+                self.dayhilopct.append((curratio_avg, curratio_high, curratio_low, curratio_close, currentBar.date))
+            else:
+                self.dayhilopct[-1] = (curratio_avg, curratio_high, curratio_low, curratio_close, currentBar.date)
+
+            logger.info(f"day hi (a,h,l,c): {dayhigh_avg:.2f} {dayhigh_high:.2f} {dayhigh_low:.2f} {dayhigh_close:.2f}")
+            logger.info(f"day lo (a,h,l,c): {daylow_avg:.2f} {daylow_high:.2f} {daylow_low:.2f} {daylow_close:.2f}")
+            logger.info(f"log day hi/lo (a,h,l,c): {dayloghl_avg:.2%} {dayloghl_high:.2%} {dayloghl_low:.2%} {dayloghl_close:.2%} ({dayhl_avg-1.:.2%} {dayhl_high-1.:.2%} {dayhl_low-1.:.2%} {dayhl_close-1.:.2%})")
+            logger.info(f"cur%: {curratio_avg:.1%} {curratio_high:.1%} {curratio_low:.1%} {curratio_close:.1%}")
         # rate of change
         roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
         logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
@@ -816,39 +943,86 @@ class Agent:
         if hasNewBar: # at the minute
             # vec = np.array([bar.average for bar in bars[-5:]])
             vec_raw = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN])
-            vec = (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
-            # if len(vec) >= 5:
-            mult = 1000.0/self.prevclose
-            trunc_param = 6.0
-            mode_param = 'nearest'
-            # model = GaussianHMM(n_components=3, covariance_type="full", n_iter=1000)
-            # model.fit(vec.reshape(-1, 1))
-            # logger.info(f"model.means_={model.means_}, model.covars_={model.covars_}, model.transmat_={model.transmat_}")
-            smoothed_1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, truncate=trunc_param)
-            smoothed_1_der1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-            smoothed_2 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, truncate=trunc_param)
-            smoothed_2_der1 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-            smoothed_3 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, truncate=trunc_param)
-            smoothed_3_der1 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-            smoothed_4 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, truncate=trunc_param)
-            smoothed_4_der1 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-            smoothed_5 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, truncate=trunc_param)
-            smoothed_5_der1 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-            logger.info(f"vec: {vec[-7:]}")
-            logger.info(f"smoothed_1: {smoothed_1[-7:]}")
-            logger.info(f"smoothed_1_der1: {smoothed_1_der1[-7:]}")
-            logger.info(f"smoothed_2: {smoothed_2[-7:]}")
-            logger.info(f"smoothed_2_der1: {smoothed_2_der1[-7:]}")
-            logger.info(f"smoothed_3: {smoothed_3[-7:]}")
-            logger.info(f"smoothed_3_der1: {smoothed_3_der1[-7:]}")
-            logger.info(f"smoothed_4: {smoothed_4[-7:]}")
-            logger.info(f"smoothed_4_der1: {smoothed_4_der1[-7:]}")
-            logger.info(f"smoothed_5: {smoothed_5[-7:]}")
-            logger.info(f"smoothed_5_der1: {smoothed_5_der1[-7:]}")
+                vec = (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
+                # if len(vec) >= 5:
+                mult = 1000.0/self.prevclose
+                trunc_param = 6.0
+                mode_param = 'nearest'
+                # model = GaussianHMM(n_components=3, covariance_type="full", n_iter=1000)
+                # model.fit(vec.reshape(-1, 1))
+                # logger.info(f"model.means_={model.means_}, model.covars_={model.covars_}, model.transmat_={model.transmat_}")
+                smoothed_1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, truncate=trunc_param)
+                smoothed_1_der1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_2 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, truncate=trunc_param)
+                smoothed_2_der1 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_3 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, truncate=trunc_param)
+                smoothed_3_der1 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_4 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, truncate=trunc_param)
+                smoothed_4_der1 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_5 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, truncate=trunc_param)
+                smoothed_5_der1 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, order=1, truncate=trunc_param)
+                logger.info(f"vec: {vec[-7:]}")
+                logger.info(f"smoothed_1: {smoothed_1[-7:]}")
+                logger.info(f"smoothed_1_der1: {smoothed_1_der1[-7:]}")
+                logger.info(f"smoothed_2: {smoothed_2[-7:]}")
+                logger.info(f"smoothed_2_der1: {smoothed_2_der1[-7:]}")
+                logger.info(f"smoothed_3: {smoothed_3[-7:]}")
+                logger.info(f"smoothed_3_der1: {smoothed_3_der1[-7:]}")
+                logger.info(f"smoothed_4: {smoothed_4[-7:]}")
+                logger.info(f"smoothed_4_der1: {smoothed_4_der1[-7:]}")
+                logger.info(f"smoothed_5: {smoothed_5[-7:]}")
+                logger.info(f"smoothed_5_der1: {smoothed_5_der1[-7:]}")
 
             max5m = maximum_filter1d(vec, size=5, mode=mode_param)
             min5m = minimum_filter1d(vec, size=5, mode=mode_param)
   
+            open_prices = np.asarray([bar.open_ for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+            n = len(open_prices)
+            if n > 0:
+                high_prices = np.asarray([bar.high for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+                low_prices = np.asarray([bar.low for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+                close_prices = np.asarray([bar.close for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+
+                idx_end = bars.idx # zeros beyond bars.idx, be careful
+                if bars.date[idx_end] >= NPMKTCLOSE:
+                    j = np.ravel(np.where(bars.date >= NPMKTCLOSE))
+                    idx_end = j[0] if len(j) > 0 else idx_end
+                    logger.info(f"idx_end={idx_end}, bars.date[idx_end]={bars.date[idx_end:idx_end+2]}")
+                nnp = len(bars.low_prices[NPMKTOPENIDX:idx_end])
+                if n != nnp:
+                    logger.error(f"vol calculation n={n} != nnp={nnp}")
+                else:
+                    logger.info(f"vol calculation, n={n}, nnp={nnp}")
+
+                gkvol = garman_klass_volatility(open_prices, high_prices, low_prices, close_prices, n)
+                gkvolnp = garman_klass_volatility(bars.open_prices[NPMKTOPENIDX:idx_end], bars.high_prices[NPMKTOPENIDX:idx_end]
+                    , bars.low_prices[NPMKTOPENIDX:idx_end], bars.close_prices[NPMKTOPENIDX:idx_end], nnp)
+                if not math.isclose(gkvol, gkvolnp, abs_tol=1e-6):
+                    logger.info(f"garman-klass vol DIFFERENCE {gkvol:.4%} {gkvolnp:.4%}")
+                logger.info(f"garman-klass vol {gkvol:.3%}/min {annualization_factor_390 * gkvol:.2%}/d {annualization_factor_252_390 * gkvol:.2%}/y")
+
+                rsvol = rogers_satchell_volatility(open_prices, high_prices, low_prices, close_prices, n)
+                rsvolnp = rogers_satchell_volatility(bars.open_prices[NPMKTOPENIDX:idx_end], bars.high_prices[NPMKTOPENIDX:idx_end]
+                    , bars.low_prices[NPMKTOPENIDX:idx_end], bars.close_prices[NPMKTOPENIDX:idx_end], nnp)
+                if not math.isclose(rsvol, rsvolnp, abs_tol=1e-6):
+                    logger.info(f"rogers-satchell vol DIFFERENCE {rsvol:.4%} {rsvolnp:.4%}")
+                logger.info(f"rogers-satchell vol {rsvol:.3%}/min {annualization_factor_390 * rsvol:.2%}/d {annualization_factor_252_390 * rsvol:.2%}/y")
+
+                pkvol = parkinson_volatility(high_prices, low_prices, n)
+                pkvolnp = parkinson_volatility(bars.high_prices[NPMKTOPENIDX:idx_end], bars.low_prices[NPMKTOPENIDX:idx_end], nnp)
+                if not math.isclose(pkvol, pkvolnp, abs_tol=1e-6):
+                    logger.info(f"parkinson vol DIFFERENCE {pkvol:.4%} {pkvolnp:.4%}")
+                logger.info(f"parkinson vol {pkvol:.3%}/min {annualization_factor_390 * pkvol:.2%}/d {annualization_factor_252_390 * pkvol:.2%}/y")
+
+                # logger.info(f"yang-zhang vol {annualization_factor * yang_zhang_volatility(open_prices, high_prices, low_prices, close_prices, n):.2%}")
+
+                # logger.info(f"{bars.high_prices[NPMKTOPENIDX:idx_end]}, {bars.low_prices[NPMKTOPENIDX:idx_end]}, {nnp}")
+                # logger.info(f"parkinson vol "
+                #     f"(raw) {parkinson_volatility(high_prices, low_prices, n):.4%} {pkvol:.4%},"
+                #     f" (day) {annualization_factor_390 * pkvol:.2%},"
+                #     f" (ann) {annualization_factor_252_390 * pkvol:.2%}"
+                # )
+
         # checkpoint as needed
         if needCheckpoint:
             # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
@@ -1066,18 +1240,33 @@ class Agent:
             pbg = prevBar.close > prevBar.open_ # previous bar green
             cbah = currentBar.average > prevBar.average # current bar average higher (than previous bar average)
             at30s = datetime.datetime.now().second >= 30 # at 30 seconds (or later)
+            dl0m = dl1m = dl2m = dl3m = 0.0
+            dl0mb = dl1mb = dl2mb = dl3mb = False
+            if agent.dayhilopct:
+                dl0m = agent.dayhilopct[-1][2] # day low pct below 5%, current bar
+                dl1m = agent.dayhilopct[-2][2] # day low pct below 5%, 1 bar ago
+                dl2m = agent.dayhilopct[-3][2] # 2 bars ago
+                dl3m = agent.dayhilopct[-4][2] # 3 bars ago
+                dl0mb = dl0m <= 0.05
+                dl1mb = dl1m <= 0.05
+                dl2mb = dl2m <= 0.05
+                dl3mb = dl3m <= 0.05
             if orig_cond or isFollowThrough: # must add additional check when isFollowThrough
                 if isFollowThrough:
                     # fyi
                     ft1 = nbr4 and pbonl and pbg and cbah and at30s
                     logger.info(f"ft1: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
+                    ft2 = False
+                    if agent.dayhilopct:
+                        ft2 = (dl0mb or dl1mb or dl2mb or dl3mb) and pbg and cbah
+                    logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
                     if not blw_lsp:
                         logger.info(f"probably should buy, waiting for below last sold price")
                         return
                     elif blw_lsp:
                         # we are below last sold price, we can buy
                         # but only if ...
-                        if ft1:
+                        if ft1 or ft2:
                             # using limit order
                             t = ib.tickers()[0]
                             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
@@ -2269,8 +2458,33 @@ def main():
             logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}, bar[-1]={agent.bars[-1]}")
             # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
             agent.bars.updateEvent += agent.onBarUpdate
+            global NPMKTOPENIDX
+            if NPMKTOPENIDX < 0:
+                results = np.ravel(np.where(agent.bars.date == NPMKTOPEN))
+                if len(results) > 0:
+                    # FIXME
+                    NPMKTOPENIDX = results[0]
+                    logger.info(f"market open idx={NPMKTOPENIDX} date={agent.bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
+                else:
+                    NPMKTOPENIDX = -1_000
+                    idx = agent.bars.idx - 3
+                    logger.warning(f"market is not open: {agent.bars.date[0:3]}..{agent.bars.date[idx:]}")
+                    # should we bail?
 
             status = agent.simpleLongStrategy1Init()
+
+        # NPMKTOPENIDX is used throughout, make sure it's set at all times
+        if NPMKTOPENIDX < 0:
+            results = np.ravel(np.where(agent.bars.date == NPMKTOPEN))
+            if len(results) > 0:
+                # FIXME
+                NPMKTOPENIDX = results[0]
+                logger.info(f"market open idx={NPMKTOPENIDX} date={agent.bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
+            else:
+                NPMKTOPENIDX = -1_000
+                idx = agent.bars.idx - 3
+                logger.warning(f"market is not open: {agent.bars.date[0:3]}..{agent.bars.date[idx:]}")
+                # should we bail?
 
         # for x in contracts:
         #     if x.symbol in agent.symbol:
