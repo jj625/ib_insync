@@ -71,10 +71,14 @@ elif not mpl_dir.exists():
 import eventkit
 import ib_insync
 import ib_insync.ib
-from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
-
 ib_insync.ib.install_custom_repr_()
 
+from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, util
+# probe for numpy support
+probe = BarDataList()
+if not hasattr(probe, 'add_data'):
+    print("ib_insync.BarDataList does not have add_data method")
+    sys.exit(1)
 # # asyncio
 # # asyncio.run() cannot be nested
 # # get_event_loop() is deprecated in Python 3.12
@@ -388,7 +392,7 @@ def ibtrades_to_df(trades: list[ib_insync.order.Trade]) -> pd.DataFrame:
     df_merged = pd.merge(df_trades, df_fills, left_on='order_permId', right_on='exec_permId', how='outer')
     return df_merged
 
-def last_5m_hml(bars: List[BarData]) -> NDArray[np.float64]:
+def last_5m_hml(bars: BarDataList) -> NDArray[np.float64]:
     """high minus low for the last 5 bars"""
     return np.array([bar.high - bar.low for bar in bars[-5:]])
 
@@ -477,17 +481,17 @@ class Agent:
     # daily_pnl: float
     session_start: List[datetime.datetime] = field(default_factory=list)
     session_end: List[datetime.datetime] = field(default_factory=list)
-    bars: List[BarData] = field(default_factory=list)
+    bars: BarDataList = field(default_factory=list)
     hml: List[float] = field(default_factory=list) # high minus low, parallel to bars
     hml_pct: List[float] = field(default_factory=list) # high minus low as percentage of close
     hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
     # resampled bars
-    bars1m: List[BarData] = field(default_factory=list)
-    bars5m: List[BarData] = field(default_factory=list)
-    bars10m: List[BarData] = field(default_factory=list)
-    bars15m: List[BarData] = field(default_factory=list)
+    bars1m: BarDataList = field(default_factory=list)
+    # bars5m: BarDataList = field(default_factory=list)
+    # bars10m: BarDataList = field(default_factory=list)
+    # bars15m: BarDataList = field(default_factory=list)
     # gblur bars
-    bars_gb: List[BarData] = field(default_factory=list) 
+    bars_gb: BarDataList = field(default_factory=list) 
     highs: List[float] = field(default_factory=list)
     lows: List[float] = field(default_factory=list)
     lastPrice: float = 0.0 # cache bars[-1].close
@@ -641,10 +645,10 @@ class Agent:
         if abs(tdiff) > 2.0:
             # report clock skew
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
-        if np.isnan(t.bid) or np.isnan(t.ask) or np.isnan(t.last) or np.isnan(t.close) or np.isnan(t.open):
-            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open}"
+        if np.isnan(t.bid) or np.isnan(t.ask) or np.isnan(t.last) or np.isnan(t.close) or np.isnan(t.open_):
+            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
         else:
-            bidasklast = f"{t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) open {t.open} close {t.close} volume {t.volume:n}"
+            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {t.volume:n}"
         logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
 
         if t.close > 0:
@@ -793,13 +797,13 @@ class Agent:
             b = self.high_since_buy_bar1m[-1]
             if self.high_since_buy_bar1m[-1].average <= currentBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
-                prev = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average)
+                prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
                 self.high_since_buy_bar1m[-1] = currentBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentBar}")
             if self.high_since_buy_bar1m[-1].average <= currentFullBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
-                prev = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average)
+                prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
                 self.high_since_buy_bar1m[-1] = currentFullBar
                 needCheckpoint = True
                 logger.info(f"high_since_buy_bar1m from {prev} to {currentFullBar}")
@@ -911,7 +915,7 @@ class Agent:
             """Check if the last two bars are green and at least one of them close near the high"""
             if len(self.bars) < 2:
                 return False
-            if (self.bars[-1].close > self.bars[-1].open) and (self.bars[-2].close > self.bars[-2].open):
+            if (self.bars[-1].close > self.bars[-1].open_) and (self.bars[-2].close > self.bars[-2].open_):
                 if (self.bars[-1].close > self.bars[-1].low + 0.8 * (self.bars[-1].high - self.bars[-1].low)):
                     return True
                 if (self.bars[-2].close > self.bars[-2].low + 0.8 * (self.bars[-2].high - self.bars[-2].low)):
@@ -928,11 +932,11 @@ class Agent:
                 logging.warning(f"len(bars)={len(self.bars)} < 3")
                 return retval
             # check if the last two bars are green
-            tbg = self.bars[-2].close > self.bars[-2].open and self.bars[-3].close > self.bars[-3].open
+            tbg = self.bars[-2].close > self.bars[-2].open_ and self.bars[-3].close > self.bars[-3].open_
             # if one of them is yellow it's ok too
             # case in point: AMD 10/29/2024 9:35 and 9:36 bars
-            tbg1y = (self.bars[-2].close > self.bars[-2].open and self.bars[-3].close == self.bars[-3].open or
-                self.bars[-2].close == self.bars[-2].open and self.bars[-3].close > self.bars[-3].open)
+            tbg1y = (self.bars[-2].close > self.bars[-2].open_ and self.bars[-3].close == self.bars[-3].open_ or
+                self.bars[-2].close == self.bars[-2].open_ and self.bars[-3].close > self.bars[-3].open_)
             # check if at least one of them close near the high
             cnhratio = 0.8
             cnh = (self.bars[-2].close >= self.bars[-2].low + cnhratio * (self.bars[-2].high - self.bars[-2].low) or
@@ -970,7 +974,7 @@ class Agent:
             """Check if the last five bars are green"""
             if len(self.bars) < 5:
                 return False
-            return all([bar.close > bar.open for bar in self.bars[-5:]])
+            return all([bar.close > bar.open_ for bar in self.bars[-5:]])
         
         def lastn_bars_green(n=10, relax: bool=False) -> int:
             """
@@ -981,7 +985,7 @@ class Agent:
                 return 0
             count = 0
             for bar in self.bars[-n:]:
-                if bar.close > bar.open:
+                if bar.close > bar.open_:
                     count += 1
                 elif relax and bar.close == bar.open:
                     count += 1
@@ -995,9 +999,9 @@ class Agent:
                 return 0
             count = 0
             for bar in self.bars[-n:]:
-                if bar.close < bar.open:
+                if bar.close < bar.open_:
                     count += 1
-                elif relax and bar.close == bar.open:
+                elif relax and bar.close == bar.open_:
                     count += 1
                 else:
                     break
@@ -1031,7 +1035,7 @@ class Agent:
             # 11/26/24: when to buy? ft=True, near low of the day, last 4 bars are not green, 
             #   follow by one green, and current bar average is higher than previous at the bottom of current minute
             #   nvda 14:26
-            def mn_bars_red(bars: List[BarData], start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
+            def mn_bars_red(bars: BarDataList, start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
                 """
                 start, end are negative list index
                 count the number of consecutive red bars from start to end
@@ -1040,11 +1044,11 @@ class Agent:
                 #     return False
                 count = 0
                 for bar in bars[start:end:-1]: # from the tail end
-                    if bar.close < bar.open:
+                    if bar.close < bar.open_:
                         count += 1
-                    elif relax and bar.close == bar.open: # yellow bar ok if relax
+                    elif relax and bar.close == bar.open_: # yellow bar ok if relax
                         count += 1
-                    elif not relax and bar.close == bar.open: # yellow bar not ok if not relax
+                    elif not relax and bar.close == bar.open_: # yellow bar not ok if not relax
                         break
                     elif consecutive: # we're looking for consecutive red bars
                         break
@@ -1053,9 +1057,13 @@ class Agent:
             nbr_actual: int = mn_bars_red(self.bars[lkbk-20:], lkbk, lkbk-20, relax=True, consecutive=True)
             nbr4 = nbr_actual >= 4 # looking for strings of 4+ red bars, starting from -3
             pbonl_threshold = 0.2
-            pbonl_realized: float = (prevBar.open - prevBar.low) / (prevBar.high - prevBar.low) # previous bar open near low
+            pbhml_ = prevBar.high - prevBar.low
+            pbonl_realized: float = (prevBar.open_ - prevBar.low) / pbhml_ if pbhml_ != 0.0 else 0.0 # previous bar open near low
             pbonl = pbonl_realized <= pbonl_threshold # previous bar open near low
-            pbg = prevBar.close > prevBar.open # previous bar green
+            pbcnh_threshold = 0.8
+            pbcnh_real = (prevBar.close - prevBar.low) / pbhml_ if pbhml_ != 0.0 else 0.0 # previous bar close near high
+            pbcnh = pbcnh_real >= pbcnh_threshold # previous bar close near high
+            pbg = prevBar.close > prevBar.open_ # previous bar green
             cbah = currentBar.average > prevBar.average # current bar average higher (than previous bar average)
             at30s = datetime.datetime.now().second >= 30 # at 30 seconds (or later)
             if orig_cond or isFollowThrough: # must add additional check when isFollowThrough
@@ -1799,7 +1807,7 @@ def resample_bars(bars, resample_interval='2min'):
     # Convert the list of BarData objects to a DataFrame
     data = {
         'date': [bar.date for bar in bars],
-        'open': [bar.open for bar in bars],
+        'open': [bar.open_ for bar in bars],
         'high': [bar.high for bar in bars],
         'low': [bar.low for bar in bars],
         'close': [bar.close for bar in bars],
@@ -2316,7 +2324,7 @@ def main():
         y = [b.close for b in agent.bars[s]]
         y_high = [b.high for b in agent.bars[s]]
         y_low = [b.low for b in agent.bars[s]]
-        y_open = [b.open for b in agent.bars[s]]
+        y_open = [b.open_ for b in agent.bars[s]]
         x = np.arange(len(y))
         logger.debug(f"x,y: {x}, {y}")
 
