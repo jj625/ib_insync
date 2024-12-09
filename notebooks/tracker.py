@@ -1,4 +1,7 @@
 import sys
+import platform
+computername = platform.node()
+import contextlib
 import pickle
 import inspect
 import asyncio
@@ -96,6 +99,7 @@ ib_insync.ib.install_custom_repr_()
 
 # Get the program's file name without the extension 
 program_name = os.path.splitext(os.path.basename(__file__))[0] 
+scriptdir = os.path.dirname(os.path.realpath(__file__))
 
 # hold strong references to tasks. remember to remove them when done
 background_tasks: set[asyncio.Task] = set()
@@ -1822,8 +1826,9 @@ async def telegram_init(bot):
     # u = bot.get_me()
     # logger.info(f"Telegram user: {u}")
     # async with bot:
-    u = bot.get_me()
-    logger.info(f"Telegram user: {await u}")
+    with contextlib.suppress(telegram.error.NetworkError):
+        u = bot.get_me()
+        logger.info(f"Telegram user: {await u}")
         # asyncio.Task.set_result(await u)
 
 def load_spec_file(scriptdir: str = os.path.dirname(os.path.realpath(__file__))
@@ -1972,10 +1977,9 @@ def main():
     # console_handler = logging.StreamHandler()
     # console_handler.setLevel(args.loglevel)
     # console_handler.setFormatter(formatter)
-    scriptdir = os.path.dirname(os.path.realpath(__file__))
-    filesuffix = f'{args.symbol}_{datetime.datetime.now():%y%m%d_%H%M}'
-    filesuffixdt = f'{args.symbol}_{datetime.datetime.now():%y%m%d}'
-    logfilename = os.path.join(scriptdir, 'logs', f'{program_name}_{filesuffix}.log')
+    logfilesuffix = f'{datetime.datetime.now():%y%m%d_%H%M}_{computername}_{program_name}'
+    datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now():%y%m%d}_{computername}'
+    logfilename = os.path.join(scriptdir, 'logs', f'{args.symbol}_{logfilesuffix}.log')
     file_handler = logging.FileHandler(logfilename)
     file_handler.setLevel(args.loglevel)
     file_handler.setFormatter(formatter)
@@ -2023,7 +2027,7 @@ def main():
     spec_d = spec['root']['default']
     clientid = args.clientid if args.clientid else spec_p['clientid']
 
-    h5file = os.path.join(scriptdir, 'data', f'tracker_{filesuffixdt}.h5')
+    h5file = os.path.join(scriptdir, 'data', f'tracker_{datafilesuffixdt}.h5')
     global h5store
     h5store = pd.HDFStore(h5file, 'a')
 
@@ -2104,7 +2108,7 @@ def main():
         logger.info(f"No position found for {args.symbol}")
 
     # resume previous session
-    pklfile = os.path.join(scriptdir, 'data', f'tracker_{filesuffixdt}.pkl')
+    pklfile = os.path.join(scriptdir, 'data', f'tracker_{datafilesuffixdt}.pkl')
     global fpkl
     data = None
     if not os.path.exists(pklfile) or os.path.getsize(pklfile) == 0:
