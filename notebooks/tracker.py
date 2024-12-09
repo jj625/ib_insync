@@ -1959,6 +1959,7 @@ def main():
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--run_until', type=str, help='Run until this time (HH:MM)')
     argparser.add_argument('--live_trading', action='store_true', help='Live trading')
+    argparser.add_argument('--account', type=str, default='', help='Account number to use')
     args = argparser.parse_args()
 
     # must come before any logging calls
@@ -2040,18 +2041,45 @@ def main():
     # t.add_done_callback(lambda x: logger.info(f"Telegram user: {x.result()}"))
 
     # IB
-    global ib
+    global ib, managedAccounts
     ib = IB()
-    ib.connect(args.host, args.port, clientId=clientid)
+    ib.connect(args.host, args.port, clientId=clientid, timeout=60)
+    if ib.client._serverVersion < 178:
+        logger.error(f'TWS version {ib.client._serverVersion} is too old. Update to latest version.')
+        ib.disconnect()
+        sys.exit(1)
     # to test connection
     # https://www.interactivebrokers.com/cgi-bin/conn_test.pl
 
+    # get accounts
+    managedAccounts = ib.managedAccounts()
+    logger.info(f"Managed accounts: {managedAccounts}")
+    # get account specific specs
+    numshares_a, maxloss_a, account = 0, 0.0, ''
+    if args.account == '' and len(managedAccounts) == 1: # only one account
+        account = managedAccounts[0]
+    elif args.account == '' and len(managedAccounts) > 1:
+        logger.error(f"Multiple accounts found, must specify account")
+        sys.exit(1)
+    elif args.account != '' and args.account in managedAccounts: # specified account
+        account = args.account
+    else:
+        logger.error(f"Account {args.account} not found in managed accounts")
+        sys.exit(1)
+
+    logger.info(f"Using account: {account}")
+    if spec.get(account):
+        spec_a = spec[account]
+        if args.symbol in spec_a:
+            numshares_a = spec_a[args.symbol].get('numshares', 0)
+            maxloss_a = spec_a[args.symbol].get('maxloss', 0.0)
+
     # print portfolio
-    sp_ = [p for p in ib.portfolio() if p.contract.symbol in [args.symbol]]
+    sp_ = [p for p in ib.portfolio(account) if p.contract.symbol in [args.symbol]]
     logger.info(f"Portfolio: {sp_}")
 
     # find stock position of a given symbol in the portfolio
-    sp_ = [p for p in ib.positions() if p.contract.symbol in [args.symbol] and p.contract.secType == 'STK']
+    sp_ = [p for p in ib.positions(account) if p.contract.symbol in [args.symbol] and p.contract.secType == 'STK']
     # assert len(sp_) == 1
     # if len(sp_) == 0:
     #     logger.warning(f"Stock position not found for {args.symbol}")
@@ -2059,6 +2087,13 @@ def main():
     global agent
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
                   , tradingaccount=account
+                  , maxloss=args.maxloss if args.maxloss else maxloss_a if maxloss_a != 0.0 else spec_p['maxloss']
+                  , numshares=args.numshares if args.numshares else numshares_a if numshares_a !=0 else spec_p['numshares']
+                  , upPctMilestone=np.asarray(spec['root'][speckey]['upPctMilestone']) * spec_p['milestone_multiplier']
+                  , dnPctMilestone=np.asarray(spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])) * spec_p['milestone_multiplier']
+                  , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * spec_p['milestone_multiplier']
+                  , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * spec_p['milestone_multiplier']
+                  , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * spec_p['milestone_multiplier']
     )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
