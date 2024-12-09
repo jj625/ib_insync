@@ -64,7 +64,7 @@ if parent_dir not in sys.path:
 
 # cmd /c mklink /D "eventkit" "C:\Users\Jimmy\source\erdewit\eventkit"
 import pathlib
-mpl_dir = pathlib.Path('../eventkit').resolve()
+mpl_dir = pathlib.Path('../../eventkit').resolve()
 if mpl_dir.exists() and mpl_dir.is_dir() and str(mpl_dir) not in sys.path:
     sys.path.insert(0, str(mpl_dir))
     mpl_dir
@@ -312,7 +312,7 @@ def neg(num: numbers.Real) -> numbers.Real:
 
 def last_business_dt() -> datetime.date:
     """Return the last business date"""
-    today = datetime.datetime.now().date()
+    today = datetime.datetime.now().date() + datetime.timedelta(days=-1)
     # before 9:30am, use previous business day
     if datetime.datetime.now().time() < datetime.time(16, 0):
         today -= datetime.timedelta(days=1)
@@ -324,6 +324,41 @@ def last_business_dt() -> datetime.date:
     #     return today + datetime.timedelta(days=-3)
     # else:
     #     return today + datetime.timedelta(days=-1)
+
+class TradeManager:
+    def __init__(self, trade: Trade):
+        self.trade = trade
+        self.trade.statusEvent += self.on_status_event
+        self.trade.modifyEvent += self.on_modify_event
+        self.trade.fillEvent += self.on_fill_event
+        self.trade.commissionReportEvent += self.on_commission_report_event
+        self.trade.filledEvent += self.on_filled_event
+        self.trade.cancelEvent += self.on_cancel_event
+        self.trade.cancelledEvent += self.on_cancelled_event
+
+    def __call__(self):
+        return self.trade
+
+    def on_status_event(self, trade: Trade):
+        logger.info(f"{trade}")
+
+    def on_modify_event(self, trade: Trade):
+        logger.info(f"{trade}")
+
+    def on_fill_event(self, trade: Trade, fill: Fill):
+        logger.info(f"{trade}, {fill}")
+
+    def on_commission_report_event(self, trade: Trade, fill: Fill, report: CommissionReport):
+        logger.info(f"{trade}, {fill}, {report}")
+
+    def on_filled_event(self, trade: Trade):
+        logger.info(f"{trade}")
+
+    def on_cancel_event(self, trade: Trade):
+        logger.info(f"{trade}")
+
+    def on_cancelled_event(self, trade: Trade):
+        logger.info(f"{trade}")
 
 # Function to flatten the trade structure
 def flatten_trade(trade: ib_insync.order.Trade):
@@ -685,16 +720,25 @@ class Agent:
         agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
         ib.qualifyContracts(contract_1)
         agent.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
+        if len(contractDetails) != 1:
+            logger.error(f"Contract must be unique, expected 1 contractDetails, got {len(contractDetails)}")
+            logger.error(f"{contractDetails}")
+            return -1
+        cdl = contractDetails[0].liquidSessions()[0]
+        logger.info(f"trading hours: {cdl.start} to {cdl.end}")
 
         # request market data
         ib.reqMarketDataType(1)
-        ib.reqMktData(contract_1, '', False, False, None)
-        ib.sleep(1)
+        t = ib.reqMktData(contract_1, '', False, False, None)
         if len(ib.tickers()) != 1:
             logger.error(f"{ib.tickers()}: expected 1 ticker")
             return -1
         t = ib.tickers()[0]
-
+        for i in range(10):
+            if hasattr(t, 'time') and t.time is not None:
+                break
+            logger.info(f"waiting for ticker to be fully populated")
+            ib.sleep(1)
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 2.0:
             # report clock skew
@@ -736,7 +780,9 @@ class Agent:
         # self.stopLossPct[0] = -0.0025 # -25bps initial stop loss
 
         self.reset_milestone() # initialize to an impossible value
-        logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone}, stopLossPct={self.stopLossPct}")
+        with np.printoptions(suppress=True, formatter={'float': lambda x: f'{x:.2%}'}):
+            logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone}"
+                f", stopLossPct={self.stopLossPct}, dnPctMilestone={self.dnPctMilestone}")
         
         if self.stkpos and self.stkpos.position != 0:
             if self.high_since_buy_bar1m == []:
@@ -943,6 +989,7 @@ class Agent:
         if hasNewBar: # at the minute
             # vec = np.array([bar.average for bar in bars[-5:]])
             vec_raw = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN])
+            if len(vec_raw) > 0:
                 vec = (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
                 # if len(vec) >= 5:
                 mult = 1000.0/self.prevclose
@@ -1077,10 +1124,6 @@ class Agent:
           while keeping the position open, hoping to go to the next milestone
         when to exit? when we hit the stopLossPct for the current milestone or we hit the maxloss
         """
-        # these variables are visible to the strategy
-        currentBar = self.bars[-1] # bar that is being built, never full
-        prevBar = self.bars[-2] # the previous bar
-        lastPrice_ = get_market_price()
 
         def lastPctReturn():
             return (lastPrice_ / self.stkpos.avgCost) - 1.0
@@ -1105,6 +1148,10 @@ class Agent:
             if len(self.bars) < 3:
                 logging.warning(f"len(bars)={len(self.bars)} < 3")
                 return retval
+            currentBar = self.bars[-1]
+            if currentBar.date < MKTOPEN:
+                logging.warning(f"{currentBar.date} before market open")
+                return retval
             # check if the last two bars are green
             tbg = self.bars[-2].close > self.bars[-2].open_ and self.bars[-3].close > self.bars[-3].open_
             # if one of them is yellow it's ok too
@@ -1113,14 +1160,19 @@ class Agent:
                 self.bars[-2].close == self.bars[-2].open_ and self.bars[-3].close > self.bars[-3].open_)
             # check if at least one of them close near the high
             cnhratio = 0.8
-            cnh = (self.bars[-2].close >= self.bars[-2].low + cnhratio * (self.bars[-2].high - self.bars[-2].low) or
-                self.bars[-3].close >= self.bars[-3].low + cnhratio * (self.bars[-3].high - self.bars[-3].low))
-            cnhration_actual = (self.bars[-2].close - self.bars[-2].low) / (self.bars[-2].high - self.bars[-2].low)
+            hml2 = self.bars[-2].high - self.bars[-2].low
+            hml3 = self.bars[-3].high - self.bars[-3].low
+            cml2 = self.bars[-2].close - self.bars[-2].low
+            cml3 = self.bars[-3].close - self.bars[-3].low
+            cnh = (self.bars[-2].close >= self.bars[-2].low + cnhratio * hml2 or
+                self.bars[-3].close >= self.bars[-3].low + cnhratio * hml3)
+            cnhratio_actual2 = cml2 / hml2 if hml2 != 0 else 1.0
+            cnhratio_actual3 = cml3 / hml3 if hml3 != 0 else 1.0
             if (tbg or tbg1y) and cnh:
                 retval = True
             
             if tbg or tbg1y or cnh:
-                logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh ({cnhration_actual:.3})={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
+                logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh ({cnhratio_actual2:.3},{cnhratio_actual3:.3})={cnh} bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
             return retval
 
         def low_to_high_inflection_point(n=15, m=5) -> bool:
@@ -1161,7 +1213,7 @@ class Agent:
             for bar in self.bars[-n:]:
                 if bar.close > bar.open_:
                     count += 1
-                elif relax and bar.close == bar.open:
+                elif relax and bar.close == bar.open_:
                     count += 1
                 else:
                     break
@@ -1296,6 +1348,8 @@ class Agent:
                     if self.liveTrading:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                        if self.order.action == 'BUY':
+                            self.lastBuyTrade = self.trade
                         logger.info(f"Trade placed: {self.trade}")
                         self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # remember the bar index when we placed the trade
                         self.buyopen_bar1m.append(agent.bars[-1]) # remember the bar when we placed the trade
@@ -1325,13 +1379,19 @@ class Agent:
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
             return # end of seekEntry
 
-        # set lastPrice_
         logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
+        # these variables are visible to the strategy
+        currentBar = self.bars[-1] # bar that is being built, never full
+        prevBar = self.bars[-2] # the previous bar
+
+        # set lastPrice_
+        lastPrice_ = get_market_price()
         t = ib.tickers()[0]
+        chg = lastPrice_/t.close - 1.0
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
-        logger.info(f"{t.contract.localSymbol} {t.bid} {t.ask} {t.last} ({(t.ask+t.bid)/2.0/t.close-1.0:+.2%}) volume {t.volume:n}")
+        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
 
         # volatility
@@ -1479,10 +1539,13 @@ class Agent:
         else:
             stoplossPrice_ = avgCost_ * (1 + self.stopLossPct[self.idxMilestone])
 
+        rput = None
         if self.lastBuyTrade: # if we have a last buy trade
-            T = (datetime.datetime.now().astimezone() - max_exec_time(self.lastBuyTrade)).total_seconds() / 60.0 * 5.0 # in minutes * 5
+            nrpm = 60 # number of minutes per return
+            T = (datetime.datetime.now().astimezone() - max_exec_time(self.lastBuyTrade)).total_seconds() / 60.0 / nrpm # in minutes
             rput = lastPctReturn() / T # return per unit time
-            logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%} ({rput:.2%}/5min), stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
+            logger.info(f"T={T:.1f} rput={rput:.3%}/{nrpm:n}min")
+        logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%}{f' ({rput:.3%}/5min)'.format(rput=rput) if rput else ''}, stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
         
         # calculate drawdown
         # get the highest 1m close since we last buy. get the higher of that and current price. drawdownpct = min(0, (lastprice - highest)/highest)
@@ -1523,12 +1586,12 @@ class Agent:
         # allow some retracement from pnl high water mark
         max_retracement_pct = -1.0 * self.mile0_max_retracement_pct * pnl_hwm_pct
         # sometimes max_retracement_pct is too small (when pnl high water mark is close to zero), so we use the absolute min
-        cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone == 0
-        if self.idxMilestone == 0:
+        cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone >= 0
+        if self.idxMilestone >= 0:
             logger.info(f"max retrc% {max_retracement_pct:.3%} floor {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
         logger.info(f"stpls={cond1}, ddrtrc={cond2}, idxMilestone={self.idxMilestone}")
         
-        if cond1: # or cond2 # (disabled for now)
+        if cond1 or cond2: # (disabled for now)
             # crossed below milestone, we should liquidate
             if cond1: 
                 logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
@@ -1545,6 +1608,8 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    if self.order.action == 'SELL':
+                        self.lastSellTrade = self.trade
                     self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade}, state reset to 0")
                     self.sellclose_bar1m_idx.append(len(self.bars) - 1)
@@ -1622,6 +1687,8 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    if self.order.action == 'SELL':
+                        self.lastSellTrade = self.trade
                     self.set_state(0) # reset state
                     logger.info(f"Trade placed: {self.trade}, state reset to 0")
                     self.sellclose_bar1m_idx.append(len(self.bars) - 1) # record the bar index when we placed the trade
@@ -2397,7 +2464,7 @@ def main():
 
     if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
         pass
-    else:
+    elif not args.run_until:
         # wait until market open
         waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
         if datetime.datetime.now() < waitUntil:
@@ -2519,7 +2586,8 @@ def main():
 
         # enforce max loss
         if agent.stkpos and agent.stkpos.position > 0:
-            agent.enforceMaxLoss(agent.bars[-1].close)
+            # agent.enforceMaxLoss(agent.bars[-1].close)
+            agent.enforceMaxLoss(get_bid_price())
 
         # # try simple strategy
         # if (agent.stkpos.position > 0) and agent.trade is None:
