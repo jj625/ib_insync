@@ -452,6 +452,7 @@ class Agent:
 
     # all below are NOT instance variables, they are class variables
     symbol: str
+    tradingaccount: str
     # position: ib_insync.objects.Position = None
     stkpos: ib_insync.objects.Position = None
     rput: float = 0.0 # if we have position, earning rate = return per unit time (rput)
@@ -712,7 +713,7 @@ class Agent:
         return 0
 
     def __str__(self):
-        return f"Symbol: {self.symbol}, stock position: {self.stkpos}"
+        return f"Symbol: {self.symbol}, trading size {self.numshares}, maxloss {self.maxloss}, account {self.tradingaccount}, stock position: {self.stkpos}"
     #, Avg Cost: {self.avg_cost}, Last Price: {self.last_price}, Realized PnL: {self.realized_pnl}, Unrealized PnL: {self.unrealized_pnl}, Daily PnL: {self.daily_pnl}"
 
     def set_state(self, state: int) -> 'Agent':
@@ -1067,12 +1068,16 @@ class Agent:
                         if ft1:
                             # using limit order
                             t = ib.tickers()[0]
-                            self.order = LimitOrder('BUY', agent.numshares, t.marketPrice(), discretionaryAmt=round(0.0002 * t.ask, 2))
+                            mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
+                            mktPrice = round(t.marketPrice() / mintick) * mintick
+                            self.order = LimitOrder('BUY', agent.numshares, mktPrice, discretionaryAmt=round(0.0002 * t.ask, 2))
+                            self.order.account = self.tradingaccount
                         else:
                             return
                 elif not isFollowThrough: # original condition
                     # ok using market order
                     self.order = MarketOrder('BUY', agent.numshares)
+                    self.order.account = self.tradingaccount
 
                 # logger.info(f"seekEntry: Two bars green with one close near it's high, seeking entry...")
                 # last_5m_hml_ = last_5m_hml(self.bars)
@@ -1329,7 +1334,10 @@ class Agent:
             elif cond2:
                 logger.warning(f"Crossed below max retracement {drawdown_pct:.2%}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
             bid_price = get_bid_price()
+            mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
+            bid_price = round(bid_price / mintick) * mintick
             self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
+            self.order.account = self.tradingaccount
             contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
             logger.warning(f"Selling shares of {contract_} as {self.order}")
             # before we place the order, make sure no outstanding trades
@@ -1399,7 +1407,10 @@ class Agent:
                 # last_5m_hml_ = last_5m_hml(self.bars)
                 # logger.info(f"trailing 5m hml {last_5m_hml_} ({np.array2string(last_5m_hml_ / self.lastPrice, formatter=np_pct)})")
                 bid_price = get_bid_price()
+                mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
+                bid_price = round(bid_price / mintick) * mintick
                 self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
+                self.order.account = self.tradingaccount
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 logger.warning(f"Selling shares of {contract_} as {self.order} ...")
             if self.stkpos.position < 0 and self.trade is None:
@@ -2047,13 +2058,7 @@ def main():
 
     global agent
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
-                  , maxloss=args.maxloss if args.maxloss else spec_p['maxloss']
-                  , numshares=args.numshares if args.numshares else spec_p['numshares']
-                  , upPctMilestone=spec['root'][speckey]['upPctMilestone']
-                  , dnPctMilestone=spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])
-                  , stopLossPct=spec['root'][speckey]['stopLossPct']
-                  , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct'])
-                  , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct'])
+                  , tradingaccount=account
     )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
