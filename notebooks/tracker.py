@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 np_pct = {'float_kind': lambda x: f"{x:.2%}"}
 import scipy.optimize
-np.set_printoptions(precision=2, suppress=True)
+np.set_printoptions(linewidth=150, precision=2, suppress=True)
 import scipy
 from scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d
 import math
@@ -34,10 +34,13 @@ NPMKTCLOSE = np.datetime64(MKTCLOSE.astimezone(datetime.timezone.utc).replace(tz
 import dateutil
 import argparse
 import json
-from collections import defaultdict
+from collections import defaultdict, deque
+from itertools import islice, pairwise
+from more_itertools import windowed
 from dataclasses import dataclass, field
 from typing import List, Optional
 import typing
+from typing import Iterable
 import numbers
 # import pdb
 import telegram
@@ -79,9 +82,13 @@ ib_insync.ib.install_custom_repr_()
 from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, util
 # probe for numpy support
 probe = BarDataList()
-if not hasattr(probe, 'add_data'):
-    print("ib_insync.BarDataList does not have add_data method")
+if not hasattr(probe, '_init_npdata'):
+    print("ib_insync.BarDataList does not have numpy extension")
     sys.exit(1)
+
+# import filterpy
+# from filterpy.kalman import KalmanFilter as kf
+
 # # asyncio
 # # asyncio.run() cannot be nested
 # # get_event_loop() is deprecated in Python 3.12
@@ -177,7 +184,6 @@ def measure_time(func):
     else:
         return sync_wrapper
 
-from collections import deque
 from scipy.stats import skew, kurtosis, mode
 class OnlineStatsInt:
     def __init__(self, val_max: int = 1000):
@@ -289,6 +295,79 @@ def send_telegram_message(chat_id: str, text: str):
 #     text = 'Hello, this is an asynchronous message!'
 #     executor = ThreadPoolExecutor()
 #     executor.submit(run_async_task, chat_id, text)
+
+def almost_zero_vector(v: NDArray, tol: float = 0.0001) -> tuple[bool, float]:
+    norm = np.linalg.norm(v)
+    return (np.all(np.abs(v) < tol), norm)
+
+def extract_field_as_array(group: Iterable, field_name: str) -> NDArray:
+    return np.asarray([getattr(item, field_name) for item in group])
+
+def slice_deque(dq: deque, start=None, end=None) -> list:
+    length = len(dq)
+    if length == 0:
+        return []
+    
+    if start is None:
+        start = 0
+    elif start < 0:
+        start += length
+    
+    if end is None:
+        end = length
+    elif end < 0:
+        end += length
+    
+    start = max(0, min(start, length))
+    end = max(0, min(end, length))
+    
+    return list(islice(dq, start, end))
+
+def custom_formatter(value):
+    if isinstance(value, (bool, int, float, str, bytes)):
+        return str(value)
+    if isinstance(value, datetime.datetime):
+        value_local = value.astimezone()  # Convert to local time
+        if value.date() == datetime.datetime.now().date():
+            return value_local.strftime('%H:%M:%S')
+        else:
+            return value_local.strftime(r'%Y-%m-%d %H:%M:%S %Z')
+    elif isinstance(value, list):
+        return '[' + ", ".join([custom_formatter(v) for v in value]) + ']'
+    elif isinstance(value, dict):
+        return {k: custom_formatter(v) for k, v in value.items()}
+    # elif util.isnamedtupleinstance(value):
+    #     return {f: custom_formatter(getattr(value, f)) for f in value._fields}
+    # elif util.is_dataclass(value):
+    #     return {value.__class__.__qualname__: custom_formatter(util.dataclassNonDefaults(value))}
+    else:
+        # logger.warning(f"Unknown type: {type(value)}")
+        return str(value)
+
+def format_dict(d: dict) -> str:
+    return '{' + ", ".join(f"{k}: {custom_formatter(v)}" for k, v in d.items()) + '}'
+
+def _repr_vol_tup(vol_tup: tuple) -> str:
+    return f"({vol_tup[0]:.3%} {vol_tup[1]:.3%} {vol_tup[2]:.3%})"
+def _repr_vol_tup_lst(vol_tup_lst: list) -> str:
+    return '[' + ', '.join([_repr_vol_tup(vol_tup) for vol_tup in vol_tup_lst]) + ']' # if vol_tup_lst else '[]'
+
+def _repr_bar(bar: BarData) -> str:
+    return f"[{bar.date:%H:%M} o={bar.open_:.2f} h={bar.high:.2f} l={bar.low:.2f} c={bar.close:.2f} v={int(bar.volume):_} a={bar.average:.2f} bc={bar.barCount:n}]"
+def _repr_barlist(bars: BarDataList) -> str:
+    return ', '.join([_repr_bar(bar) for bar in bars])
+def _repr_hilopcttup(hilotup: tuple) -> str:
+    return f"({hilotup[0]:.2%}, {hilotup[1]:.2%}, {hilotup[2]:.2%}, {hilotup[3]:.2%}, {hilotup[4]:%H:%M})"
+def _repr_hilopctbd(hilobd: BarData) -> str:
+    return f"({hilobd.average:.2%}, {hilobd.high:.2%}, {hilobd.low:.2%}, {hilobd.close:.2%}, {hilobd.date:%H:%M})"
+def _repr_hilopctlst(hilopctlst: list) -> str:
+    if hilopctlst:
+        if type(hilopctlst[0]) == tuple:
+            return '[' + ', '.join([_repr_hilopcttup(hilotup) for hilotup in hilopctlst]) + ']'
+        elif type(hilopctlst[0]) == BarData:
+            return '[' + ', '.join([_repr_hilopctbd(pct) for pct in hilopctlst]) + ']'
+        else:
+            return '[' + ', '.join([str(x) for x in hilopctlst]) + ']'
 
 def is_integer(value: numbers.Real) -> bool:
     return value == int(value)
@@ -549,6 +628,8 @@ class Agent:
     # position: ib_insync.objects.Position = None
     stkpos: ib_insync.objects.Position = None
     rput: float = 0.0 # if we have position, earning rate = return per unit time (rput)
+    volatility_per_min: deque = field(default_factory=deque) # volatility every minute
+    volatility_pm_running: deque = field(default_factory=deque) # running per minute volatility since open
     ibcontract: ib_insync.contract.Contract = None
     ibcontractDetails: ib_insync.contract.ContractDetails = None
     prevclose: float = 0.0
@@ -586,6 +667,7 @@ class Agent:
     lastPrice: float = 0.0 # cache bars[-1].close
     maxloss: float = 0.0
     trade: ib_insync.order.Trade = None # trade that we placed
+    tradeMgr: TradeManager = None
     # order: ib_insync.objects.Order = None
     liveTrading: bool = False
     strategy_tasks: set[asyncio.Task] = field(default_factory=set) # keep separate references for strategy tasks
@@ -593,6 +675,7 @@ class Agent:
     # state variables and methods for simpleLongStrategy1
     strategy1initstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
     numshares: int = 0
+    milestone_multiplier: float = 0.0
     upPctMilestone: List[float] = field(default_factory=list)
     dnPctMilestone: List[float] = field(default_factory=list)
     # upPriceMilestone: List[float] = field(default_factory=list)
@@ -632,7 +715,7 @@ class Agent:
             logger.warning(f"previous session data is empty")
             return
         _ = data.pop('trade_list', None) # no need for this anymore
-        logger.info(f"Resuming session {data}")
+        logger.info(f"Resuming session {format_dict(data)}")
         self.session_start = data.get('session_start', []).append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or data['session_start']
         self.session_end = data.get('session_end', []) or data['session_end']
         self.buyopen_bar1m_idx = data.get('buyopen_bar1m_idx', []) or data['buyopen_bar1m_idx']
@@ -742,7 +825,7 @@ class Agent:
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 2.0:
             # report clock skew
-            logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
+            logger.warning(f"Tick time is {tdiff:.2f} seconds" + (" ahead" if tdiff > 0 else " behind") + " of current time")
         if np.isnan(t.bid) or np.isnan(t.ask) or np.isnan(t.last) or np.isnan(t.close) or np.isnan(t.open_):
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
         else:
@@ -901,34 +984,60 @@ class Agent:
             curratio_low = (currentBar.low - daylow_low)/dayhml_low if dayhml_low > 0 else 0.0
             curratio_close = (currentBar.close - daylow_close)/dayhml_close if dayhml_close > 0 else 0.0
 
-            return (dayhigh_avg, dayhigh_high, dayhigh_low, dayhigh_close, 
-                    daylow_avg, daylow_high, daylow_low, daylow_close, 
-                    dayhl_avg, dayhl_high, dayhl_low, dayhl_close, 
-                    dayloghl_avg, dayloghl_high, dayloghl_low, dayloghl_close, 
-                    curratio_avg, curratio_high, curratio_low, curratio_close)
+            return (dayhigh_avg, dayhigh_high, dayhigh_low, dayhigh_close, # [0:4]
+                    daylow_avg, daylow_high, daylow_low, daylow_close, # [4:8]
+                    dayhl_avg, dayhl_high, dayhl_low, dayhl_close, # [8:12]
+                    dayloghl_avg, dayloghl_high, dayloghl_low, dayloghl_close, # [12:16]
+                    curratio_avg, curratio_high, curratio_low, curratio_close) # [16:20]
 
 
         currentBar = bars[-1] # bar that is being built, never full
         currentFullBar = bars[-2] # the most recent fully formed bar
+        # NPMKTOPENIDX is used throughout, make sure it's set at all times
+        global NPMKTOPENIDX
+        if NPMKTOPENIDX < 0:
+            results = np.ravel(np.where(bars.date == NPMKTOPEN))
+            if len(results) > 0:
+                # FIXME
+                NPMKTOPENIDX = results[0]
+                logger.info(f"market open idx={NPMKTOPENIDX} date={bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
+            else:
+                NPMKTOPENIDX = -1_000
+                idx = bars.idx - 3
+                logger.warning(f"market is not open: {bars.date[0:3]}..{bars.date[idx:]}")
+                # should we bail?
         
-        if hasNewBar:
-            logger.info(f"vol gk {garman_klass_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1):.3%}"
-                f"rs {rogers_satchell_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1):.3%}"
-                f"pk {parkinson_volatility(currentFullBar.high, currentFullBar.low, 1):.3%}"
-            )
+        if currentBar.high - currentBar.low > 0 or currentBar.close - currentBar.open_ > 0:
+            gkvol_1 = garman_klass_volatility(currentBar.open_, currentBar.high, currentBar.low, currentBar.close, 1)
+            rsvol_1 = rogers_satchell_volatility(currentBar.open_, currentBar.high, currentBar.low, currentBar.close, 1)
+            pkvol_1 = parkinson_volatility(currentBar.high, currentBar.low, 1)
+            logger.info(f"spot vol[-1] GK {gkvol_1:.3%}, RS {rsvol_1:.3%}, PK {pkvol_1:.3%}")
+        else:
+            gkvol_1 = rsvol_1 = pkvol_1 = 0.0
+            logger.warning(f"spot vol[-1] zero")
+        if currentFullBar.high - currentFullBar.low > 0 or currentFullBar.close - currentFullBar.open_ > 0:
+            gkvol_2 = garman_klass_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1)
+            rsvol_2 = rogers_satchell_volatility(currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close, 1)
+            pkvol_2 = parkinson_volatility(currentFullBar.high, currentFullBar.low, 1)
+            logger.info(f"spot vol[-2] GK {gkvol_2:.3%}, RS {rsvol_2:.3%}, PK {pkvol_2:.3%}")
+        else:
+            gkvol_2 = rsvol_2 = pkvol_2 = 0.0
+            logger.warning(f"spot vol[-2] zero")
         if currentBar.date >= MKTOPEN:
             if not self.dayhilopct: # initialize
-                logger.info(f"initialize dayhilopct")
-                self.dayhilopct = deque(maxlen=int(12*60*6.5))
+                # logger.info(f"initialize dayhilopct")
+                # self.dayhilopct = deque(maxlen=int(12*60*6.5))
                 z = []
                 for d in [b.date for b in bars if b.date >= MKTOPEN]:
                     # calculate running high/low pct
                     x = [b for b in bars if b.date >= MKTOPEN and b.date <= d]
-                    y = dayhilo(x)[16:20] + (d,)
-                    z.append(y)
-                logger.info(f"len(z)={len(z)}")
-                logger.info(f"z.head={z[:5]} z.tail={z[-5:]}")
-                self.dayhilopct.extend(z)
+                    y = dayhilo(x)[16:20] + (d,) # (curratio_avg, curratio_high, curratio_low, curratio_close, date)
+                    z.append(BarData(average=y[0], high=y[1], low=y[2], close=y[3], date=y[4]))
+                logger.debug(f"len(z)={len(z)}")
+                logger.debug(f"z.head={_repr_hilopctlst(z[:5])} z.tail={_repr_hilopctlst(z[-5:])}")
+                logger.debug(f"initialize dayhilopct")
+                self.dayhilopct = deque(z, maxlen=int(12*60*6.5))
+                # self.dayhilopct.extend(z)
 
             (dayhigh_avg, dayhigh_high, dayhigh_low, dayhigh_close, 
              daylow_avg, daylow_high, daylow_low, daylow_close, 
@@ -937,14 +1046,40 @@ class Agent:
              curratio_avg, curratio_high, curratio_low, curratio_close) = dayhilo(bars)
             #logger.debug(f"self.dayhilopct={self.dayhilopct[-5:]}")
             if hasNewBar or not self.dayhilopct: # new bar or first bar
-                self.dayhilopct.append((curratio_avg, curratio_high, curratio_low, curratio_close, currentBar.date))
+                self.dayhilopct.append(BarData(average=curratio_avg, high=curratio_high, low=curratio_low, close=curratio_close, date=currentBar.date))
             else:
-                self.dayhilopct[-1] = (curratio_avg, curratio_high, curratio_low, curratio_close, currentBar.date)
+                self.dayhilopct[-1] = BarData(average=curratio_avg, high=curratio_high, low=curratio_low, close=curratio_close, date=currentBar.date)
 
             logger.info(f"day hi (a,h,l,c): {dayhigh_avg:.2f} {dayhigh_high:.2f} {dayhigh_low:.2f} {dayhigh_close:.2f}")
             logger.info(f"day lo (a,h,l,c): {daylow_avg:.2f} {daylow_high:.2f} {daylow_low:.2f} {daylow_close:.2f}")
             logger.info(f"log day hi/lo (a,h,l,c): {dayloghl_avg:.2%} {dayloghl_high:.2%} {dayloghl_low:.2%} {dayloghl_close:.2%} ({dayhl_avg-1.:.2%} {dayhl_high-1.:.2%} {dayhl_low-1.:.2%} {dayhl_close-1.:.2%})")
             logger.info(f"cur%: {curratio_avg:.1%} {curratio_high:.1%} {curratio_low:.1%} {curratio_close:.1%}")
+
+            # volatility
+            if not self.volatility_per_min:
+                z = []
+                bars_since_open = [b for b in bars if b.date >= MKTOPEN]
+                for b in bars_since_open:
+                    # calculate per minute spot volatility
+                    gkvol_1_tmp = garman_klass_volatility(b.open_, b.high, b.low, b.close, 1)
+                    rsvol_1_tmp = rogers_satchell_volatility(b.open_, b.high, b.low, b.close, 1)
+                    pkvol_1_tmp = parkinson_volatility(b.high, b.low, 1)
+                    # x = [b for b in bars if b.date >= MKTOPEN and b.date <= d]
+                    # y = dayhilo(x)[16:20] + (d,) # (curratio_avg, curratio_high, curratio_low, curratio_close, date)
+                    vol_tup_tmp = (gkvol_1_tmp, rsvol_1_tmp, pkvol_1_tmp)
+                    z.append(vol_tup_tmp)
+                logger.debug(f"len(z)={len(z)}")
+                logger.debug(f"z.head={_repr_vol_tup_lst(z[:3])} z.tail={_repr_vol_tup_lst(z[-3:])}")
+                logger.debug(f"initialize volatility_per_min")
+                self.volatility_per_min = deque(z, maxlen=int(60*6.5)) # 1 minute resolution
+            else:
+                logger.info(f"volatility_per_min[-1]: {_repr_vol_tup(self.volatility_per_min[-1])}, len={len(self.volatility_per_min)}")
+
+            vol_tup = (gkvol_1, rsvol_1, pkvol_1)
+            if hasNewBar or not self.volatility_per_min: # new bar or first bar
+                self.volatility_per_min.append(vol_tup)
+            else:
+                self.volatility_per_min[-1] = vol_tup
         # rate of change
         roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
         logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
@@ -990,35 +1125,36 @@ class Agent:
             # vec = np.array([bar.average for bar in bars[-5:]])
             vec_raw = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN])
             if len(vec_raw) > 0:
-                vec = (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
+              with np.printoptions(suppress=True, formatter={'float': lambda x: f'{x:.4f}'}):
+                vec = vec_raw[-60:] # (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
                 # if len(vec) >= 5:
-                mult = 1000.0/self.prevclose
-                trunc_param = 6.0
+                # mult = 1000.0/self.prevclose
+                trunc_param = 36.0
                 mode_param = 'nearest'
                 # model = GaussianHMM(n_components=3, covariance_type="full", n_iter=1000)
                 # model.fit(vec.reshape(-1, 1))
                 # logger.info(f"model.means_={model.means_}, model.covars_={model.covars_}, model.transmat_={model.transmat_}")
-                smoothed_1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, truncate=trunc_param)
-                smoothed_1_der1 = gaussian_filter1d(vec, sigma=1.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_2 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, truncate=trunc_param)
-                smoothed_2_der1 = gaussian_filter1d(vec, sigma=2.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_3 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, truncate=trunc_param)
-                smoothed_3_der1 = gaussian_filter1d(vec, sigma=3.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_4 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, truncate=trunc_param)
-                smoothed_4_der1 = gaussian_filter1d(vec, sigma=4.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_5 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, truncate=trunc_param)
-                smoothed_5_der1 = gaussian_filter1d(vec, sigma=5.0*mult, mode=mode_param, order=1, truncate=trunc_param)
-                logger.info(f"vec: {vec[-7:]}")
-                logger.info(f"smoothed_1: {smoothed_1[-7:]}")
-                logger.info(f"smoothed_1_der1: {smoothed_1_der1[-7:]}")
-                logger.info(f"smoothed_2: {smoothed_2[-7:]}")
-                logger.info(f"smoothed_2_der1: {smoothed_2_der1[-7:]}")
-                logger.info(f"smoothed_3: {smoothed_3[-7:]}")
-                logger.info(f"smoothed_3_der1: {smoothed_3_der1[-7:]}")
-                logger.info(f"smoothed_4: {smoothed_4[-7:]}")
-                logger.info(f"smoothed_4_der1: {smoothed_4_der1[-7:]}")
-                logger.info(f"smoothed_5: {smoothed_5[-7:]}")
-                logger.info(f"smoothed_5_der1: {smoothed_5_der1[-7:]}")
+                smoothed_1 = gaussian_filter1d(vec, sigma=2, mode=mode_param, truncate=trunc_param)
+                smoothed_1_der1 = gaussian_filter1d(vec, sigma=2, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_2 = gaussian_filter1d(vec, sigma=3, mode=mode_param, truncate=trunc_param)
+                smoothed_2_der1 = gaussian_filter1d(vec, sigma=3, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_3 = gaussian_filter1d(vec, sigma=5, mode=mode_param, truncate=trunc_param)
+                smoothed_3_der1 = gaussian_filter1d(vec, sigma=5, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_4 = gaussian_filter1d(vec, sigma=16, mode=mode_param, truncate=trunc_param)
+                smoothed_4_der1 = gaussian_filter1d(vec, sigma=16, mode=mode_param, order=1, truncate=trunc_param)
+                smoothed_5 = gaussian_filter1d(vec, sigma=24, mode=mode_param, truncate=trunc_param)
+                smoothed_5_der1 = gaussian_filter1d(vec, sigma=24, mode=mode_param, order=1, truncate=trunc_param)
+                logger.info(f"vec: {vec[-16:]}")
+                logger.info(f"smoothed_1: {smoothed_1[-16:]}")
+                logger.info(f"smoothed_1_der1: {smoothed_1_der1[-16:]}")
+                logger.info(f"smoothed_2: {smoothed_2[-16:]}")
+                logger.info(f"smoothed_2_der1: {smoothed_2_der1[-16:]}")
+                logger.info(f"smoothed_3: {smoothed_3[-16:]}")
+                logger.info(f"smoothed_3_der1: {smoothed_3_der1[-16:]}")
+                logger.info(f"smoothed_4: {smoothed_4[-16:]}")
+                logger.info(f"smoothed_4_der1: {smoothed_4_der1[-16:]}")
+                logger.info(f"smoothed_5: {smoothed_5[-16:]}")
+                logger.info(f"smoothed_5_der1: {smoothed_5_der1[-16:]}")
 
             max5m = maximum_filter1d(vec, size=5, mode=mode_param)
             min5m = minimum_filter1d(vec, size=5, mode=mode_param)
@@ -1031,10 +1167,11 @@ class Agent:
                 close_prices = np.asarray([bar.close for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
 
                 idx_end = bars.idx # zeros beyond bars.idx, be careful
-                if bars.date[idx_end] >= NPMKTCLOSE:
+                if (idx_end-1)>0 and bars.date[idx_end-1] >= NPMKTCLOSE:
                     j = np.ravel(np.where(bars.date >= NPMKTCLOSE))
-                    idx_end = j[0] if len(j) > 0 else idx_end
-                    logger.info(f"idx_end={idx_end}, bars.date[idx_end]={bars.date[idx_end:idx_end+2]}")
+                    idx_end = (j[0] if len(j) > 0 else idx_end-1)
+                    # if idx_end != bars.idx - 1:
+                    logger.info(f"idx_end-1={idx_end-1}, bars.date[idx_end-1:idx_end+1]={bars.date[idx_end-1:idx_end+1]}")
                 nnp = len(bars.low_prices[NPMKTOPENIDX:idx_end])
                 if n != nnp:
                     logger.error(f"vol calculation n={n} != nnp={nnp}")
@@ -1070,10 +1207,10 @@ class Agent:
                 #     f" (ann) {annualization_factor_252_390 * pkvol:.2%}"
                 # )
 
-        # checkpoint as needed
-        if needCheckpoint:
-            # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
-            self.checkpoint('high_since_buy_bar1m')
+            # checkpoint as needed
+            if needCheckpoint:
+                # if currentBar.date.minute % 5 == 0 and currentBar.date.second == 0:
+                self.checkpoint('high_since_buy_bar1m')
 
         # if (self.highsincestart == 0.0) or (self.highsincestart < bars[-1].high):
         #     self.highsincestart = bars[-1].high
@@ -1098,6 +1235,9 @@ class Agent:
                 logger.error(f"Failed to initialize strategy, exiting...")
                 self.set_state(99) # bail out of main loop               
                 return
+            elif datetime.datetime.now(datetime.timezone.utc) > MKTCLOSE + datetime.timedelta(seconds=15):
+                logger.info(f"Market closed, exiting...")
+                self.set_state(99) # bail out of main loop
             assert self.strategy1initstatus == 0, "Strategy initialization should return success"
             logger.info(f"scheduling strategy execution")
             task = asyncio.create_task(self.simpleLongStrategy1())
@@ -1105,6 +1245,15 @@ class Agent:
             task.add_done_callback(self.strategy_tasks.discard)
             await task
             task = None
+        else:
+            logger.info(f"strategy tasks running: {len(self.strategy_tasks)}")
+            for task in self.strategy_tasks:
+                logger.info(f"task: {task}")
+                if task.done():
+                    logger.info(f"task done: {task}")
+                    self.strategy_tasks.remove(task)
+                    logger.info(f"strategy tasks running: {len(self.strategy_tasks)}")
+                    break
         
         return
 
@@ -1126,7 +1275,7 @@ class Agent:
         """
 
         def lastPctReturn():
-            return (lastPrice_ / self.stkpos.avgCost) - 1.0
+            return (lastPrice_ / self.stkpos.avgCost) - 1.0 # life-to-date return
 
         def two_bars_green_with_one_close_near_high():
             """Check if the last two bars are green and at least one of them close near the high"""
@@ -1295,14 +1444,16 @@ class Agent:
             dl0m = dl1m = dl2m = dl3m = 0.0
             dl0mb = dl1mb = dl2mb = dl3mb = False
             if agent.dayhilopct:
-                dl0m = agent.dayhilopct[-1][2] # day low pct below 5%, current bar
-                dl1m = agent.dayhilopct[-2][2] # day low pct below 5%, 1 bar ago
-                dl2m = agent.dayhilopct[-3][2] # 2 bars ago
-                dl3m = agent.dayhilopct[-4][2] # 3 bars ago
-                dl0mb = dl0m <= 0.05
-                dl1mb = dl1m <= 0.05
-                dl2mb = dl2m <= 0.05
-                dl3mb = dl3m <= 0.05
+                dl_arr = extract_field_as_array(slice_deque(agent.dayhilopct, -4, -1), 'low')
+                dlmb_arr = dl_arr <= 0.05
+                # dl0m = agent.dayhilopct[-1][2] # day low pct below 5%, current bar
+                # dl1m = agent.dayhilopct[-2][2] # day low pct below 5%, 1 bar ago
+                # dl2m = agent.dayhilopct[-3][2] # 2 bars ago
+                # dl3m = agent.dayhilopct[-4][2] # 3 bars ago
+                # dl0mb = dl0m <= 0.05
+                # dl1mb = dl1m <= 0.05
+                # dl2mb = dl2m <= 0.05
+                # dl3mb = dl3m <= 0.05
             if orig_cond or isFollowThrough: # must add additional check when isFollowThrough
                 if isFollowThrough:
                     # fyi
@@ -1310,8 +1461,10 @@ class Agent:
                     logger.info(f"ft1: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
                     ft2 = False
                     if agent.dayhilopct:
-                        ft2 = (dl0mb or dl1mb or dl2mb or dl3mb) and pbg and cbah
-                    logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
+                        # ft2 = (dl0mb or dl1mb or dl2mb or dl3mb) and pbg and cbah
+                        ft2 = dlmb_arr.any() and pbg and cbah
+                    # logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
+                    logger.info(f"ft2: dlmb={dlmb_arr}, pbg={pbg}, cbah={cbah}")
                     if not blw_lsp:
                         logger.info(f"probably should buy, waiting for below last sold price")
                         return
@@ -1323,7 +1476,7 @@ class Agent:
                             t = ib.tickers()[0]
                             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
                             mktPrice = round(t.marketPrice() / mintick) * mintick
-                            self.order = LimitOrder('BUY', agent.numshares, mktPrice, discretionaryAmt=round(0.0002 * t.ask, 2))
+                            self.order = LimitOrder('BUY', agent.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
                             self.order.account = self.tradingaccount
                         else:
                             return
@@ -1348,6 +1501,7 @@ class Agent:
                     if self.liveTrading:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                        self.tradeMgr = TradeManager(self.trade)
                         if self.order.action == 'BUY':
                             self.lastBuyTrade = self.trade
                         logger.info(f"Trade placed: {self.trade}")
@@ -1374,6 +1528,7 @@ class Agent:
                     logger.info(f"Trade is filled: {self.trade.log}")
                     self.set_state(1)
                     self.trade = None
+                    self.tradeMgr.clear()
                 else:
                     logger.warning(f"should not reach here {self.trade}")
                 #     assert False, f"Impossible state: trade {self.trade} not in {ib.openTrades() and }"
@@ -1390,7 +1545,7 @@ class Agent:
         chg = lastPrice_/t.close - 1.0
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 1.0:
-            logger.warning(f"Tick time difference is {tdiff:.2f} seconds")
+            logger.warning(f"Tick time is {tdiff:.2f} seconds" + (f" ahead" if tdiff > 0 else " behind") + f" current time")
         logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
 
@@ -1428,10 +1583,10 @@ class Agent:
         assert self.trapdoorIdx >= 0, "trapdoorIdx should be greater than zero"
 
         if self.trapdoorIdx > 0:
-            trapdoorPrice_ = self.prevclose * (1 - self.dnPctMilestone[self.trapdoorIdx])
+            trapdoorPrice_ = self.prevclose * (1 + self.dnPctMilestone[self.trapdoorIdx])
         else:
-            trapdoorPrice_ = self.prevclose * (1 - self.dnPctMilestone[self.trapdoorIdx])
-        logger.info(f"{logmsg} {self.trapdoorIdx} ({self.dnPctMilestone[self.trapdoorIdx]:.2%}) last {lastPrice_:.2f}, return {ret:.2%}, trapdoor {trapdoorPrice_:.2f} ({trapdoorPrice_/lastPrice_-1:.2%})")
+            trapdoorPrice_ = self.prevclose * (1 + self.dnPctMilestone[self.trapdoorIdx])
+        logger.info(f"{logmsg} {self.trapdoorIdx} ({self.dnPctMilestone[self.trapdoorIdx]:.2%}) last {lastPrice_:.2f}, return {chg:.2%}, trapdoor {trapdoorPrice_:.2f} ({trapdoorPrice_/lastPrice_-1:.2%})")
 
 
         logger.info(f"state={self.get_state()}")
@@ -1449,13 +1604,15 @@ class Agent:
                 if self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade status: {self.trade}"
                     self.trade = None
+                    self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                     self.high_since_buy_bar1m = [] # reset high since buy
                     # allow to proceed
                 elif self.trade.orderStatus.status == 'Cancelled':
-                    logger.error(f"Trade was cancelled: {self.trade}, undoing state change, resetting trade to None")
+                    logger.error(f"Trade was cancelled: {self.trade}, undoing state change ({self.state} -> {self.prevstate}), resetting trade to None")
                     self.state = self.prevstate # undo state change
                     self.trade = None
+                    self.tradeMgr.clear()
                     return
             else: # self.trade is None, stkpos is not None
                 logger.error(f"Impossible state: state=0 but self.trade={self.trade} position={self.stkpos} and idxMilestone={self.idxMilestone}")
@@ -1501,10 +1658,12 @@ class Agent:
                     logmsg = f"Trade is filled: {self.trade.log}"
                     # self.state = 1
                     self.trade = None
+                    self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                 else:
                     logmsg = f"Trade not filled: {self.trade.log}"
                     self.trade = None
+                    self.tradeMgr.clear()
                     logger.error(logmsg + f", resetting trade to None")
                     return # proceed or not?
         elif self.get_state() == 99:
@@ -1600,7 +1759,7 @@ class Agent:
             bid_price = get_bid_price()
             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
             bid_price = round(bid_price / mintick) * mintick
-            self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
+            self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * self.milestone_multiplier * bid_price, 2))
             self.order.account = self.tradingaccount
             contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
             logger.warning(f"Selling shares of {contract_} as {self.order}")
@@ -1608,6 +1767,7 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    self.tradeMgr = TradeManager(self.trade)
                     if self.order.action == 'SELL':
                         self.lastSellTrade = self.trade
                     self.set_state(0) # reset state
@@ -1628,6 +1788,7 @@ class Agent:
             else: # self.trade is not in ib.openTrades()
                 logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
                 self.trade = None
+                self.tradeMgr.clear()
                 logger.error(logmsg + f", resetting trade to None")
             # 
             # _openTrades = ib.trades()
@@ -1675,7 +1836,7 @@ class Agent:
                 bid_price = get_bid_price()
                 mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
                 bid_price = round(bid_price / mintick) * mintick
-                self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * bid_price, 2))
+                self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * self.milestone_multiplier * bid_price, 2))
                 self.order.account = self.tradingaccount
                 contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 logger.warning(f"Selling shares of {contract_} as {self.order} ...")
@@ -1687,6 +1848,7 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    self.tradeMgr = TradeManager(self.trade)
                     if self.order.action == 'SELL':
                         self.lastSellTrade = self.trade
                     self.set_state(0) # reset state
@@ -1709,6 +1871,7 @@ class Agent:
                 if self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade is filled: {self.trade.log}"
                     self.trade = None
+                    self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                 else:
                     logger.error(f"Trade was not filled: {self.trade}")
@@ -2241,8 +2404,13 @@ def main():
     # console_handler = logging.StreamHandler()
     # console_handler.setLevel(args.loglevel)
     # console_handler.setFormatter(formatter)
-    logfilesuffix = f'{datetime.datetime.now():%y%m%d_%H%M}_{computername}_{program_name}'
-    datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now():%y%m%d}_{computername}'
+    if args.account == 'default':
+        account_txt = ''
+    else:
+        account_txt = f"_{args.account}"
+
+    logfilesuffix = f'{datetime.datetime.now():%y%m%d_%H%M}_{computername}{account_txt}_{program_name}'
+    datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now():%y%m%d}_{computername}{account_txt}'
     logfilename = os.path.join(scriptdir, 'logs', f'{args.symbol}_{logfilesuffix}.log')
     file_handler = logging.FileHandler(logfilename)
     file_handler.setLevel(args.loglevel)
@@ -2252,6 +2420,7 @@ def main():
     global logger
     logger = logging.getLogger()
 
+    logger.info(f"logging to {logfilename}")
     # # in the meantime, remind user to set power setting to 'full'
     # pwr = GetPowerSetting()
     # if pwr != '{8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c}':
@@ -2287,9 +2456,26 @@ def main():
     elif args.symbol not in spec['root']:
         logger.error(f"Symbol {args.symbol} not found in spec file, must provide numshares and maxloss")
         sys.exit(1)
+    
+    if args.account != 'default' and args.account in spec and args.symbol in spec[args.account]:
+        spec_a = spec[args.account][args.symbol]
+    else:
+        spec_a = {}
     spec_p = spec['root'][args.symbol]
     spec_d = spec['root']['default']
     clientid = args.clientid if args.clientid else spec_p['clientid']
+    if args.clientid:
+        clientid = args.clientid
+    elif 'clientid' in spec_a:
+        clientid = spec_a['clientid']
+    elif 'clientid' in spec_p:
+        clientid = spec_p['clientid']
+    elif 'clientid' in spec_d:
+        clientid = spec_d['clientid']
+    else:
+        logger.error(f"TWS Client ID not found in spec file nor in command line")
+        sys.exit(1)
+    logger.info(f"Using TWS Client ID: {clientid}")
 
     h5file = os.path.join(scriptdir, 'data', f'tracker_{datafilesuffixdt}.h5')
     global h5store
@@ -2390,6 +2576,7 @@ def main():
         pickle.dump(pklinit, fpkl) # initialize it
         logger.info(f"Initialized pkl file: {pklfile}")
     else:
+        logger.info(f"Loading pkl file: {pklfile}")
         fpkl = open(pklfile, 'r+b') # read/write binary
         data = pickle.load(fpkl)
         if data['symbol'] == 'init' and data['buyopen_bar1m_idx'] == [] and data['sellclose_bar1m_idx'] == []:
@@ -2448,10 +2635,12 @@ def main():
         # untilTime = datetime.datetime.now() + datetime.timedelta(hours=2.2)
         elif dateutil.parser.parse('20:00:00') < datetime.datetime.now(): # after 8:00 PM, run until 11:59 PM
             untilTime = dateutil.parser.parse('23:59:00') # 11:59 PM
-        elif dateutil.parser.parse('16:16:00') < datetime.datetime.now(): # after 4:16 PM, run until 8:00 PM
+        elif dateutil.parser.parse('16:45:00') < datetime.datetime.now(): # after 4:45 PM, run until 8:00 PM
             untilTime = dateutil.parser.parse('20:02:00') # 8:00 PM
         elif datetime.datetime.now() < dateutil.parser.parse('16:02:00'): # before 4:02 PM, run until 4:02 PM
             untilTime = datetime.datetime.combine(datetime.datetime.now(), datetime.time(16, 2, 0)) # 4:02 PM
+        else:
+            untilTime = datetime.datetime.now() + datetime.timedelta(minutes=1)
     doOnce = True
 
     # run initialization before market open
@@ -2473,7 +2662,7 @@ def main():
 
         waitUntil2 = dateutil.parser.parse('17:00:00') - datetime.timedelta(minutes=1)
         #if datetime.datetime.now() < waitUntil2 and dateutil.parser.parse('16:16:00') < datetime.datetime.now():
-        if dateutil.parser.parse('16:16:00') < datetime.datetime.now() < waitUntil2:
+        if dateutil.parser.parse('16:58:00') < datetime.datetime.now() < waitUntil2:
             logger.info(f"Waiting until {waitUntil2}")
             util.waitUntil(waitUntil2)
 
@@ -2539,19 +2728,6 @@ def main():
                     # should we bail?
 
             status = agent.simpleLongStrategy1Init()
-
-        # NPMKTOPENIDX is used throughout, make sure it's set at all times
-        if NPMKTOPENIDX < 0:
-            results = np.ravel(np.where(agent.bars.date == NPMKTOPEN))
-            if len(results) > 0:
-                # FIXME
-                NPMKTOPENIDX = results[0]
-                logger.info(f"market open idx={NPMKTOPENIDX} date={agent.bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
-            else:
-                NPMKTOPENIDX = -1_000
-                idx = agent.bars.idx - 3
-                logger.warning(f"market is not open: {agent.bars.date[0:3]}..{agent.bars.date[idx:]}")
-                # should we bail?
 
         # for x in contracts:
         #     if x.symbol in agent.symbol:
@@ -2708,6 +2884,7 @@ if __name__ == "__main__":
         logger.exception(f"Caught exception {e}", exc_info=True, stack_info=True)
     finally:
         if agent:
+            agent.session_end.append(datetime.datetime.now(datetime.timezone.utc).astimezone())
             agent.checkpoint('final')
         logger.info("Cleaning up...")
         if ib is not None:
