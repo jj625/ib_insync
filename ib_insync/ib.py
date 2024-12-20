@@ -1957,7 +1957,7 @@ class IB:
 
     def reqAccountUpdatesMultiAsync(
             self, account: str, modelCode: str = '') -> Awaitable[None]:
-        self._logger.info(f'reqAccountUpdatesMultiAsync: account={account}, modelCode={modelCode}')
+        self._logger.info(f'reqAccountUpdatesMultiAsync: account={account}' + (', modelCode={modelCode}' if modelCode else ''))
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         self.client.reqAccountUpdatesMulti(reqId, account, modelCode, False)
