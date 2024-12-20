@@ -6,10 +6,11 @@ import datetime
 import logging
 import time
 from typing import Awaitable, Dict, Iterator, List, Optional, Union
-
+from collections.abc import Callable
 from eventkit import Event
 
 import ib_insync.util as util
+from ib_insync.util import UNSET_DOUBLE, UNSET_INTEGER
 from ib_insync.client import Client
 from ib_insync.contract import Contract, ContractDescription, ContractDetails, Stock
 from ib_insync.objects import (
@@ -17,7 +18,7 @@ from ib_insync.objects import (
     ExecutionFilter, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
     NewsArticle, NewsBulletin, NewsProvider, NewsTick, OptionChain,
     OptionComputation, PnL, PnLSingle, PortfolioItem, Position, PriceIncrement,
-    PositionMulti,
+    PositionMulti, BarData, RealTimeBar,
     RealTimeBarList, ScanDataList, ScannerSubscription, SmartComponent,
     CommissionReport,
     TagValue, TradeLogEntry, WshEventData)
@@ -194,13 +195,14 @@ class IB:
         'connectedEvent', 'disconnectedEvent', 'updateEvent',
         'pendingTickersEvent', 'barUpdateEvent',
         'newOrderEvent', 'orderModifyEvent', 'cancelOrderEvent',
-        'openOrderEvent', 'orderStatusEvent',
-        'execDetailsEvent', 'commissionReportEvent',
-        'updatePortfolioEvent', 'positionEvent', 'accountValueEvent',
-        'accountSummaryEvent', 'pnlEvent', 'pnlSingleEvent',
+        'openOrderEvent', 'openOrderEndEvent', 'completedOrdersEndEvent', 'orderStatusEvent',
+        'execDetailsEvent', 'execDetailsEndEvent', 'commissionReportEvent',
+        'updatePortfolioEvent', 'positionEvent', 'positionMultiEndEvent', 'accountValueEvent',
+        'accountDownloadEndEvent', 'accountUpdateMultiEndEvent',
+        'accountSummaryEvent', 'accountSummaryEndEvent', 'pnlEvent', 'pnlSingleEvent',
         'scannerDataEvent', 'tickNewsEvent', 'newsBulletinEvent',
         'wshMetaEvent', 'wshEvent',
-        'errorEvent', 'timeoutEvent')
+        'errorEvent', 'timeoutEvent', 'tickSnapshotEndEvent')
 
     RequestTimeout: float = 0
     RaiseRequestErrors: bool = False
@@ -225,13 +227,20 @@ class IB:
         self.orderModifyEvent = Event('orderModifyEvent')
         self.cancelOrderEvent = Event('cancelOrderEvent')
         self.openOrderEvent = Event('openOrderEvent')
+        self.openOrderEndEvent = Event('openOrderEndEvent')
+        self.completedOrdersEndEvent = Event('completedOrdersEndEvent')
         self.orderStatusEvent = Event('orderStatusEvent')
         self.execDetailsEvent = Event('execDetailsEvent')
+        self.execDetailsEndEvent = Event('execDetailsEndEvent')
         self.commissionReportEvent = Event('commissionReportEvent')
         self.updatePortfolioEvent = Event('updatePortfolioEvent')
         self.positionEvent = Event('positionEvent')
+        self.positionMultiEndEvent = Event('positionMultiEndEvent')
         self.accountValueEvent = Event('accountValueEvent')
+        self.accountDownloadEndEvent = Event('accountDownloadEndEvent')
+        self.accountUpdateMultiEndEvent = Event('accountUpdateMultiEndEvent')
         self.accountSummaryEvent = Event('accountSummaryEvent')
+        self.accountSummaryEndEvent = Event('accountSummaryEndEvent')
         self.pnlEvent = Event('pnlEvent')
         self.pnlSingleEvent = Event('pnlSingleEvent')
         self.scannerDataEvent = Event('scannerDataEvent')
@@ -241,6 +250,7 @@ class IB:
         self.wshEvent = Event('wshEvent')
         self.errorEvent = Event('errorEvent')
         self.timeoutEvent = Event('timeoutEvent')
+        self.tickSnapshotEndEvent = Event('tickSnapshotEndEvent')
 
     def __del__(self):
         self.disconnect()
@@ -664,7 +674,7 @@ class IB:
         now = datetime.datetime.now(datetime.timezone.utc)
         key = self.wrapper.orderKey(
             self.wrapper.clientId, orderId, order.permId)
-        trade = self.wrapper.trades.get(key)
+        trade: Optional[Trade] = self.wrapper.trades.get(key)
         if trade:
             # this is a modification of an existing order
             assert trade.orderStatus.status not in OrderStatus.DoneStates
@@ -1084,6 +1094,24 @@ class IB:
             self.reqHistoricalDataAsync(
                 contract, endDateTime, durationStr, barSizeSetting, whatToShow,
                 useRTH, formatDate, keepUpToDate, chartOptions, timeout))
+
+    def reqHistoricalDataExt(
+            self, contract: Contract,
+            endDateTime: Union[datetime.datetime, datetime.date, str, None],
+            durationStr: str, barSizeSetting: str, whatToShow: str,
+            useRTH: bool, formatDate: int = 1, keepUpToDate: bool = False,
+            chartOptions: List[TagValue] = [], timeout: float = 60,
+            _historicalDataEndHook: Callable = None
+            # _historicalDataHook: Callable = None
+            ) \
+            -> BarDataList:
+        """
+        mimics reqHistoricalData but allows for additional event hooks to be passed in
+        """
+        return self._run(
+            self.reqHistoricalDataExtAsync(
+                contract, endDateTime, durationStr, barSizeSetting, whatToShow,
+                useRTH, formatDate, keepUpToDate, chartOptions, timeout, _historicalDataEndHook))
 
     def cancelHistoricalData(self, bars: BarDataList):
         """
@@ -1796,6 +1824,7 @@ class IB:
 
             # autobind manual orders
             if clientId == 0:
+                self._logger.info('Autobinding manual orders')
                 self.reqAutoOpenOrders(True)
 
             accounts = self.client.getAccounts()
@@ -1809,12 +1838,22 @@ class IB:
                 reqs['open orders'] = self.reqOpenOrdersAsync()
             if not readonly and self.client.serverVersion() >= 150:
                 reqs['completed orders'] = self.reqCompletedOrdersAsync(False)
+            else:
+                self._logger.warning(
+                    'Server version too low for reqCompletedOrders')
             if account:
                 reqs['account updates'] = self.reqAccountUpdatesAsync(account)
+            else:
+                if len(accounts) > 1 and not account:
+                    self._logger.warning(
+                        'Multiple accounts detected, but no account specified, not subscribing to account updates')
             if len(accounts) <= self.MaxSyncedSubAccounts:
                 for acc in accounts:
                     reqs[f'account updates for {acc}'] = \
                         self.reqAccountUpdatesMultiAsync(acc)
+            else:
+                self._logger.warning(
+                    f'Not subscribing to account updates for {len(accounts)} accounts')
 
             # run initializing requests concurrently and log if any times out
             tasks = [
@@ -1824,9 +1863,11 @@ class IB:
             resps = await asyncio.gather(*tasks, return_exceptions=True)
             for name, resp in zip(reqs, resps):
                 if isinstance(resp, asyncio.TimeoutError):
-                    msg = f'{name} request timed out'
+                    msg = f'"{name}" request timed out'
                     errors.append(msg)
                     self._logger.error(msg)
+                else:
+                    self._logger.debug(f"'{name}' completed" + (f': {resp}' if resp else ''))
 
             # the request for executions must come after all orders are in
             try:
@@ -1909,12 +1950,14 @@ class IB:
         return future
 
     def reqAccountUpdatesAsync(self, account: str) -> Awaitable[None]:
+        self._logger.info(f'reqAccountUpdatesAsync: account={account}')
         future = self.wrapper.startReq('accountValues')
         self.client.reqAccountUpdates(True, account)
         return future
 
     def reqAccountUpdatesMultiAsync(
             self, account: str, modelCode: str = '') -> Awaitable[None]:
+        self._logger.info(f'reqAccountUpdatesMultiAsync: account={account}, modelCode={modelCode}')
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         self.client.reqAccountUpdatesMulti(reqId, account, modelCode, False)
@@ -2048,6 +2091,56 @@ class IB:
         except asyncio.TimeoutError:
             self.client.cancelHistoricalData(reqId)
             self._logger.warning(f'reqHistoricalData: Timeout for {contract}')
+            bars.clear()
+        return bars
+
+    async def reqHistoricalDataExtAsync(
+            self, contract: Contract,
+            endDateTime: Union[datetime.datetime, datetime.date, str, None],
+            durationStr: str, barSizeSetting: str,
+            whatToShow: str, useRTH: bool,
+            formatDate: int = 1, keepUpToDate: bool = False,
+            chartOptions: List[TagValue] = [], timeout: float = 60,
+            _historicalDataEndHook: Optional[Callable[[str, str, BarDataList], None]] = None
+            ) \
+            -> BarDataList:
+        """ 
+        Mimics reqHistoricalDataAsync
+        Request historical data with extended parameters. 
+        Should be exactly the same as reqHistoricalDataAsync, 
+        except for the additional event hooks processing.
+        """
+        reqId = self.client.getReqId()
+        bars = BarDataList()
+        bars.reqId = reqId
+        bars.contract = contract
+        bars.endDateTime = endDateTime
+        bars.durationStr = durationStr
+        bars.barSizeSetting = barSizeSetting
+        bars.whatToShow = whatToShow
+        bars.useRTH = useRTH
+        bars.formatDate = formatDate
+        bars.keepUpToDate = keepUpToDate
+        bars.chartOptions = chartOptions or []
+        if _historicalDataEndHook:
+            bars._historicalDataEndHook += _historicalDataEndHook
+        # if _historicalDataHook:
+        #     bars._historicalDataHook.connect(_historicalDataHook)
+        # if _historicalDataUpdateHook:
+        #     bars._historicalDataUpdateHook.connect(_historicalDataUpdateHook)
+        future = self.wrapper.startReq(reqId, contract, container=bars)
+        if keepUpToDate:
+            self.wrapper.startSubscription(reqId, bars, contract)
+        end = util.formatIBDatetime(endDateTime)
+        self.client.reqHistoricalData(
+            reqId, contract, end, durationStr, barSizeSetting,
+            whatToShow, useRTH, formatDate, keepUpToDate, chartOptions)
+        task = asyncio.wait_for(future, timeout) if timeout else future
+        try:
+            await task
+        except asyncio.TimeoutError:
+            self.client.cancelHistoricalData(reqId)
+            self._logger.warning(f'reqHistoricalDataExt: Timeout for {contract}')
             bars.clear()
         return bars
 
@@ -2265,45 +2358,92 @@ if __name__ == '__main__':
     ib.disconnect()
 
 def install_custom_repr_():
-    def format_value(value):
+
+    Stock.__repr__orig = Stock.__repr__
+    Stock.__str__orig = Stock.__str__
+    Contract.__repr__orig = Contract.__repr__
+    Contract.__str__orig = Contract.__str__
+    PortfolioItem.__repr__orig = PortfolioItem.__repr__
+    PortfolioItem.__str__orig = PortfolioItem.__str__
+
+    Order.__str__orig = Order.__str__
+    MarketOrder.__str__orig = MarketOrder.__str__
+    LimitOrder.__str__orig = LimitOrder.__str__
+
+    Position.__repr__orig = Position.__repr__
+
+    def format_value(value: float) -> str:
         return f"{value:.2f}" if value % 1 != 0 else f"{value:.0f}"
 
     # monkey patch ib_insync.objects.TradeLogEntry.__repr__ to use friendlier time format
-    def trade_log_entry_repr(self):
-        return f"TradeLogEntry(time={self.time.astimezone().strftime('%H:%M:%S.%f')[:-3]}" \
-            + (f", status='{self.status}'") \
-            + (f", message='{self.message}'" if self.message else '') \
-            + (f", errorCode={self.errorCode})" if self.errorCode else '') \
-            + ")"
+    def trade_log_entry_repr(self: TradeLogEntry):
+        if self.time.date() == datetime.datetime.now().date():
+            d = self.time.astimezone().strftime('%H:%M:%S,%f')[:-3]
+        else:
+            d = self.time.astimezone().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
+        fields = []
+        if self.status: fields.append(f"status={self.status}")
+        if self.message: fields.append(f"message='{self.message}'")
+        if self.errorCode: fields.append(f"errorCode={self.errorCode}")
+        return f"TradeLogEntry(time={d}, {', '.join(fields)})"
+        # return f"TradeLogEntry(time={d}" \
+        #     + (f", status='{self.status}'") \
+        #     + (f", message='{self.message}'" if self.message else '') \
+        #     + (f", errorCode={self.errorCode})" if self.errorCode else '') \
+        #     + ")"
     TradeLogEntry.__repr__orig = TradeLogEntry.__repr__
     TradeLogEntry.__repr__ = trade_log_entry_repr
 
-    def execution_repr(self):
+    def execution_repr(self: Execution):
+        if self.time.date() == datetime.datetime.now().date():
+            d = self.time.astimezone().strftime('%H:%M:%S') # seconds only
+        else:
+            d = self.time.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+
         x = False
-        return f"Execution(execId={self.execId}" \
-            + (f", time={self.time.astimezone().strftime('%H:%M:%S')}") \
-            + (f", acctNumber={self.acctNumber}" if x else '') \
-            + (f", exchange={self.exchange}") \
-            + (f", side={self.side}") \
-            + (f", shares={self.shares}" if self.shares else '') \
-            + (f", price={self.price}") \
-            + (f", permId={self.permId}") \
-            + (f", clientId={self.clientId}") \
-            + (f", orderId={self.orderId}") \
-            + (f", liquidation={self.liquidation}" if self.liquidation != 0 else '') \
-            + (f", cumQty={self.cumQty}" if self.cumQty else '') \
-            + (f", avgPrice={self.avgPrice}" if self.avgPrice else '') \
-            + (f", orderRef={self.orderRef}" if self.orderRef else '') \
-            + (f", evRule={self.evRule}" if self.evRule else '') \
-            + (f", evMultiplier={self.evMultiplier}" if self.evMultiplier != 0 else '') \
-            + (f", modelCode={self.modelCode}" if self.modelCode else '') \
-            + (f", lastLiquidity={self.lastLiquidity}" if self.lastLiquidity else '') \
-            + (f", pendingPriceRevision={self.pendingPriceRevision}" if self.pendingPriceRevision else '') \
-            + ")"
+        fields = [f"Execution(execId={self.execId}, time={d}"]
+        if self.acctNumber: fields.append(f"acctNumber={self.acctNumber}")
+        if self.exchange not in ['','SMART']: fields.append(f"exchange={self.exchange}")
+        if self.side: fields.append(f"side={self.side}")
+        if self.shares: fields.append(f"shares={format_value(self.shares)}")
+        if self.price: fields.append(f"price={self.price}")
+        if self.permId: fields.append(f"permId={self.permId}")
+        if self.clientId: fields.append(f"clientId={self.clientId}")
+        if self.orderId: fields.append(f"orderId={self.orderId}")
+        if self.liquidation: fields.append(f"liquidation={self.liquidation}")
+        if self.cumQty: fields.append(f"cumQty={format_value(self.cumQty)}")
+        if self.avgPrice: fields.append(f"avgPrice={format_value(self.avgPrice)}")
+        if self.orderRef: fields.append(f"orderRef={self.orderRef}")
+        if self.evRule: fields.append(f"evRule={self.evRule}")
+        if self.evMultiplier: fields.append(f"evMultiplier={self.evMultiplier}")
+        if self.modelCode: fields.append(f"modelCode={self.modelCode}")
+        if self.lastLiquidity not in [UNSET_INTEGER]: fields.append(f"lastLiquidity={self.lastLiquidity}")
+        if self.pendingPriceRevision: fields.append(f"pendingPriceRevision={self.pendingPriceRevision}")
+        return ', '.join(fields) + ')'
+        # return f"Execution(execId={self.execId}" \
+        #     + (f", time={d}") \
+        #     + (f", acctNumber={self.acctNumber}" if x else '') \
+        #     + (f", exchange={self.exchange}") \
+        #     + (f", side={self.side}") \
+        #     + (f", shares={self.shares}" if self.shares else '') \
+        #     + (f", price={self.price}") \
+        #     + (f", permId={self.permId}") \
+        #     + (f", clientId={self.clientId}" if self.clientId else '') \
+        #     + (f", orderId={self.orderId}" if self.orderId else '') \
+        #     + (f", liquidation={self.liquidation}" if self.liquidation != 0 else '') \
+        #     + (f", cumQty={self.cumQty}" if self.cumQty else '') \
+        #     + (f", avgPrice={self.avgPrice}" if self.avgPrice else '') \
+        #     + (f", orderRef={self.orderRef}" if self.orderRef else '') \
+        #     + (f", evRule={self.evRule}" if self.evRule else '') \
+        #     + (f", evMultiplier={self.evMultiplier}" if self.evMultiplier != 0 else '') \
+        #     + (f", modelCode={self.modelCode}" if self.modelCode else '') \
+        #     + (f", lastLiquidity={self.lastLiquidity}" if self.lastLiquidity else '') \
+        #     + (f", pendingPriceRevision={self.pendingPriceRevision}" if self.pendingPriceRevision else '') \
+        #     + ")"
     Execution.__repr__orig = Execution.__repr__
     Execution.__repr__ = execution_repr
 
-    def commission_repr(self):
+    def commission_repr(self: CommissionReport):
         if not (self.execId or self.commission or self.realizedPNL or self.yield_ or self.yieldRedemptionDate):
             return "CommissionReport()"
         return f"CommissionReport(execId={self.execId}" \
@@ -2315,67 +2455,181 @@ def install_custom_repr_():
     CommissionReport.__repr__orig = CommissionReport.__repr__
     CommissionReport.__repr__ = commission_repr
 
-    def accountvalue_repr(self):
-        return f"AccountValue({self.account}" \
-            + (f" {self.tag}={self.value} {self.currency}") \
-            + (f", modelCode={self.modelCode}" if self.modelCode else '') \
-            + (f", {self.lastUpdateTime.astimezone().strftime('%H:%M:%S')}" if self.lastUpdateTime else '') \
-            + ")"
+    def accountvalue_repr(self: AccountValue):
+        fields = []
+        # if self.account: fields.append(f"account={self.account}")
+        # if self.tag: fields.append(f"tag={self.tag}")
+        # if self.value: fields.append(f"value={self.value}")
+        # if self.currency: fields.append(f"currency={self.currency}")
+        # if self.modelCode: fields.append(f"modelCode={self.modelCode}")
+        # if self.lastUpdateTime: fields.append(f"lastUpdateTime={self.lastUpdateTime}")
+        # return "AccountValue(" + ', '.join(fields) + ")"
+        return (f"AccountValue({self.account}"
+            f" {self.tag}={self.value} {self.currency}"
+            f"{', modelCode=' + self.modelCode if self.modelCode else ''}"
+            f"{', ' + self.lastUpdateTime.astimezone().strftime('%H:%M:%S') if self.lastUpdateTime else ''}"
+            ")")
     AccountValue.__repr__orig = AccountValue.__repr__
     AccountValue.__repr__ = accountvalue_repr
 
-    def stock_repr(self):
-        return "Stock(" \
-            + (f"conId={self.conId}, " if self.conId else '') \
-            + (f"symbol={self.symbol}") \
-            + (f", right={self.right}" if self.right not in ['0',''] else '') \
-            + (f", primaryExchange={self.primaryExchange}" if self.primaryExchange else '') \
-            + (f", currency={self.currency}" if self.currency not in ['', 'USD'] else '') \
-            + (f", localSymbol={self.localSymbol}" if self.localSymbol not in ['', self.symbol] else '') \
-            + (f", tradingClass={self.tradingClass}" if self.tradingClass not in ['', 'NMS'] else '') \
-            + ")"
-    Stock.__repr__orig = Stock.__repr__
-    Stock.__repr__ = stock_repr
+    def contract_repr(self: Contract):
+        if self.secType == 'STK':
+            return stock_repr(self)
+        
+        flds = []
+        if self.secType: flds.append(f"secType={self.secType}")
+        if self.conId: flds.append(f"conId={self.conId}")
+        if self.symbol: flds.append(f"symbol={self.symbol}")
+        if self.lastTradeDateOrContractMonth: flds.append(f"lastTradeDateOrContractMonth={self.lastTradeDateOrContractMonth}")
+        if self.strike: flds.append(f"strike={self.strike}")
+        if self.right not in ['0','']: flds.append(f"right={self.right}")
+        if self.multiplier: flds.append(f"multiplier={self.multiplier}")
+        if self.exchange: flds.append(f"exchange={self.exchange}")
+        if self.primaryExchange: flds.append(f"primaryExchange={self.primaryExchange}")
+        if self.currency: flds.append(f"currency={self.currency}")
+        if self.localSymbol: flds.append(f"localSymbol={self.localSymbol}")
+        if self.tradingClass: flds.append(f"tradingClass={self.tradingClass}")
+        if self.includeExpired: flds.append(f"includeExpired={self.includeExpired}")
+        if self.secIdType: flds.append(f"secIdType={self.secIdType}")
+        if self.secId: flds.append(f"secId={self.secId}")
+        if self.description: flds.append(f"description={self.description}")
+        if self.issuerId: flds.append(f"issuerId={self.issuerId}")
+        if self.comboLegsDescrip: flds.append(f"comboLegsDescrip={self.comboLegsDescrip}")
+        if self.comboLegs: flds.append(f"comboLegs={self.comboLegs}")
+        if self.deltaNeutralContract: flds.append(f"deltaNeutralContract={self.deltaNeutralContract}")
+        return "Contract(" + ', '.join(flds) + ")"
+        # return "Contract(" \
+        #     + (f"secType={self.secType}, " if self.secType else '') \
+        #     + (f"conId={self.conId}, " if self.conId else '') \
+        #     + (f"symbol={self.symbol}, " if self.symbol else '') \
+        #     + (f"lastTradeDateOrContractMonth={self.lastTradeDateOrContractMonth}, " if self.lastTradeDateOrContractMonth else '') \
+        #     + (f"strike={self.strike}, " if self.strike else '') \
+        #     + (f"right={self.right}, " if self.right not in ['0',''] else '') \
+        #     + (f"multiplier={self.multiplier}, " if self.multiplier else '') \
+        #     + (f"exchange={self.exchange}, " if self.exchange else '') \
+        #     + (f"primaryExchange={self.primaryExchange}, " if self.primaryExchange else '') \
+        #     + (f"currency={self.currency}, " if self.currency not in ['USD'] else '') \
+        #     + (f"localSymbol={self.localSymbol}, " if self.localSymbol else '') \
+        #     + (f"tradingClass={self.tradingClass}, " if self.tradingClass else '') \
+        #     + (f"includeExpired={self.includeExpired}, " if self.includeExpired else '') \
+        #     + (f"secIdType={self.secIdType}, " if self.secIdType else '') \
+        #     + (f"secId={self.secId}, " if self.secId else '') \
+        #     + (f"description={self.description}, " if self.description else '') \
+        #     + (f"issuerId={self.issuerId}, " if self.issuerId else '') \
+        #     + (f"comboLegsDescrip={self.comboLegsDescrip}, " if self.comboLegsDescrip else '') \
+        #     + (f"comboLegs={self.comboLegs}, " if self.comboLegs else '') \
+        #     + (f"deltaNeutralContract={self.deltaNeutralContract}, " if self.deltaNeutralContract else '') \
+        #     + ")"
+    Contract.__repr__ = contract_repr
 
-    def portfolioitem_repr(self):
-        return f"PortfolioItem(contract={self.contract}" \
-            + (f", position={format_value(self.position)}" if self.position else '') \
-            + (f", marketPrice={self.marketPrice:.2f}" if self.marketPrice else '') \
-            + (f", marketValue={format_value(self.marketValue)}" if self.marketValue else '') \
-            + (f", averageCost={self.averageCost}" if self.averageCost else '') \
-            + (f", unrealizedPNL={format_value(self.unrealizedPNL)}" if self.unrealizedPNL else '') \
-            + (f", realizedPNL={format_value(self.realizedPNL)}" if self.realizedPNL else '') \
-            + (f", account='{self.account}'" if self.account else '') \
-            + ")"
-    PortfolioItem.__repr__orig = PortfolioItem.__repr__
+    def stock_repr(self: Stock):
+        fields = []
+        if self.conId: fields.append(f"conId={self.conId}")
+        if self.symbol: fields.append(f"symbol={self.symbol}")
+        if self.right not in ['0','?','']: fields.append(f"right={self.right}")
+        if self.exchange not in ['', 'SMART']: fields.append(f"exchange={self.exchange}")
+        if self.primaryExchange: fields.append(f"primaryExchange={self.primaryExchange}")
+        if self.currency not in ['', 'USD']: fields.append(f"currency={self.currency}")
+        if self.localSymbol not in ['', self.symbol]: fields.append(f"localSymbol={self.localSymbol}")
+        if self.tradingClass not in ['', 'NMS']: fields.append(f"tradingClass={self.tradingClass}")
+        return "Stock(" + ', '.join(fields) + ")"
+        # return "Stock(" \
+        #     + (f"conId={self.conId}, " if self.conId else '') \
+        #     + (f"symbol={self.symbol}") \
+        #     + (f", right={self.right}" if self.right not in ['0',''] else '') \
+        #     + (f", exchange={self.exchange}" if self.exchange else '') \
+        #     + (f", primaryExchange={self.primaryExchange}" if self.primaryExchange else '') \
+        #     + (f", currency={self.currency}" if self.currency not in ['', 'USD'] else '') \
+        #     + (f", localSymbol={self.localSymbol}" if self.localSymbol not in ['', self.symbol] else '') \
+        #     + (f", tradingClass={self.tradingClass}" if self.tradingClass not in ['', 'NMS'] else '') \
+        #     + ")"
+    Stock.__repr__ = stock_repr
+    Stock.__str__ = stock_repr
+
+
+    def portfolioitem_repr(self: PortfolioItem):
+        fields = []
+        if self.contract: fields.append(f"contract={self.contract}")
+        if self.position: fields.append(f"position={format_value(self.position)}")
+        if self.marketPrice: fields.append(f"marketPrice={self.marketPrice:.2f}")
+        if self.marketValue: fields.append(f"marketValue={format_value(self.marketValue)}")
+        if self.averageCost: fields.append(f"averageCost={self.averageCost:.2f}")
+        if self.unrealizedPNL: fields.append(f"unrealizedPNL={format_value(self.unrealizedPNL)}")
+        if self.realizedPNL: fields.append(f"realizedPNL={format_value(self.realizedPNL)}")
+        if self.account: fields.append(f"account={self.account}")
+        return "PortfolioItem(" + ', '.join(fields) + ")"
     PortfolioItem.__repr__ = portfolioitem_repr
 
-    def orderstatus_repr(self):
-        return f"OrderStatus(orderId={self.orderId}" \
-            + (f", status={self.status}") \
-            + (f", filled={self.filled}" if self.filled != 0 else '') \
-            + (f", remaining={self.remaining}" if self.remaining != 0 else '') \
-            + (f", avgFillPrice={self.avgFillPrice}" if self.avgFillPrice else '') \
-            + (f", permId={self.permId}" if self.permId else '') \
-            + (f", parentId={self.parentId}" if self.parentId else '') \
-            + (f", lastFillPrice={self.lastFillPrice}" if self.lastFillPrice else '') \
-            + (f", clientId={self.clientId}" if self.clientId else '') \
-            + (f", whyHeld={self.whyHeld}" if self.whyHeld else '') \
-            + (f", mktCapPrice={self.mktCapPrice}" if self.mktCapPrice else '') \
-            + ")"
+    def position_repr(self: Position):
+        fields = [f"account='{self.account}'"
+            , f"contract={self.contract}"
+            , f"position={format_value(self.position)}"
+            , f"avgCost={self.avgCost:.2f}"
+        ]
+        return "Position(" + ', '.join(fields) + ")"
+    Position.__repr__ = position_repr
+
+    def orderstatus_repr(self: OrderStatus):
+        fields = []
+        if self.orderId: fields.append(f"orderId={self.orderId}")
+        if self.permId: fields.append(f"permId={self.permId}")
+        if self.status: fields.append(f"status={self.status}")
+        if self.filled: fields.append(f"filled={format_value(self.filled)}")
+        if self.remaining: fields.append(f"remaining={format_value(self.remaining)}")
+        if self.avgFillPrice: fields.append(f"avgFillPrice={self.avgFillPrice}")
+        if self.parentId: fields.append(f"parentId={self.parentId}")
+        if self.lastFillPrice: fields.append(f"lastFillPrice={self.lastFillPrice}")
+        if self.clientId: fields.append(f"clientId={self.clientId}")
+        if self.whyHeld: fields.append(f"whyHeld={self.whyHeld}")
+        if self.mktCapPrice: fields.append(f"mktCapPrice={self.mktCapPrice}")
+        return "OrderStatus(" + ', '.join(fields) + ")"
+
+        # return f"OrderStatus(orderId={self.orderId}" \
+        #     + (f", status={self.status}") \
+        #     + (f", filled={self.filled}" if self.filled != 0 else '') \
+        #     + (f", remaining={self.remaining}" if self.remaining != 0 else '') \
+        #     + (f", avgFillPrice={self.avgFillPrice}" if self.avgFillPrice else '') \
+        #     + (f", permId={self.permId}" if self.permId else '') \
+        #     + (f", parentId={self.parentId}" if self.parentId else '') \
+        #     + (f", lastFillPrice={self.lastFillPrice}" if self.lastFillPrice else '') \
+        #     + (f", clientId={self.clientId}" if self.clientId else '') \
+        #     + (f", whyHeld={self.whyHeld}" if self.whyHeld else '') \
+        #     + (f", mktCapPrice={self.mktCapPrice}" if self.mktCapPrice else '') \
+        #     + ")"
     OrderStatus.__repr__orig = OrderStatus.__repr__
     OrderStatus.__repr__ = orderstatus_repr
 
-    def order_repr(self):
-        return f"Order(orderId={self.orderId}" \
-            + (f", clientId={self.clientId}" if self.clientId else '') \
-            + (f", permId={self.permId}" if self.permId else '') \
-            + (f", action={self.action}" if self.action else '') \
-            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
-            + (f", orderType={self.orderType}" if self.orderType else '') \
-            + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
-            + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
-            + ")"
+    def order_repr(self: Order):
+        fields = [f"orderId={self.orderId}"]
+        if self.clientId: fields.append(f"clientId={self.clientId}")
+        if self.permId: fields.append(f"permId={self.permId}")
+        if self.action: fields.append(f"action={self.action}")
+        if self.totalQuantity: fields.append(f"totalQuantity={format_value(self.totalQuantity)}")
+        if self.orderType: fields.append(f"orderType={self.orderType}")
+        if self.lmtPrice: fields.append(f"lmtPrice={self.lmtPrice}")
+        if self.auxPrice: fields.append(f"auxPrice={self.auxPrice}")
+        if self.displaySize not in {0, UNSET_INTEGER}: fields.append(f"displaySize={self.displaySize}")
+        if self.tif: fields.append(f"tif={self.tif}")
+        if self.ocaType: fields.append(f"ocaType={self.ocaType}")
+        if self.trailStopPrice: fields.append(f"trailStopPrice={self.trailStopPrice}")
+        if self.trailingPercent: fields.append(f"trailingPercent={self.trailingPercent}")
+        if self.openClose not in ['']: fields.append(f"openClose={self.openClose}")
+        if self.volatilityType: fields.append(f"volatilityType={self.volatilityType}")
+        if self.deltaNeutralOrderType not in ['None']: fields.append(f"deltaNeutralOrderType={self.deltaNeutralOrderType}")
+        if self.referencePriceType: fields.append(f"referencePriceType={self.referencePriceType}")
+        if self.cashQty: fields.append(f"cashQty={self.cashQty}")
+        if self.shareholder not in ['Not an insider or substantial shareholder']: fields.append(f"shareholder={self.shareholder}")
+        if self.clearingIntent not in ['IB']: fields.append(f"clearingIntent={self.clearingIntent}")
+        return "Order(" + ', '.join(fields) + ")"
+        # return f"Order(orderId={self.orderId}" \
+        #     + (f", clientId={self.clientId}" if self.clientId else '') \
+        #     + (f", permId={self.permId}" if self.permId else '') \
+        #     + (f", action={self.action}" if self.action else '') \
+        #     + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+        #     + (f", orderType={self.orderType}" if self.orderType else '') \
+        #     + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
+        #     + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
+        #     + ")"
             # + (f", tif={self.tif}" if self.tif else '') \
             # + (f", activeStartTime={self.activeStartTime}" if self.activeStartTime else '') \
             # + (f", activeStopTime={self.activeStopTime}" if self.activeStopTime else '') \
@@ -2498,46 +2752,129 @@ def install_custom_repr_():
             # + (f", competeAgainstBestOffset={self.competeAgainstBestOffset}" if self.competeAgainstBestOffset else '') \
             # + (f", midOffsetAtWhole={self.midOffsetAtWhole}" if self.midOffsetAtWhole else '') \
             # + (f", midOffsetAtHalf={self.midOffsetAtHalf}" if self.midOffsetAtHalf else '') \
+    Order.__repr__ = order_repr
 
-    def marketorder_repr(self):
-        return f"MarketOrder(orderId={self.orderId}" \
-            + (f", clientId={self.clientId}" if self.clientId else '') \
-            + (f", permId={self.permId}" if self.permId else '') \
-            + (f", action={self.action}" if self.action else '') \
-            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
-            + ")"
-    MarketOrder.__repr__orig = MarketOrder.__repr__
-    MarketOrder.__repr__ = marketorder_repr
+    def marketorder_repr(self: MarketOrder):
+        fields = []
+        if self.orderId: fields.append(f"orderId={self.orderId}")
+        if self.clientId: fields.append(f"clientId={self.clientId}")
+        if self.permId: fields.append(f"permId={self.permId}")
+        if self.action: fields.append(f"action={self.action}")
+        if self.totalQuantity: fields.append(f"totalQuantity={format_value(self.totalQuantity)}")
+        return "MarketOrder(" + ', '.join(fields) + ")"
+        
+        # return f"MarketOrder(orderId={self.orderId}" \
+        #     + (f", clientId={self.clientId}" if self.clientId else '') \
+        #     + (f", permId={self.permId}" if self.permId else '') \
+        #     + (f", action={self.action}" if self.action else '') \
+        #     + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+        #     + ")"
+    MarketOrder.__str__ = marketorder_repr
 
-    def limitorder_repr(self):
-        return f"LimitOrder(orderId={self.orderId}" \
-            + (f", clientId={self.clientId}" if self.clientId else '') \
-            + (f", permId={self.permId}" if self.permId else '') \
-            + (f", action={self.action}" if self.action else '') \
-            + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
-            + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
-            + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
-            + (f", discretionaryAmt={self.discretionaryAmt}" if self.discretionaryAmt else '') \
-            + ")"
-    LimitOrder.__repr__orig = LimitOrder.__repr__
-    LimitOrder.__repr__ = limitorder_repr            
+    def limitorder_repr(self: LimitOrder):
+        fields = [f"orderId={self.orderId}"]
+        if self.clientId: fields.append(f"clientId={self.clientId}")
+        if self.permId: fields.append(f"permId={self.permId}")
+        fields.append(f"action={self.action}")
+        fields.append(f"totalQuantity={format_value(self.totalQuantity)}")
+        fields.append(f"lmtPrice={self.lmtPrice}")
+        if self.auxPrice not in {0.0, UNSET_DOUBLE}: fields.append(f"auxPrice={self.auxPrice}")
+        if self.tif: fields.append(f"tif={self.tif}")
+        if self.ocaGroup: fields.append(f"ocaGroup={self.ocaGroup}")
+        if self.ocaType: fields.append(f"ocaType={self.ocaType}")
+        if self.orderRef: fields.append(f"orderRef={self.orderRef}")
+        if self.transmit: fields.append(f"transmit={self.transmit}")
+        if self.parentId: fields.append(f"parentId={self.parentId}")
+        if self.blockOrder: fields.append(f"blockOrder={self.blockOrder}")
+        if self.sweepToFill: fields.append(f"sweepToFill={self.sweepToFill}")
+        if self.displaySize not in {0, UNSET_INTEGER}: fields.append(f"displaySize={self.displaySize}")
+        if self.triggerMethod: fields.append(f"triggerMethod={self.triggerMethod}")
+        if self.outsideRth: fields.append(f"outsideRth={self.outsideRth}")
+        if self.hidden: fields.append(f"hidden={self.hidden}")
+        if self.allOrNone: fields.append(f"allOrNone={self.allOrNone}")
+        if self.minQty not in {0, UNSET_INTEGER}: fields.append(f"minQty={self.minQty}")
+        if self.percentOffset not in {0.0, UNSET_DOUBLE}: fields.append(f"percentOffset={self.percentOffset}")
+        if self.overridePercentageConstraints: fields.append(f"overridePercentageConstraints={self.overridePercentageConstraints}")
+        if self.trailStopPrice not in {0.0, UNSET_DOUBLE}: fields.append(f"trailStopPrice={self.trailStopPrice}")
+        if self.trailingPercent not in {0.0, UNSET_DOUBLE}: fields.append(f"trailingPercent={self.trailingPercent}")
+        if self.faGroup: fields.append(f"faGroup={self.faGroup}")
+        if self.faMethod: fields.append(f"faMethod={self.faMethod}")
+        if self.faPercentage: fields.append(f"faPercentage={self.faPercentage}")
+        if self.openClose: fields.append(f"openClose={self.openClose}")
+        if self.origin: fields.append(f"origin={self.origin}")
+        if self.shortSaleSlot: fields.append(f"shortSaleSlot={self.shortSaleSlot}")
+        if self.discretionaryAmt: fields.append(f"discretionaryAmt={self.discretionaryAmt}")
+        if self.delta not in {0.0, UNSET_DOUBLE}: fields.append(f"delta={self.delta}")
+        if self.clearingIntent: fields.append(f"clearingIntent={self.clearingIntent}")
+        if self.volatility not in {0.0, UNSET_DOUBLE}: fields.append(f"volatility={self.volatility}")
+        if self.volatilityType not in {0, UNSET_INTEGER}: fields.append(f"volatilityType={self.volatilityType}")
+
+        return "LimitOrder(" + ', '.join(fields) + ")"
+        
+        # return f"LimitOrder(orderId={self.orderId}" \
+        #     + (f", clientId={self.clientId}" if self.clientId else '') \
+        #     + (f", permId={self.permId}" if self.permId else '') \
+        #     + (f", action={self.action}" if self.action else '') \
+        #     + (f", totalQuantity={self.totalQuantity}" if self.totalQuantity else '') \
+        #     + (f", lmtPrice={self.lmtPrice}" if self.lmtPrice else '') \
+        #     + (f", auxPrice={self.auxPrice}" if self.auxPrice else '') \
+        #     + (f", discretionaryAmt={self.discretionaryAmt}" if self.discretionaryAmt else '') \
+        #     + ")"
+    LimitOrder.__str__ = limitorder_repr            
 
     def trade_repr(self):
-        return f"Trade({self.contract}" \
-            + (f", order={self.order}" if self.order else '') \
-            + (f", orderStatus={self.orderStatus}" if self.orderStatus else '') \
-            + (f", fills={self.fills}" if self.fills else '') \
-            + (f", log={self.log}" if self.log else '') \
-            + (f", advancedError={self.advancedError}" if self.advancedError else '') \
-            + ")"
+        fields = []
+        if self.contract: fields.append(f"contract={self.contract}")
+        if self.order: fields.append(f"order={self.order}")
+        if self.orderStatus: fields.append(f"orderStatus={self.orderStatus}")
+        if self.fills: fields.append(f"fills={self.fills}")
+        if self.log: fields.append(f"log={self.log}")
+        if self.advancedError: fields.append(f"advancedError={self.advancedError}")
+        return "Trade(" + ', '.join(fields) + ")"
+
+        # return f"Trade({self.contract}" \
+        #     + (f", order={self.order}" if self.order else '') \
+        #     + (f", orderStatus={self.orderStatus}" if self.orderStatus else '') \
+        #     + (f", fills={self.fills}" if self.fills else '') \
+        #     + (f", log={self.log}" if self.log else '') \
+        #     + (f", advancedError={self.advancedError}" if self.advancedError else '') \
+        #     + ")"
     Trade.__repr__orig = Trade.__repr__
     Trade.__repr__ = trade_repr
 
-    def fill_repr(self):
-        return f"Fill(contract={self.contract}" \
-            + (f", execution={self.execution}" if self.execution else '') \
-            + (f", commissionReport={self.commissionReport}" if self.commissionReport else '') \
-            + (f", time={self.time.astimezone().strftime('%H:%M:%S')}" if self.time else '') \
-            + ")"
+    def fill_repr(self: Fill):
+        fields = [f"contract={self.contract}"]
+        if self.execution: fields.append(f"execution={self.execution}")
+        if self.commissionReport: fields.append(f"commissionReport={self.commissionReport}")
+        if self.time: fields.append(f"time={self.time.astimezone().strftime('%H:%M:%S')}")
+        return "Fill(" + ', '.join(fields) + ")"
+
+        # return f"Fill(contract={self.contract}" \
+        #     + (f", execution={self.execution}" if self.execution else '') \
+        #     + (f", commissionReport={self.commissionReport}" if self.commissionReport else '') \
+        #     + (f", time={self.time.astimezone().strftime('%H:%M:%S')}" if self.time else '') \
+        #     + ")"
     Fill.__repr__orig = Fill.__repr__
     Fill.__repr__ = fill_repr
+
+    def bardata_repr(self: BarData):
+        if isinstance(self.date, datetime.datetime):
+            d = self.date.astimezone().strftime(f"{'%Y-%m-%d ' if self.date.date() != datetime.datetime.now().date() else ''}" '%H:%M:%S')
+            # if self.date.date() == datetime.datetime.now().date():
+            #     d = self.date.astimezone().strftime('%H:%M:%S')
+            # else:
+            #     d = self.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            d = self.date
+        return (f"BarData(date={d}"
+            f", open={self.open_}"
+            f", high={self.high}"
+            f", low={self.low}"
+            f", close={self.close}"
+            f", volume={self.volume:.0f}"
+            f", average={self.average:.2f}"
+            f", barCount={self.barCount}"
+            f", timestamp={self.timestamp.astimezone().strftime('%H:%M:%S,%f')[:-3]}"
+            ")")
+    BarData.__repr__orig = BarData.__repr__
+    BarData.__repr__ = bardata_repr

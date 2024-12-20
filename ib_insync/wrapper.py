@@ -6,6 +6,7 @@ from collections import defaultdict
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import (Any, Dict, List, Optional, Set, TYPE_CHECKING, Tuple,
+                    Hashable,
                     Union, cast)
 
 from ib_insync.contract import (
@@ -18,7 +19,7 @@ from ib_insync.objects import (
     HistoricalSession, HistoricalTick, HistoricalTickBidAsk,
     HistoricalTickLast, MktDepthData, NewsArticle, NewsBulletin, NewsProvider,
     NewsTick, OptionChain, OptionComputation, PnL, PnLSingle, PortfolioItem,
-    Position, PriceIncrement, RealTimeBar, RealTimeBarList, SoftDollarTier,
+    Position, PositionMulti, PriceIncrement, RealTimeBar, RealTimeBarList, SoftDollarTier,
     TickAttribBidAsk, TickAttribLast, TickByTickAllLast, TickByTickBidAsk,
     TickByTickMidPoint, TickData, TradeLogEntry)
 from ib_insync.order import Order, OrderState, OrderStatus, Trade
@@ -130,6 +131,7 @@ class Wrapper:
     _timeoutHandle: Union[asyncio.TimerHandle, None]
 
     def __init__(self, ib: 'IB'):
+        self.version = '0.0.1'
         self.ib = ib
         self._logger = logging.getLogger('ib_insync.wrapper')
         self._timeoutHandle = None
@@ -137,6 +139,7 @@ class Wrapper:
 
     def reset(self):
         self.accountValues = {}
+        self.accountTime = datetime.now(timezone.utc)
         self.acctSummary = {}
         self.portfolio = defaultdict(dict)
         self.positions = defaultdict(dict)
@@ -185,7 +188,7 @@ class Wrapper:
         globalErrorEvent.emit(error)
         self.reset()
 
-    def startReq(self, key, contract=None, container=None):
+    def startReq(self, key: Hashable, contract: Optional[Contract]=None, container: Optional[list]=None):
         """
         Start a new request and return the future that is associated
         with the key and container. The container is a list by default.
@@ -195,9 +198,10 @@ class Wrapper:
         self._results[key] = container if container is not None else []
         if contract:
             self._reqId2Contract[key] = contract
+        self._logger.debug(f'startReq: key={key}' + (f' contract={contract}' if contract else ''))
         return future
 
-    def _endReq(self, key, result=None, success=True):
+    def _endReq(self, key: Hashable, result=None, success=True):
         """
         Finish the future of corresponding key with the given result.
         If no result is given then it will be popped of the general results.
@@ -207,11 +211,15 @@ class Wrapper:
         if future:
             if result is None:
                 result = self._results.pop(key, [])
-            if not future.done():
+                if result: self._logger.debug(f'_endReq: _results={result}')
+            future_done = future.done()
+            self._logger.debug(f'_endReq: future.done()={future_done}')
+            if not future_done:
                 if success:
                     future.set_result(result)
                 else:
                     future.set_exception(result)
+        self._logger.debug(f'_endReq: key={key} success={success}')
 
     def startTicker(
             self, reqId: int, contract: Contract, tickType: Union[int, str]):
@@ -219,6 +227,7 @@ class Wrapper:
         Start a tick request that has the reqId associated with the contract.
         Return the ticker.
         """
+        self._logger.info(f'startTicker: {reqId} {tickType} {contract}')
         ticker = self.tickers.get(id(contract))
         if not ticker:
             ticker = Ticker(
@@ -231,8 +240,12 @@ class Wrapper:
         return ticker
 
     def endTicker(self, ticker: Ticker, tickType: Union[int, str]):
+        self._logger.info(f'endTicker: {tickType} {ticker}')
         reqId = self.ticker2ReqId[tickType].pop(ticker, 0)
+        if reqId:
+            self.reqId2Ticker.pop(reqId, None)
         self._reqId2Contract.pop(reqId, None)
+        # self.tickers.pop(id(ticker.contract), None)
         return reqId
 
     def startSubscription(self, reqId, subscriber, contract=None):
@@ -282,49 +295,59 @@ class Wrapper:
     # wrapper methods
 
     def connectAck(self):
-        pass
+        self._logger.info('connectAck')
 
     def nextValidId(self, reqId: int):
-        pass
+        self._logger.info(f'nextValidId: {reqId}')
 
     def managedAccounts(self, accountsList: str):
         self.accounts = [a for a in accountsList.split(',') if a]
 
     def updateAccountTime(self, timestamp: str):
-        pass
+        self._logger.info(f'updateAccountTime: {timestamp}')
+        self.accountTime = datetime.strptime(timestamp, '%H:%M')
 
     def updateAccountValue(
             self, tag: str, val: str, currency: str, account: str):
         key = (account, tag, currency, '')
-        acctVal = AccountValue(account, tag, val, currency, '')
+        acctVal = AccountValue(account, tag, val, currency, '', datetime.now(timezone.utc))
         self.accountValues[key] = acctVal
+        self._logger.info(f'updateAccountValue: {acctVal}')
         self.ib.accountValueEvent.emit(acctVal)
 
     def accountDownloadEnd(self, _account: str):
         # sent after updateAccountValue and updatePortfolio both finished
+        self._logger.info('accountDownloadEnd %s', _account)
+        self.ib.accountDownloadEndEvent.emit(_account)
         self._endReq('accountValues')
 
     def accountUpdateMulti(
             self, reqId: int, account: str, modelCode: str, tag: str, val: str,
             currency: str):
         key = (account, tag, currency, modelCode)
-        acctVal = AccountValue(account, tag, val, currency, modelCode)
+        acctVal = AccountValue(account, tag, val, currency, modelCode, datetime.now(timezone.utc))
         self.accountValues[key] = acctVal
+        self._logger.info(f'accountUpdateMulti: {acctVal}, reqId {reqId}')
         self.ib.accountValueEvent.emit(acctVal)
 
     def accountUpdateMultiEnd(self, reqId: int):
+        self.ib.accountUpdateMultiEndEvent.emit(reqId)
+        self._logger.info(f'accountUpdateMultiEnd: {reqId}')
         self._endReq(reqId)
 
     def accountSummary(
             self, _reqId: int, account: str, tag: str, value: str,
             currency: str):
         key = (account, tag, currency)
-        acctVal = AccountValue(account, tag, value, currency, '')
+        acctVal = AccountValue(account, tag, value, currency, '', datetime.now(timezone.utc))
         self.acctSummary[key] = acctVal
+        self._logger.info(f'accountSummary: {acctVal} reqId {_reqId}')
         self.ib.accountSummaryEvent.emit(acctVal)
 
     def accountSummaryEnd(self, reqId: int):
+        self.ib.accountSummaryEndEvent.emit(reqId)
         self._endReq(reqId)
+        self._logger.info(f'accountSummaryEnd: {reqId}')
 
     def updatePortfolio(
             self, contract: Contract, posSize: float, marketPrice: float,
@@ -345,6 +368,9 @@ class Wrapper:
     def position(
             self, account: str, contract: Contract, posSize: float,
             avgCost: float):
+        self._logger.info(f'position: {account} {contract} {posSize} {avgCost}')
+        if posSize != 0.0 and avgCost == 0.0:
+            self._logger.error('position: avgCost is 0.0 for non-zero position')
         contract = Contract.create(**dataclassAsDict(contract))
         position = Position(account, contract, posSize, avgCost)
         positions = self.positions[account]
@@ -360,14 +386,18 @@ class Wrapper:
 
     def positionEnd(self):
         self._endReq('positions')
+        self._logger.info('positionEnd')
 
     def positionMulti(
             self, reqId: int, account: str, modelCode: str,
             contract: Contract, pos: float, avgCost: float):
-        pass
+        pos = PositionMulti(account, contract, pos, avgCost, modelCode, datetime.now(timezone.utc))
+        self._logger.info(f'positionMulti: {pos}')
 
     def positionMultiEnd(self, reqId: int):
-        pass
+        self.ib.positionMultiEndEvent.emit(reqId)
+        self._endReq(reqId)
+        self._logger.info(f'positionMultiEnd: {reqId}')
 
     def pnl(
             self, reqId: int, dailyPnL: float, unrealizedPnL: float,
@@ -378,6 +408,7 @@ class Wrapper:
         pnl.dailyPnL = dailyPnL
         pnl.unrealizedPnL = unrealizedPnL
         pnl.realizedPnL = realizedPnL
+        self._logger.info(f'pnl: {pnl}')
         self.ib.pnlEvent.emit(pnl)
 
     def pnlSingle(
@@ -391,6 +422,7 @@ class Wrapper:
         pnlSingle.unrealizedPnL = unrealizedPnL
         pnlSingle.realizedPnL = realizedPnL
         pnlSingle.value = value
+        self._logger.info(f'pnlSingle: {pnlSingle}')
         self.ib.pnlSingleEvent.emit(pnlSingle)
 
     def openOrder(
@@ -444,6 +476,7 @@ class Wrapper:
         self.ib.client.updateReqId(orderId + 1)
 
     def openOrderEnd(self):
+        self.ib.openOrderEndEvent.emit()
         self._endReq('openOrders')
 
     def completedOrder(
@@ -458,6 +491,7 @@ class Wrapper:
             self.permId2Trade[order.permId] = trade
 
     def completedOrdersEnd(self):
+        self.ib.completedOrdersEndEvent.emit()
         self._endReq('completedOrders')
 
     def orderStatus(
@@ -545,6 +579,8 @@ class Wrapper:
             self._results[reqId].append(fill)
 
     def execDetailsEnd(self, reqId: int):
+        self._logger.info(f'execDetailsEnd: {reqId}')
+        self.ib.execDetailsEndEvent.emit(reqId)
         self._endReq(reqId)
 
     def commissionReport(self, commissionReport: CommissionReport):
@@ -569,7 +605,7 @@ class Wrapper:
             pass
 
     def orderBound(self, reqId: int, apiClientId: int, apiOrderId: int):
-        pass
+        self._logger.info(f'orderBound: {reqId} {apiClientId} {apiOrderId}')
 
     def contractDetails(self, reqId: int, contractDetails: ContractDetails):
         self._results[reqId].append(contractDetails)
@@ -589,12 +625,14 @@ class Wrapper:
 
     def marketDataType(self, reqId: int, marketDataId: int):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'marketDataType: {reqId} {marketDataId} {ticker.__repr_minimal__()}')
         if ticker:
             ticker.marketDataType = marketDataId
 
     def realtimeBar(
             self, reqId: int, time: int, open_: float, high: float, low: float,
             close: float, volume: float, wap: float, count: int):
+        self._logger.info(f'realtimeBar: {reqId} {time} {open_} {high} {low} {close} {volume} {wap} {count}')
         dt = datetime.fromtimestamp(time, timezone.utc)
         bar = RealTimeBar(dt, -1, open_, high, low, close, volume, wap, count)
         bars = self.reqId2Subscriber.get(reqId)
@@ -604,33 +642,64 @@ class Wrapper:
             bars.updateEvent.emit(bars, True)
 
     def historicalData(self, reqId: int, bar: BarData):
-        results = self._results.get(reqId)
+        results: BarDataList = self._results.get(reqId)
+        self._logger.debug(f'historicalData: {reqId} {bar}')
         if results is not None:
             bar.date = parseIBDatetime(bar.date)  # type: ignore
             results.append(bar)
+        else:
+            self._logger.warning(f'historicalData: reqId={reqId} bar={bar} no results')
 
     def historicalDataEnd(self, reqId, _start: str, _end: str):
+        self._logger.info(f'historicalDataEnd: reqId={reqId} start={_start} end={_end}')
+        container: BarDataList = self._results.get(reqId)
+        if container:
+            self._logger.info(f'historicalDataEnd: reqId={reqId} len(bars)={len(container)}')
+            if container.keepUpToDate:
+            # if hasattr(container, '_historicalDataEndHook'):
+            #     self._logger.info(f'historicalDataEnd: {reqId} calling _historicalDataEndHook {container._historicalDataEndHook}')
+            #     container._historicalDataEndHook.emit(_start, _end, container)
+            # else:
+            #     self._logger.warning(f'historicalDataEnd: {reqId} no attr _historicalDataEndHook')
+            # self._logger.info(f'historicalDataEnd: type(container)={type(container)} id={id(container)}') # <class 'ib_insync.objects.BarDataList'>
+            # we only see bars if keepUpToDate is True
+            # bars = self.reqId2Subscriber.get(reqId) # bars == container
+            # if bars:
+                # self._logger.info(f'historicalDataEnd: type(bars)={type(bars)} id={id(bars)}')
+                self._logger.info(f'historicalDataEnd: reqId={reqId}, calling _init_npdata')
+                container._init_npdata(_start, _end)
+                container._historicalDataEndHook.emit(_start, _end, container)
+            else:
+                self._logger.info(f'historicalDataEnd: reqId={reqId} no subscription')
+        else:
+            self._logger.warning(f'historicalDataEnd: reqId={reqId} no container')
         self._endReq(reqId)
 
     def historicalDataUpdate(self, reqId: int, bar: BarData):
-        bars = self.reqId2Subscriber.get(reqId)
+        bars: BarDataList = self.reqId2Subscriber.get(reqId)
         if not bars:
+            self._logger.error(f'historicalDataUpdate: {reqId} no bar')
             return
         bar.date = parseIBDatetime(bar.date)  # type: ignore
         lastDate = bars[-1].date
         if bar.date < lastDate:
+            self._logger.warning(
+                f'historicalDataUpdate: reqId={reqId}, new bar is older than the last one, newbar={bar._repr_()} bars[-1]={bars[-1]._repr_()}')
             return
         hasNewBar = len(bars) == 0 or bar.date > lastDate
         if hasNewBar:
             bars.append(bar)
+            bars._add_npdata(bar)
         elif bars[-1] != bar:
             bars[-1] = bar
+            bars._set_last_npdata(bar)
         else:
             return
         self.ib.barUpdateEvent.emit(bars, hasNewBar)
         bars.updateEvent.emit(bars, hasNewBar)
 
     def headTimestamp(self, reqId: int, headTimestamp: str):
+        self._logger.info(f'headTimestamp: {reqId} {headTimestamp}')
         try:
             dt = parseIBDatetime(headTimestamp)
             self._endReq(reqId, dt)
@@ -640,6 +709,7 @@ class Wrapper:
     def historicalTicks(
             self, reqId: int, ticks: List[HistoricalTick], done: bool):
         result = self._results.get(reqId)
+        self._logger.info(f'historicalTicks: {reqId} {len(ticks)} {done}')
         if result is not None:
             result += ticks
         if done:
@@ -648,6 +718,7 @@ class Wrapper:
     def historicalTicksBidAsk(
             self, reqId: int, ticks: List[HistoricalTickBidAsk], done: bool):
         result = self._results.get(reqId)
+        self._logger.info(f'historicalTicksBidAsk: {reqId} {len(ticks)} {done}')
         if result is not None:
             result += ticks
         if done:
@@ -656,6 +727,7 @@ class Wrapper:
     def historicalTicksLast(
             self, reqId: int, ticks: List[HistoricalTickLast], done: bool):
         result = self._results.get(reqId)
+        self._logger.info(f'historicalTicksLast: {reqId} {len(ticks)} {done}')
         if result is not None:
             result += ticks
         if done:
@@ -665,6 +737,7 @@ class Wrapper:
     def priceSizeTick(
             self, reqId: int, tickType: int, price: float, size: float):
         ticker = self.reqId2Ticker.get(reqId)
+        # self._logger.info(f'priceSizeTick: {reqId} {tickType} {price} {size} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'priceSizeTick: Unknown reqId: {reqId}')
             return
@@ -701,7 +774,7 @@ class Wrapper:
         elif tickType in (9, 75):
             ticker.close = price
         elif tickType in (14, 76):
-            ticker.open = price
+            ticker.open_ = price
         elif tickType == 15:
             ticker.low13week = price
         elif tickType == 16:
@@ -724,6 +797,8 @@ class Wrapper:
             ticker.askYield = price
         elif tickType == 52:
             ticker.lastYield = price
+        else:
+            self._logger.error(f'priceSizeTick: Unknown tickType: {tickType}')
         if price or size:
             tick = TickData(self.lastTime, tickType, price, size)
             ticker.ticks.append(tick)
@@ -731,6 +806,7 @@ class Wrapper:
 
     def tickSize(self, reqId: int, tickType: int, size: float):
         ticker = self.reqId2Ticker.get(reqId)
+        # self._logger.info(f'tickSize: {reqId} {tickType} {size} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'tickSize: Unknown reqId: {reqId}')
             return
@@ -779,12 +855,17 @@ class Wrapper:
             ticker.avOptionVolume = size
         elif tickType == 89:
             ticker.shortableShares = size
+        else:
+            self._logger.error(f'tickSize: Unknown tickType: {tickType}')
         if price or size:
             tick = TickData(self.lastTime, tickType, price, size)
             ticker.ticks.append(tick)
         self.pendingTickers.add(ticker)
 
     def tickSnapshotEnd(self, reqId: int):
+        self._logger.info(f'tickSnapshotEnd: {reqId}')
+        self.ib.tickSnapshotEndEvent.emit(reqId)
+        self.reqId2Ticker.pop(reqId) # FIXME: is this correct?
         self._endReq(reqId)
 
     def tickByTickAllLast(
@@ -792,6 +873,7 @@ class Wrapper:
             size: float, tickAttribLast: TickAttribLast,
             exchange, specialConditions):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId}')
             return
@@ -812,6 +894,7 @@ class Wrapper:
             bidSize: float, askSize: float,
             tickAttribBidAsk: TickAttribBidAsk):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId}')
             return
@@ -835,6 +918,7 @@ class Wrapper:
 
     def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId}')
             return
@@ -844,6 +928,7 @@ class Wrapper:
 
     def tickString(self, reqId: int, tickType: int, value: str):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         if not ticker:
             return
         try:
@@ -903,6 +988,10 @@ class Wrapper:
                     float(next12) if next12 else None,
                     parseIBDatetime(nextDate) if nextDate else None,
                     float(nextAmount) if nextAmount else None)
+            elif tickType == 45:
+                self.lastTimestamp = datetime.fromtimestamp(int(value), timezone.utc)
+            else:
+                self._logger.error(f'tickString: Unknown tickType: {tickType}')
             self.pendingTickers.add(ticker)
         except ValueError:
             self._logger.error(
@@ -911,6 +1000,7 @@ class Wrapper:
 
     def tickGeneric(self, reqId: int, tickType: int, value: float):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickGeneric: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         if not ticker:
             return
         try:
@@ -934,6 +1024,8 @@ class Wrapper:
             ticker.volumeRate = value
         elif tickType == 58:
             ticker.rtHistVolatility = value
+        else:
+            self._logger.error(f'tickGeneric: Unknown tickType: {tickType}')
         tick = TickData(self.lastTime, tickType, value, 0)
         ticker.ticks.append(tick)
         self.pendingTickers.add(ticker)
@@ -942,6 +1034,7 @@ class Wrapper:
             self, reqId: int, minTick: float, bboExchange: str,
             snapshotPermissions: int):
         ticker = self.reqId2Ticker.get(reqId)
+        self._logger.info(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__()}')
         if not ticker:
             return
         ticker.minTick = minTick
@@ -1019,7 +1112,7 @@ class Wrapper:
                 f'tickOptionComputation: Unknown reqId: {reqId}')
 
     def deltaNeutralValidation(self, reqId: int, dnc: DeltaNeutralContract):
-        pass
+        self._logger.info(f'deltaNeutralValidation: {reqId} {dnc}')
 
     def fundamentalData(self, reqId: int, data: str):
         self._endReq(reqId, data)
@@ -1116,7 +1209,11 @@ class Wrapper:
             formattedBasisPoints: str, totalDividends: float,
             holdDays: int, futureLastTradeDate: str, dividendImpact: float,
             dividendsToLastTradeDate: float):
-        pass
+        self._logger.info(
+            f'tickEFP: {reqId} {tickType} {basisPoints} '
+            f'{formattedBasisPoints} {totalDividends} {holdDays} '
+            f'{futureLastTradeDate} {dividendImpact} '
+            f'{dividendsToLastTradeDate}')
 
     def historicalSchedule(
             self, reqId: int, startDateTime: str, endDateTime: str,
@@ -1137,18 +1234,21 @@ class Wrapper:
         self._endReq(reqId)
 
     def softDollarTiers(self, reqId: int, tiers: List[SoftDollarTier]):
-        pass
+        self._logger.info(f'softDollarTiers: {reqId} {tiers}')
 
     def familyCodes(self, familyCodes: List[FamilyCode]):
-        pass
+        self._logger.info(f'familyCodes: {familyCodes}')
 
     def error(
             self, reqId: int, errorCode: int, errorString: str,
             advancedOrderRejectJson: str):
         # https://interactivebrokers.github.io/tws-api/message_codes.html
+        # self._logger.error(f'Error {errorCode}, reqId {reqId}: {errorString}')
         isRequest = reqId in self._futures
         trade = self.trades.get((self.clientId, reqId))
         warningCodes = {110, 165, 202, 399, 404, 434, 492, 10167}
+        notifCodes = {2104, 2106, 2107, 2108, 2158} # notification and not a true error condition
+        isNotif = errorCode in notifCodes
         isWarning = errorCode in warningCodes or 2100 <= errorCode < 2200
         if errorCode == 110 and isRequest:
             # whatIf request failed
@@ -1159,7 +1259,8 @@ class Wrapper:
             isWarning = False
 
         msg = (
-            f'{"Warning" if isWarning else "Error"} '
+            (f'Info ' if isNotif else
+            f'{"Warning" if isWarning else "Error"} ') +
             f'{errorCode}, reqId {reqId}: {errorString}')
         contract = self._reqId2Contract.get(reqId)
         if contract:

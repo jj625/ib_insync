@@ -17,6 +17,7 @@ from .decoder import Decoder
 from .objects import ConnectionStats, WshEventData
 from .util import UNSET_DOUBLE, UNSET_INTEGER, dataclassAsTuple, getLoop, run
 
+from .wrapper import Wrapper
 
 class Client:
     """
@@ -89,8 +90,9 @@ class Client:
 
     (DISCONNECTED, CONNECTING, CONNECTED) = range(3)
 
-    def __init__(self, wrapper):
-        self.wrapper = wrapper
+    def __init__(self, wrapper: Wrapper):
+        self.version = '0.0.1'
+        self.wrapper: Wrapper = wrapper
         self.decoder = Decoder(wrapper, 0)
         self.apiStart = Event('apiStart')
         self.apiEnd = Event('apiEnd')
@@ -98,6 +100,7 @@ class Client:
         self.throttleStart = Event('throttleStart')
         self.throttleEnd = Event('throttleEnd')
         self._logger = logging.getLogger('ib_insync.client')
+        self._logger.debug('Client::__init__')
 
         self.conn = Connection()
         self.conn.hasData += self._onSocketHasData
@@ -129,15 +132,18 @@ class Client:
         self._isThrottling = False
         self._msgQ: Deque[str] = deque()
         self._timeQ: Deque[float] = deque()
+        self._logger.debug('Client::reset')
 
     def serverVersion(self) -> int:
         return self._serverVersion
 
     def run(self):
+        self._logger.debug('Client::run')
         loop = getLoop()
         loop.run_forever()
 
     def isConnected(self):
+        self._logger.debug('Client::isConnected')
         return self.connState == Client.CONNECTED
 
     def isReady(self) -> bool:
@@ -146,6 +152,7 @@ class Client:
 
     def connectionStats(self) -> ConnectionStats:
         """Get statistics about the connection."""
+        self._logger.debug('Client::connectionStats')
         if not self.isReady():
             raise ConnectionError('Not connected')
         return ConnectionStats(
@@ -158,11 +165,12 @@ class Client:
         """Get new request ID."""
         if not self.isReady():
             raise ConnectionError('Not connected')
+        self._logger.debug('Client::getReqId')
         newId = self._reqIdSeq
         self._reqIdSeq += 1
         return newId
 
-    def updateReqId(self, minReqId):
+    def updateReqId(self, minReqId: int):
         """Update the next reqId to be at least ``minReqId``."""
         self._reqIdSeq = max(self._reqIdSeq, minReqId)
 
@@ -184,7 +192,7 @@ class Client:
 
     def connect(
             self, host: str, port: int, clientId: int,
-            timeout: Optional[float] = 2.0):
+            timeout: float = 2.0):
         """
         Connect to a running TWS or IB gateway application.
 
@@ -199,7 +207,7 @@ class Client:
         """
         run(self.connectAsync(host, port, clientId, timeout))
 
-    async def connectAsync(self, host, port, clientId, timeout=2.0):
+    async def connectAsync(self, host: str, port: int, clientId: int, timeout: float=2.0):
         try:
             self._logger.info(
                 f'Connecting to {host}:{port} with clientId {clientId}...')
@@ -232,7 +240,7 @@ class Client:
         self.conn.disconnect()
         self.reset()
 
-    def send(self, *fields, makeEmpty=True):
+    def send(self, *fields, makeEmpty: bool = True) -> None:
         """Serialize and send the given fields using the IB socket protocol."""
         if not self.isConnected():
             raise ConnectionError('Not connected')
@@ -241,9 +249,9 @@ class Client:
         empty = (None, UNSET_INTEGER, UNSET_DOUBLE) if makeEmpty else (None,)
         for field in fields:
             typ = type(field)
-            if field in empty:
+            if field in empty: # check for special values
                 s = ''
-            elif typ is str:
+            elif typ is str: # the rests are checked by type
                 s = field
             elif typ is int:
                 s = str(field)
@@ -630,7 +638,7 @@ class Client:
     def reqOpenOrders(self):
         self.send(5, 1)
 
-    def reqAccountUpdates(self, subscribe, acctCode):
+    def reqAccountUpdates(self, subscribe: bool, acctCode):
         self.send(6, 2, subscribe, acctCode)
 
     def reqExecutions(self, reqId, execFilter):
@@ -785,11 +793,13 @@ class Client:
     def reqRealTimeBars(
             self, reqId, contract, barSize, whatToShow,
             useRTH, realTimeBarsOptions):
+        self._logger.debug('Client::reqRealTimeBars')
         self.send(
             50, 3, reqId, contract, barSize, whatToShow,
             useRTH, realTimeBarsOptions)
 
     def cancelRealTimeBars(self, reqId):
+        self._logger.debug('Client::cancelRealTimeBars')
         self.send(51, 1, reqId)
 
     def reqFundamentalData(

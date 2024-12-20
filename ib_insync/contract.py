@@ -171,6 +171,13 @@ class Contract:
 
     __str__ = __repr__
 
+    def __repr_minimal__(self):
+        attrs = util.dataclassNonDefaults(self)
+        if self.__class__ is not Contract:
+            attrs.pop('secType', '')
+        clsName = self.__class__.__qualname__
+        kwargs = ', '.join(f'{k}={v!r}' for k, v in attrs.items() if k in ['conId','symbol','localSymbol','bid','ask','last'])
+        return f'{clsName}({kwargs})'
 
 class Stock(Contract):
 

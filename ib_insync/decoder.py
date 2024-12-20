@@ -464,13 +464,14 @@ class Decoder:
         for _ in range(int(numBars)):
             bar = BarData(
                 date=get(),
-                open=float(get()),
+                open_=float(get()),
                 high=float(get()),
                 low=float(get()),
                 close=float(get()),
                 volume=float(get()),
                 average=float(get()),
-                barCount=int(get()))
+                barCount=int(get()),
+                timestamp=datetime.now(timezone.utc))
             self.wrapper.historicalData(int(reqId), bar)
 
         self.wrapper.historicalDataEnd(int(reqId), startDateStr, endDateStr)
@@ -482,12 +483,13 @@ class Decoder:
         bar = BarData(
             barCount=int(get() or 0),
             date=get(),
-            open=float(get() or 0),
+            open_=float(get() or 0),
             close=float(get() or 0),
             high=float(get() or 0),
             low=float(get() or 0),
             average=float(get() or 0),
-            volume=float(get() or 0))
+            volume=float(get() or 0),
+            timestamp=datetime.now(timezone.utc))
 
         self.wrapper.historicalDataUpdate(int(reqId), bar)
 

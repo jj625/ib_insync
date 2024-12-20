@@ -10,6 +10,7 @@ import time
 from dataclasses import fields, is_dataclass
 from typing import (
     AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union)
+import numpy as np
 
 import eventkit as ev
 
@@ -17,7 +18,7 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore
-
+_tz_newyork = ZoneInfo('US/Eastern')
 
 globalErrorEvent = ev.Event()
 """
@@ -28,8 +29,23 @@ EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
 UNSET_INTEGER = 2 ** 31 - 1
 UNSET_DOUBLE = sys.float_info.max
 
+# constants
+_today = dt.datetime.today()
+while _today.weekday() > 4:  # 0 is Monday, 6 is Sunday
+    _today -= dt.timedelta(days=1)
+NYMKTOPEN = dt.datetime.combine(_today, dt.time(9, 30)).astimezone(_tz_newyork) # NY market open in NY time
+MKTOPEN = NYMKTOPEN # for compatibility
+NYNPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
+NPMKTOPEN = NYNPMKTOPEN
+NYMKTCLOSE = dt.datetime.combine(_today, dt.time(16, 0)).astimezone(_tz_newyork) # NY market close in NY time
+MKTOPEN = NYMKTOPEN
+MKTCLOSE = NYMKTCLOSE
+NYNPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+NPMKTCLOSE = NYNPMKTCLOSE
+
 Time_t = Union[dt.time, dt.datetime]
 
+_logger = logging.getLogger(__name__)
 
 def df(objs, labels: Optional[List[str]] = None):
     """
@@ -134,7 +150,7 @@ def isnamedtupleinstance(x):
     return all(type(n) is str for n in f)
 
 
-def tree(obj):
+def tree(obj, datetime_formatter: Optional[Callable[[dt.datetime], str]] = None):
     """
     Convert object to a tree of lists, dicts and simple values.
     The result can be serialized to JSON.
@@ -142,7 +158,7 @@ def tree(obj):
     if isinstance(obj, (bool, int, float, str, bytes)):
         return obj
     elif isinstance(obj, (dt.date, dt.time)):
-        return obj.isoformat()
+        return obj.astimezone().isoformat() if hasattr(obj, 'astimezone') else obj.isoformat()
     elif isinstance(obj, dict):
         return {k: tree(v) for k, v in obj.items()}
     elif isnamedtupleinstance(obj):
@@ -155,7 +171,7 @@ def tree(obj):
         return str(obj)
 
 
-def barplot(bars, title='', upColor='blue', downColor='red'):
+def barplot(bars, title='', upColor='blue', downColor='red', fig_ax=None):
     """
     Create candlestick plot for the given bars. The bars can be given as
     a DataFrame or as a list of bar objects.
@@ -173,7 +189,11 @@ def barplot(bars, title='', upColor='blue', downColor='red'):
     else:
         ohlcTups = [(b.open, b.high, b.low, b.close) for b in bars]
 
-    fig, ax = plt.subplots()
+    if fig_ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig, ax = fig_ax
+
     ax.set_title(title)
     ax.grid(True)
     fig.set_size_inches(10, 6)
@@ -208,7 +228,7 @@ def barplot(bars, title='', upColor='blue', downColor='red'):
         ax.add_patch(rect)
 
     ax.autoscale_view()
-    return fig
+    return fig, ax
 
 
 def allowCtrlC():
@@ -237,6 +257,9 @@ def logToConsole(level=logging.INFO):
         h for h in logger.handlers
         if type(h) is logging.StreamHandler and h.stream is sys.stderr]
     if stdHandlers:
+        if level == -99:
+            # remove the handler
+            logging.getLogger('ib_insync').removeHandler(stdHandlers[0])
         # if a standard stream handler already exists, use it and
         # set the log level for the ib_insync namespace only
         logging.getLogger('ib_insync').setLevel(level)
@@ -356,7 +379,7 @@ def _fillDate(time: Time_t) -> dt.datetime:
     return t
 
 
-def schedule(time: Time_t, callback: Callable, *args):
+def schedule(time: Time_t, callback: Callable, *args) -> asyncio.Handle:
     """
     Schedule the callback to be run at the given time with
     the given arguments.
@@ -374,6 +397,19 @@ def schedule(time: Time_t, callback: Callable, *args):
     loop = getLoop()
     return loop.call_later(delay, callback, *args)
 
+def schedule_delayed(delay: float, callback: Callable, *args) -> asyncio.Handle:
+    """
+    Schedule the callback to be run after the given delay with
+    the given arguments.
+    This will return the Event Handle.
+
+    Args:
+        delay: Time to wait before running callback.
+        callback: Callable scheduled to run.
+        args: Arguments for to call callback with.
+    """
+    loop = getLoop()
+    return loop.call_later(delay, callback, *args)
 
 def sleep(secs: float = 0.02) -> bool:
     """

@@ -1,4 +1,5 @@
 import sys
+import copy
 import platform
 computername = platform.node()
 import contextlib
@@ -26,11 +27,15 @@ from scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d
 import math
 import logging
 import datetime
-MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
-NPMKTOPEN = np.datetime64(MKTOPEN.astimezone(datetime.timezone.utc).replace(tzinfo=None), 's')
-NPMKTOPENIDX = -1
-MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
-NPMKTCLOSE = np.datetime64(MKTCLOSE.astimezone(datetime.timezone.utc).replace(tzinfo=None), 's')
+NYMKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
+MKTOPEN = NYMKTOPEN
+PDMKTOPEN = pd.to_datetime(MKTOPEN)
+NPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
+# NPMKTOPENIDX = -1
+NYMKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
+MKTCLOSE = NYMKTCLOSE
+PDMKTCLOSE = pd.to_datetime(MKTCLOSE)
+NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
 import dateutil
 import argparse
 import json
@@ -79,7 +84,7 @@ import ib_insync
 import ib_insync.ib
 ib_insync.ib.install_custom_repr_()
 
-from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, util
+from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, util, PortfolioItem
 # probe for numpy support
 probe = BarDataList()
 if not hasattr(probe, '_init_npdata'):
@@ -262,6 +267,21 @@ class OnlineStatsReal:
     def deciles(self):
         return np.percentile(self.values, np.arange(10, 100, 10))
 
+class OnlineDeque:
+    def __init__(self, qlen=1000):
+        self.n = 0
+        self.mean = 0.0
+        self.M2 = 0.0
+        self.deq = deque(maxlen=qlen)  # Keep a limited history for mode, quartiles, and deciles
+
+    def update(self, x: numbers.Real):
+        self.n += 1
+        delta = x - self.mean
+        self.mean += delta / self.n
+        delta2 = x - self.mean
+        self.M2 += delta * delta2
+        self.values.append(x)
+
 # async def send_telegram_message_async(text):
 #     # bot = Bot(token='YOUR_BOT_TOKEN')
 #     return await telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
@@ -391,7 +411,7 @@ def neg(num: numbers.Real) -> numbers.Real:
 
 def last_business_dt() -> datetime.date:
     """Return the last business date"""
-    today = datetime.datetime.now().date() + datetime.timedelta(days=-1)
+    today = datetime.datetime.now().date() + datetime.timedelta(days=0)
     # before 9:30am, use previous business day
     if datetime.datetime.now().time() < datetime.time(16, 0):
         today -= datetime.timedelta(days=1)
@@ -414,24 +434,55 @@ class TradeManager:
         self.trade.filledEvent += self.on_filled_event
         self.trade.cancelEvent += self.on_cancel_event
         self.trade.cancelledEvent += self.on_cancelled_event
+        self.ok2clear = False
+
+    def clear(self):
+        if not self.ok2clear:
+            logger.error("Trade is not done yet, please check")
+            return
+        self.trade.statusEvent -= self.on_status_event
+        self.trade.modifyEvent -= self.on_modify_event
+        self.trade.fillEvent -= self.on_fill_event
+        self.trade.commissionReportEvent -= self.on_commission_report_event
+        self.trade.filledEvent -= self.on_filled_event
+        self.trade.cancelEvent -= self.on_cancel_event
+        self.trade.cancelledEvent -= self.on_cancelled_event
+        self.trade = None
 
     def __call__(self):
         return self.trade
 
+    def place_order(self, order: ib_insync.order.Order, ib: IB):
+        ib.placeOrder(self.trade.contract, self.trade.order)
+        return self.trade
+
     def on_status_event(self, trade: Trade):
-        logger.info(f"{trade}")
+        # logger.info(f"{trade}")
+        if trade.isDone() or trade.remaining() == 0:
+            self.ok2clear = True
+            logger.info(f"Trade is done, orderStatus.status={trade.orderStatus.status}")
 
     def on_modify_event(self, trade: Trade):
         logger.info(f"{trade}")
 
     def on_fill_event(self, trade: Trade, fill: Fill):
-        logger.info(f"{trade}, {fill}")
+        # logger.info(f"{trade}, {fill}")
+        if trade.isDone() or trade.remaining() == 0:
+            self.ok2clear = True
+            logger.info(f"Trade is done, orderStatus.status={trade.orderStatus.status}, fill={fill}")
+        else:
+            logger.info(f"Trade is not done yet, orderStatus.status={trade.orderStatus.status}")
 
     def on_commission_report_event(self, trade: Trade, fill: Fill, report: CommissionReport):
         logger.info(f"{trade}, {fill}, {report}")
 
     def on_filled_event(self, trade: Trade):
-        logger.info(f"{trade}")
+        # logger.info(f"{trade}")
+        if trade.isDone() or trade.remaining() == 0:
+            self.ok2clear = True
+            logger.info(f"Trade is done, orderStatus.status={trade.orderStatus.status}, trade.fills={trade.fills}")
+        else:
+            logger.info(f"Trade is not done yet, orderStatus.status={trade.orderStatus.status}")
 
     def on_cancel_event(self, trade: Trade):
         logger.info(f"{trade}")
@@ -571,10 +622,13 @@ def yang_zhang_volatility(open_, high, low, close, n):
     return np.sqrt(0.511 * np.log(high / low)**2 - 0.019 * np.log(close / open_)**2 + 0.386 * np.log(close / open_) * np.log(high / low))
 
 # Annualize volatilities (assuming 252 trading days and 1440 minutes per day)
-annualization_factor = np.sqrt(252 * 1440)
-annualization_factor_252 = np.sqrt(252)
-annualization_factor_252_390 = np.sqrt(252 * 390)
-annualization_factor_390 = np.sqrt(390)
+# annualization_factor = np.sqrt(252 * 1440)
+# annualization_factor_252 = np.sqrt(252)
+annualization_factor_252_390 = np.sqrt(252 * 390) # 1y = 252d * 390m
+annualization_factor_390 = np.sqrt(390) # 1d = 390m
+annualization_factor_5_390 = np.sqrt(5 * 390) # 1w = 5d * 390m
+annualization_factor_21_390 = np.sqrt(21 * 390) # 1m = 21d * 390m
+
 class KalmanFilter:
     def __init__(self, A, B, H, Q, R, P, x0):
         self.A = A  # State transition matrix
@@ -599,7 +653,36 @@ class KalmanFilter:
         self.P = self.P - np.dot(np.dot(K, self.H), self.P)
 
 # Example usage
-dt = 1.0  # Time step
+    bars15s: BarDataList = field(default_factory=BarDataList)
+    bars30s: BarDataList = field(default_factory=BarDataList)
+    bars1m: BarDataList = field(default_factory=BarDataList)
+    bars2m: BarDataList = field(default_factory=BarDataList)
+    bars5m: BarDataList = field(default_factory=BarDataList)
+    bars10m: BarDataList = field(default_factory=BarDataList)
+    bars15m: BarDataList = field(default_factory=BarDataList)
+
+#     kf.update(z)
+#     print("State estimate:", kf.x)
+
+# # Example usage
+# A = np.array([[1, 1, 0.5], [0, 1, 1], [0, 0, 1]])  # State transition matrix
+# B = np.array([[0.5], [1], [1]])  # Control input matrix
+# H = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # Observation matrix
+# Q = np.eye(3) * 0.1  # Process noise covariance
+# R = np.eye(3) * 0.1  # Measurement noise covariance
+# P = np.eye(3)  # Estimate error covariance
+# x0 = np.array([0, 0, 0])  # Initial state estimate
+
+# kf = KalmanFilter(A, B, H, Q, R, P, x0)
+
+# # Simulate some data
+# measurements = [np.array([i, i, i]) for i in range(10)]
+
+# for z in measurements:
+#     kf.predict()
+#     kf.update(z)
+#     print("State estimate:", kf.x)
+
 def singleton(cls):
     instances = {}
     def wrapper(*args, **kwargs):
@@ -647,7 +730,8 @@ class Agent:
     # daily_pnl: float
     session_start: List[datetime.datetime] = field(default_factory=list)
     session_end: List[datetime.datetime] = field(default_factory=list)
-    bars: BarDataList = field(default_factory=list)
+    use5s: bool = False
+    bars: BarDataList = field(default_factory=BarDataList) # for compatibility, 1m bars
     hml: List[float] = field(default_factory=list) # high minus low, parallel to bars
     hml_pct: List[float] = field(default_factory=list) # high minus low as percentage of close
     hmlstat: OnlineStatsInt = OnlineStatsInt(val_max=1000) # hml in cents
@@ -655,13 +739,17 @@ class Agent:
     # hi/lo ratio, range
     dayhilopct: deque = field(default_factory=deque) # 30 minutes (maxlen=12*30)
     # dayhilopct: OnlineDeque = field(default_factory=OnlineDeque)
+    # source bars
+    bars5s: BarDataList = field(default_factory=BarDataList)
     # resampled bars
-    bars1m: BarDataList = field(default_factory=list)
-    # bars5m: BarDataList = field(default_factory=list)
-    # bars10m: BarDataList = field(default_factory=list)
-    # bars15m: BarDataList = field(default_factory=list)
-    # gblur bars
-    bars_gb: BarDataList = field(default_factory=list) 
+    bars15s: BarDataList = field(default_factory=BarDataList)
+    bars30s: BarDataList = field(default_factory=BarDataList)
+    bars1m: BarDataList = field(default_factory=BarDataList)
+    bars2m: BarDataList = field(default_factory=BarDataList)
+    bars5m: BarDataList = field(default_factory=BarDataList)
+    bars10m: BarDataList = field(default_factory=BarDataList)
+    bars15m: BarDataList = field(default_factory=BarDataList)
+
     highs: List[float] = field(default_factory=list)
     lows: List[float] = field(default_factory=list)
     lastPrice: float = 0.0 # cache bars[-1].close
@@ -706,9 +794,79 @@ class Agent:
     lastBuyTrade: Optional[ib_insync.order.Trade] = None
     lastBuyTime: Optional[datetime.datetime] = None
     lastBuyPrice: float = 0.0
+    # economy and indicators
+    direction_s1: str = ''
+    direction_s2: str = ''
+    direction_s3: str = ''
+    direction_s16: str = ''
+    direction_s24: str = ''
+    gf1: bool = False
  
     def reset(self):
         pass
+
+    async def initial_resample_hook(self, start: str, end: str, bars: BarDataList):
+        logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
+        for b in bars:
+            await self.resample_from_5s_core(b, False)
+        logger.info(f"len(self.bars)={len(self.bars)}")
+        logger.info(f"len(self.bars2m)={len(self.bars2m)}")
+        logger.info(f"len(self.bars5m)={len(self.bars5m)}")
+        logger.info(f"len(self.bars10m)={len(self.bars10m)}")
+        logger.info(f"len(self.bars15m)={len(self.bars15m)}")
+
+    async def resample_from_5s(self, inBars: BarDataList, inBarHasNewBar: bool):
+        """
+        Resample 5s bars to 1m, 2m, 5m, 10m, and 15m bars.
+        """
+        await self.resample_from_5s_core(inBars[-1], inBarHasNewBar)
+        hasNewBar1m = inBars[-1].date.second == 0
+        await self.onBarUpdate(self.bars, hasNewBar1m) # every 5 secs
+
+    async def resample_from_5s_core(self, inBar: BarData, inBarHasNewBar: bool):
+        """
+        Resample 5s bars to 1m, 2m, 5m, 10m, and 15m bars.
+        """
+        def update_bar(outBar: BarData, newBar: BarData):
+            sumVolume = outBar.volume + newBar.volume
+            sumValues = outBar.volume * outBar.average + newBar.volume * newBar.average
+            outBar.timestamp = newBar.timestamp
+            outBar.close = newBar.close
+            outBar.high = max(outBar.high, newBar.high)
+            outBar.low = min(outBar.low, newBar.low)
+            outBar.volume += newBar.volume
+            outBar.barCount += newBar.barCount
+            outBar.average = sumValues / sumVolume if sumVolume > 0 else newBar.close
+
+        def handle_new_bar(outBars: BarDataList, newBar: BarData, hasNewBar: bool):
+            if hasNewBar or not outBars:
+                outBars.append(copy.copy(newBar))
+            else:
+                update_bar(outBars[-1], newBar)
+
+        z = inBar
+        b = BarData(z.date, z.open, z.high, z.low, z.close, z.volume, z.average, z.barCount)
+        atTopMinute = b.date.second % 60 == 0
+        hasNewBar15s = b.date.second % 15 == 0
+        hasNewBar30s = b.date.second % 30 == 0
+        hasNewBar1m = b.date.second == 0
+        hasNewBar2m = hasNewBar1m and b.date.minute % 2 == 0
+        hasNewBar5m = hasNewBar1m and b.date.minute % 5 == 0
+        hasNewBar10m = hasNewBar1m and b.date.minute % 10 == 0
+        hasNewBar15m = hasNewBar1m and b.date.minute % 15 == 0
+
+        handle_new_bar(self.bars, b, hasNewBar1m)
+        handle_new_bar(self.bars2m, b, hasNewBar2m)
+        handle_new_bar(self.bars5m, b, hasNewBar5m)
+        handle_new_bar(self.bars10m, b, hasNewBar10m)
+        handle_new_bar(self.bars15m, b, hasNewBar15m)
+
+        # await self.onBarUpdate(self.bars, hasNewBar1m) # every 5 secs
+        # onResampledBar2m(outBars2m, hasNewBar2m)
+        # onResampledBar5m(outBars5m, hasNewBar5m)
+        # onResampledBar10m(outBars10m, hasNewBar10m)
+        # onResampledBar15m(outBars15m, hasNewBar15m)
+
 
     def resume_session(self, data: dict):
         if not data:
@@ -788,15 +946,16 @@ class Agent:
         #     return -1
 
         filename = f'./data/{self.symbol}_1d.csv'
-        dailyclose = None
+        dailyclose_df: pd.DataFrame = pd.DataFrame()
+        prevclose_fromfile = 0.0
         yestdate = pd.to_datetime(last_business_dt())
         if os.path.exists(filename):
-            dailyclose = pd.read_csv(filename, parse_dates=['date'])
-            if yestdate not in dailyclose['date'].values:
-                logger.error(f"{yestdate} not found in historical bars")
-                return -1
+            dailyclose_df = pd.read_csv(filename, parse_dates=['date'])
+            if yestdate not in dailyclose_df['date'].values:
+                logger.error(f"{yestdate.date()} not found in historical data {filename}")
+                # return -1 # check ticker for today's close
             else:
-                self.prevclose = (dailyclose[ dailyclose['date'] == yestdate ].close).values[0]
+                self.prevclose = prevclose_fromfile = (dailyclose_df[ dailyclose_df['date'] == yestdate ].close).values[0]
         else:
             logger.warning(f"{filename} not found")
 
@@ -822,6 +981,9 @@ class Agent:
                 break
             logger.info(f"waiting for ticker to be fully populated")
             ib.sleep(1)
+        else: # no break
+            logger.error(f"ticker is not populating")
+            return -1
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 2.0:
             # report clock skew
@@ -834,13 +996,14 @@ class Agent:
 
         if t.close > 0:
             self.prevclose = t.close
-        elif dailyclose is None:
-            logger.error(f"closing price is not available")
-        elif t.close != dailyclose.close:
+        elif dailyclose_df.empty or prevclose_fromfile == 0.0:
+            logger.error(f"closing price is not available from ticker or file")
+            return -1
+        elif t.close != prevclose_fromfile:
             logger.warning(f"ticker.close={t.close} != dailyclose.close={self.prevclose}")
             if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
                 logger.warning(f"Weekend using dailyclose.close as ticker.close is not reliable")
-                self.prevclose = dailyclose.close
+                self.prevclose = prevclose_fromfile
             else: # weekday
                 logger.warning(f"Using ticker.close={t.close} as prevclose")
                 self.prevclose = t.close
@@ -864,8 +1027,8 @@ class Agent:
 
         self.reset_milestone() # initialize to an impossible value
         with np.printoptions(suppress=True, formatter={'float': lambda x: f'{x:.2%}'}):
-            logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone}"
-                f", stopLossPct={self.stopLossPct}, dnPctMilestone={self.dnPctMilestone}")
+            logger.info(f"SimpleLongStrategy1Init: upPctMilestone={self.upPctMilestone[0:6]}"
+                f", stopLossPct={self.stopLossPct[0:6]}, dnPctMilestone={self.dnPctMilestone[0:6]}")
         
         if self.stkpos and self.stkpos.position != 0:
             if self.high_since_buy_bar1m == []:
@@ -936,7 +1099,7 @@ class Agent:
         pkldump = {
             'symbol': self.symbol,
             'session_start': self.session_start,
-            'session_end': self.session_end.append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or self.session_end,
+            'session_end': self.session_end, # .append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or self.session_end,
             'buyopen_bar1m_idx': self.buyopen_bar1m_idx, # current day only, not valid the next day
             'buyopen_bar1m': self.buyopen_bar1m, # the bar1m where buy was recorded, valid across days
             'sellclose_bar1m_idx': self.sellclose_bar1m_idx, # current day only, not valid the next day
@@ -990,22 +1153,24 @@ class Agent:
                     dayloghl_avg, dayloghl_high, dayloghl_low, dayloghl_close, # [12:16]
                     curratio_avg, curratio_high, curratio_low, curratio_close) # [16:20]
 
-
+        # logger.debug(get_asyncio_running_loop('')) # expect '<ProactorEventLoop running=True closed=False debug=False>
+        logger.info(f"hasNewBar={hasNewBar}, {_repr_barlist(reversed(bars[-3:]))}")
+        # util.barplot(bars)
         currentBar = bars[-1] # bar that is being built, never full
         currentFullBar = bars[-2] # the most recent fully formed bar
-        # NPMKTOPENIDX is used throughout, make sure it's set at all times
-        global NPMKTOPENIDX
-        if NPMKTOPENIDX < 0:
-            results = np.ravel(np.where(bars.date == NPMKTOPEN))
-            if len(results) > 0:
-                # FIXME
-                NPMKTOPENIDX = results[0]
-                logger.info(f"market open idx={NPMKTOPENIDX} date={bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
-            else:
-                NPMKTOPENIDX = -1_000
-                idx = bars.idx - 3
-                logger.warning(f"market is not open: {bars.date[0:3]}..{bars.date[idx:]}")
-                # should we bail?
+        # # NPMKTOPENIDX is used throughout, make sure it's set at all times
+        # global NPMKTOPENIDX
+        # if NPMKTOPENIDX < 0:
+        #     results = np.ravel(np.where(bars.npdate_ == NPMKTOPEN))
+        #     if len(results) > 0:
+        #         # FIXME
+        #         NPMKTOPENIDX = results[0]
+        #         # logger.info(f"market open idx={NPMKTOPENIDX} date={bars.npdate_[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
+        #     else:
+        #         NPMKTOPENIDX = -1_000
+        #         idx = bars._npidx - 3
+        #         logger.warning(f"market is not open: {bars.npdate_[0:3]}..{bars.npdate_[idx:]}")
+        #         # should we bail?
         
         if currentBar.high - currentBar.low > 0 or currentBar.close - currentBar.open_ > 0:
             gkvol_1 = garman_klass_volatility(currentBar.open_, currentBar.high, currentBar.low, currentBar.close, 1)
@@ -1023,6 +1188,67 @@ class Agent:
         else:
             gkvol_2 = rsvol_2 = pkvol_2 = 0.0
             logger.warning(f"spot vol[-2] zero")
+
+        # open_prices_old = np.asarray([bar.open_ for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+        open_prices = bars.npopen
+        high_prices = bars.nphigh
+        low_prices = bars.nplow
+        close_prices = bars.npclose
+        # if not np.isclose(bars.npopen, open_prices_old, atol=1e-3).all():
+        #     logger.warning(f"open_prices != open_prices_old: {bars.npopen} != {open_prices_old}")
+        n = len(open_prices)
+        if n > 0:
+            # high_prices = np.asarray([bar.high for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+            # low_prices = np.asarray([bar.low for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+            # close_prices = np.asarray([bar.close for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+            # if not np.isclose(bars.nphigh, high_prices, atol=1e-3).all():
+            #     logger.warning(f"high_prices != high_prices_old: {bars.nphigh} != {high_prices}")
+            # if not np.isclose(bars.nplow, low_prices, atol=1e-3).all():
+            #     logger.warning(f"low_prices != low_prices_old: {bars.nplow} != {low_prices}")
+            # if not np.isclose(bars.npclose, close_prices, atol=1e-3).all():
+            #     logger.warning(f"close_prices != close_prices_old: {bars.npclose} != {close_prices}")
+
+            # idx_end = bars._npidx # zeros beyond bars.idx, be careful
+            # if (idx_end-1)>0 and bars.npdate_[idx_end-1] >= NPMKTCLOSE:
+            #     j = np.ravel(np.where(bars.npdate_ >= NPMKTCLOSE))
+            #     idx_end = (j[0] if len(j) > 0 else idx_end-1)
+            #     # if idx_end != bars.idx - 1:
+            #     logger.info(f"idx_end-1={idx_end-1}, bars.npdate_[idx_end-1:idx_end+1]={bars.npdate_[idx_end-1:idx_end+1]}")
+            # nnp = len(bars.low_prices[NPMKTOPENIDX:idx_end])
+            # if n != nnp:
+            #     logger.error(f"vol calculation n={n} != nnp={nnp}")
+            # else:
+            #     logger.info(f"vol calculation, n={n}, nnp={nnp}")
+
+            gkvol = garman_klass_volatility(open_prices, high_prices, low_prices, close_prices, n)
+            # gkvolnp = garman_klass_volatility(bars.open_prices[NPMKTOPENIDX:idx_end], bars.high_prices[NPMKTOPENIDX:idx_end]
+            #     , bars.low_prices[NPMKTOPENIDX:idx_end], bars.close_prices[NPMKTOPENIDX:idx_end], nnp)
+            # if not math.isclose(gkvol, gkvolnp, abs_tol=1e-6):
+            #     logger.info(f"garman-klass vol DIFFERENCE {gkvol:.4%} {gkvolnp:.4%}")
+            logger.info(f"garman-klass run vol {gkvol:.3%}/min {annualization_factor_390 * gkvol:.2%}/d {annualization_factor_5_390 * gkvol:.2%}/5d {annualization_factor_21_390 * gkvol:.2%}/21d {annualization_factor_252_390 * gkvol:.2%}/y")
+
+            rsvol = rogers_satchell_volatility(open_prices, high_prices, low_prices, close_prices, n)
+            # rsvolnp = rogers_satchell_volatility(bars.open_prices[NPMKTOPENIDX:idx_end], bars.high_prices[NPMKTOPENIDX:idx_end]
+            #     , bars.low_prices[NPMKTOPENIDX:idx_end], bars.close_prices[NPMKTOPENIDX:idx_end], nnp)
+            # if not math.isclose(rsvol, rsvolnp, abs_tol=1e-6):
+            #     logger.info(f"rogers-satchell vol DIFFERENCE {rsvol:.4%} {rsvolnp:.4%}")
+            logger.info(f"rogers-satchell run vol {rsvol:.3%}/min {annualization_factor_390 * rsvol:.2%}/d {annualization_factor_5_390 * rsvol:.2%}/5d {annualization_factor_21_390 * rsvol:.2%}/21d {annualization_factor_252_390 * rsvol:.2%}/y")
+
+            pkvol = parkinson_volatility(high_prices, low_prices, n)
+            # pkvolnp = parkinson_volatility(bars.high_prices[NPMKTOPENIDX:idx_end], bars.low_prices[NPMKTOPENIDX:idx_end], nnp)
+            # if not math.isclose(pkvol, pkvolnp, abs_tol=1e-6):
+            #     logger.info(f"parkinson vol DIFFERENCE {pkvol:.4%} {pkvolnp:.4%}")
+            logger.info(f"parkinson run vol {pkvol:.3%}/min {annualization_factor_390 * pkvol:.2%}/d {annualization_factor_5_390 * pkvol:.2%}/5d {annualization_factor_21_390 * pkvol:.2%}/21d {annualization_factor_252_390 * pkvol:.2%}/y")
+
+            # logger.info(f"yang-zhang vol {annualization_factor * yang_zhang_volatility(open_prices, high_prices, low_prices, close_prices, n):.2%}")
+
+            # logger.info(f"{bars.high_prices[NPMKTOPENIDX:idx_end]}, {bars.low_prices[NPMKTOPENIDX:idx_end]}, {nnp}")
+            # logger.info(f"parkinson vol "
+            #     f"(raw) {parkinson_volatility(high_prices, low_prices, n):.4%} {pkvol:.4%},"
+            #     f" (day) {annualization_factor_390 * pkvol:.2%},"
+            #     f" (ann) {annualization_factor_252_390 * pkvol:.2%}"
+            # )
+
         if currentBar.date >= MKTOPEN:
             if not self.dayhilopct: # initialize
                 # logger.info(f"initialize dayhilopct")
@@ -1058,24 +1284,43 @@ class Agent:
             # volatility
             if not self.volatility_per_min:
                 z = []
-                bars_since_open = [b for b in bars if b.date >= MKTOPEN]
-                for b in bars_since_open:
-                    # calculate per minute spot volatility
-                    gkvol_1_tmp = garman_klass_volatility(b.open_, b.high, b.low, b.close, 1)
-                    rsvol_1_tmp = rogers_satchell_volatility(b.open_, b.high, b.low, b.close, 1)
-                    pkvol_1_tmp = parkinson_volatility(b.high, b.low, 1)
-                    # x = [b for b in bars if b.date >= MKTOPEN and b.date <= d]
-                    # y = dayhilo(x)[16:20] + (d,) # (curratio_avg, curratio_high, curratio_low, curratio_close, date)
-                    vol_tup_tmp = (gkvol_1_tmp, rsvol_1_tmp, pkvol_1_tmp)
+                # bars_since_open = [b for b in bars if b.date >= MKTOPEN]
+                # for b in bars_since_open:
+                #     # calculate per minute spot volatility
+                #     gkvol_1_tmp = garman_klass_volatility(b.open_, b.high, b.low, b.close, 1)
+                #     rsvol_1_tmp = rogers_satchell_volatility(b.open_, b.high, b.low, b.close, 1)
+                #     pkvol_1_tmp = parkinson_volatility(b.high, b.low, 1)
+                #     # x = [b for b in bars if b.date >= MKTOPEN and b.date <= d]
+                #     # y = dayhilo(x)[16:20] + (d,) # (curratio_avg, curratio_high, curratio_low, curratio_close, date)
+                #     vol_tup_tmp = (gkvol_1_tmp, rsvol_1_tmp, pkvol_1_tmp)
+                #     z.append(vol_tup_tmp)
+                # logger.debug(f"len(z)={len(z)}")
+                # logger.debug(f"z.head={_repr_vol_tup_lst(z[:3])} z.tail={_repr_vol_tup_lst(z[-3:])}")
+                # logger.debug(f"initialize volatility_per_min")
+                # self.volatility_per_min = deque(z, maxlen=int(60*6.5)) # 1 minute resolution
+
+                # running vols
+                for i in range(1, len(self.bars.npopen)+1):
+                    gkvol_tmp = garman_klass_volatility(self.bars.npopen[:i], self.bars.nphigh[:i], self.bars.nplow[:i], self.bars.npclose[:i], i)
+                    rsvol_tmp = rogers_satchell_volatility(self.bars.npopen[:i], self.bars.nphigh[:i], self.bars.nplow[:i], self.bars.npclose[:i], i)
+                    pkvol_tmp = parkinson_volatility(self.bars.nphigh[:i], self.bars.nplow[:i], i)
+                    logger.info(f"running vol {i} GK {gkvol_tmp:.3%}, RS {rsvol_tmp:.3%}, PK {pkvol_tmp:.3%}")
+                    vol_tup_tmp = (gkvol_tmp, rsvol_tmp, pkvol_tmp)
                     z.append(vol_tup_tmp)
-                logger.debug(f"len(z)={len(z)}")
+                logger.debug(f"len(z)={len(z)} len(bars)={len(self.bars)} len(bars.open_prices)={len(self.bars.open_prices)}")
                 logger.debug(f"z.head={_repr_vol_tup_lst(z[:3])} z.tail={_repr_vol_tup_lst(z[-3:])}")
                 logger.debug(f"initialize volatility_per_min")
-                self.volatility_per_min = deque(z, maxlen=int(60*6.5)) # 1 minute resolution
+                # the last iteration is the current running vols
+                if np.isclose(gkvol, gkvol_tmp, atol=1e-6) and np.isclose(rsvol, rsvol_tmp, atol=1e-6) and np.isclose(pkvol, pkvol_tmp, atol=1e-6):
+                    logger.info(f"running vols init is looking good")
+                else:
+                    logger.warning(f"running vols init not matching: {gkvol:.3%} != {gkvol_tmp:.3%}, {rsvol:.3%} != {rsvol_tmp:.3%}, {pkvol:.3%} != {pkvol_tmp:.3%}")
+                self.volatility_per_min = deque(z, maxlen=int(60*6.5)) # 1 minute resolution                    
             else:
                 logger.info(f"volatility_per_min[-1]: {_repr_vol_tup(self.volatility_per_min[-1])}, len={len(self.volatility_per_min)}")
 
-            vol_tup = (gkvol_1, rsvol_1, pkvol_1)
+            # vol_tup = (gkvol_1, rsvol_1, pkvol_1)
+            vol_tup = (gkvol, rsvol, pkvol) # running vol, not spot vol
             if hasNewBar or not self.volatility_per_min: # new bar or first bar
                 self.volatility_per_min.append(vol_tup)
             else:
@@ -1121,9 +1366,13 @@ class Agent:
         #     needCheckpoint = True
         
         # blur filter
-        if hasNewBar: # at the minute
+        if currentBar.date >= MKTOPEN:
+        # if hasNewBar: # at the minute
             # vec = np.array([bar.average for bar in bars[-5:]])
-            vec_raw = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN])
+            # vec_raw_old = np.asarray([bar.average for bar in bars if bar.date >= MKTOPEN and bar.date < MKTCLOSE])
+            vec_raw = bars.npaverage
+            # if not np.isclose(vec_raw, vec_raw_old, atol=1e-3).all():
+            #     logger.warning(f"vec_raw != vec_raw_old: {vec_raw} != {vec_raw_old}")
             if len(vec_raw) > 0:
               with np.printoptions(suppress=True, formatter={'float': lambda x: f'{x:.4f}'}):
                 vec = vec_raw[-60:] # (vec_raw / self.prevclose - 1.) * 1000 # 0.123% -> 1.23
@@ -1134,27 +1383,34 @@ class Agent:
                 # model = GaussianHMM(n_components=3, covariance_type="full", n_iter=1000)
                 # model.fit(vec.reshape(-1, 1))
                 # logger.info(f"model.means_={model.means_}, model.covars_={model.covars_}, model.transmat_={model.transmat_}")
-                smoothed_1 = gaussian_filter1d(vec, sigma=2, mode=mode_param, truncate=trunc_param)
-                smoothed_1_der1 = gaussian_filter1d(vec, sigma=2, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_2 = gaussian_filter1d(vec, sigma=3, mode=mode_param, truncate=trunc_param)
-                smoothed_2_der1 = gaussian_filter1d(vec, sigma=3, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_3 = gaussian_filter1d(vec, sigma=5, mode=mode_param, truncate=trunc_param)
-                smoothed_3_der1 = gaussian_filter1d(vec, sigma=5, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_4 = gaussian_filter1d(vec, sigma=16, mode=mode_param, truncate=trunc_param)
-                smoothed_4_der1 = gaussian_filter1d(vec, sigma=16, mode=mode_param, order=1, truncate=trunc_param)
-                smoothed_5 = gaussian_filter1d(vec, sigma=24, mode=mode_param, truncate=trunc_param)
-                smoothed_5_der1 = gaussian_filter1d(vec, sigma=24, mode=mode_param, order=1, truncate=trunc_param)
-                logger.info(f"vec: {vec[-16:]}")
-                logger.info(f"smoothed_1: {smoothed_1[-16:]}")
-                logger.info(f"smoothed_1_der1: {smoothed_1_der1[-16:]}")
-                logger.info(f"smoothed_2: {smoothed_2[-16:]}")
-                logger.info(f"smoothed_2_der1: {smoothed_2_der1[-16:]}")
-                logger.info(f"smoothed_3: {smoothed_3[-16:]}")
-                logger.info(f"smoothed_3_der1: {smoothed_3_der1[-16:]}")
-                logger.info(f"smoothed_4: {smoothed_4[-16:]}")
-                logger.info(f"smoothed_4_der1: {smoothed_4_der1[-16:]}")
-                logger.info(f"smoothed_5: {smoothed_5[-16:]}")
-                logger.info(f"smoothed_5_der1: {smoothed_5_der1[-16:]}")
+                sm_s2 = gaussian_filter1d(vec, sigma=2, mode=mode_param, truncate=trunc_param)
+                sm_s2_der1 = gaussian_filter1d(vec, sigma=2, mode=mode_param, order=1, truncate=trunc_param)
+                self.direction_s2 = direction_s2 = "positive" if sm_s2_der1[-1] > 0 else "negative"
+                sm_s3 = gaussian_filter1d(vec, sigma=3, mode=mode_param, truncate=trunc_param)
+                sm_s3_der1 = gaussian_filter1d(vec, sigma=3, mode=mode_param, order=1, truncate=trunc_param)
+                sm_s3_norm5 = np.linalg.norm(sm_s3_der1[-5:]/len(sm_s3_der1[-5:])/self.prevclose)
+                self.direction_s3 = direction_s3 = "positive" if sm_s3_der1[-1] > 0 else "negative"
+                sm_s5 = gaussian_filter1d(vec, sigma=5, mode=mode_param, truncate=trunc_param)
+                sm_s5_der1 = gaussian_filter1d(vec, sigma=5, mode=mode_param, order=1, truncate=trunc_param)
+                sm_s16 = gaussian_filter1d(vec, sigma=16, mode=mode_param, truncate=trunc_param)
+                sm_s16_der1 = gaussian_filter1d(vec, sigma=16, mode=mode_param, order=1, truncate=trunc_param)
+                self.direction_s16 = direction_s16 = "positive" if sm_s16_der1[-1] > 0 else "negative"
+                sm_s16_norm60 = np.linalg.norm(sm_s16_der1[-5:]/len(sm_s16_der1[-5:])/self.prevclose)
+                sm_s24 = gaussian_filter1d(vec, sigma=24, mode=mode_param, truncate=trunc_param)
+                sm_s24_der1 = gaussian_filter1d(vec, sigma=24, mode=mode_param, order=1, truncate=trunc_param)
+                sm_s24_norm60 = np.linalg.norm(sm_s24_der1[-5:]/len(sm_s24_der1[-5:])/self.prevclose)
+                self.direction_s24 = direction_s24 = "positive" if sm_s24_der1[-1] > 0 else "negative"
+                logger.info(f"vec: {vec[-5:]}")
+                logger.info(f"sm_s2: {sm_s2[-5:]}")
+                logger.info(f"sm_s2_der1: {sm_s2_der1[-5:]}")
+                logger.info(f"sm_s3: {sm_s3[-5:]}")
+                logger.info(f"sm_s3_der1: {sm_s3_der1[-5:]} {direction_s3} norm {sm_s3_norm5:.8f} {sm_s3_norm5/pkvol:.4%}")
+                logger.info(f"sm_s5: {sm_s5[-5:]}")
+                logger.info(f"sm_s5_der1: {sm_s5_der1[-5:]}")
+                logger.info(f"sm_s16: {sm_s16[-5:]}")
+                logger.info(f"sm_s16_der1: {sm_s16_der1[-5:]} {direction_s16} norm {sm_s16_norm60:.8f} {sm_s16_norm60/pkvol:.4%}")
+                logger.info(f"sm_s24: {sm_s24[-5:]}")
+                logger.info(f"sm_s24_der1: {sm_s24_der1[-5:]} {direction_s24} norm {sm_s24_norm60:.8f} {sm_s24_norm60/pkvol:.4%}")
 
             max5m = maximum_filter1d(vec, size=5, mode=mode_param)
             min5m = minimum_filter1d(vec, size=5, mode=mode_param)
@@ -1393,6 +1649,8 @@ class Agent:
             tgb1cnh = two_bars_green_with_one_close_near_high_2()
             orig_cond = tgb1cnh and isInflection_10_5 # original condition 
             ft_gb32 = isFollowThrough and lastn_bars_green(3) >= 2 # don't need to check for inflection point
+            self.gf1 = gf1 = self.direction_s3 == 'positive' and self.direction_s16 == 'positive' and self.direction_s24 == 'positive' # gaussian filter 1
+            logger.info(f"gf1: direction_s3={self.direction_s3}, direction_s16={self.direction_s16}, direction_s24={self.direction_s24}")
             # this is a stopgap until trapdoor or better follow-through is fully implemented
             blw_lsp: bool = False
             blw_lsp_pct: float = 0.0
@@ -1454,7 +1712,7 @@ class Agent:
                 # dl1mb = dl1m <= 0.05
                 # dl2mb = dl2m <= 0.05
                 # dl3mb = dl3m <= 0.05
-            if orig_cond or isFollowThrough: # must add additional check when isFollowThrough
+            if orig_cond or isFollowThrough or gf1: # must add additional check when isFollowThrough
                 if isFollowThrough:
                     # fyi
                     ft1 = nbr4 and pbonl and pbg and cbah and at30s
@@ -1465,13 +1723,13 @@ class Agent:
                         ft2 = dlmb_arr.any() and pbg and cbah
                     # logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
                     logger.info(f"ft2: dlmb={dlmb_arr}, pbg={pbg}, cbah={cbah}")
-                    if not blw_lsp:
-                        logger.info(f"probably should buy, waiting for below last sold price")
+                    if not blw_lsp and not gf1:
+                        logger.info(f"blw_lsp: {blw_lsp}, gf1: {gf1}, no action")
                         return
-                    elif blw_lsp:
-                        # we are below last sold price, we can buy
+                    elif blw_lsp and gf1: # AND gf1 (19-Dec-2024)
+                        # we are below last sold price OR gauss filter indic are all positives, we can buy
                         # but only if ...
-                        if ft1 or ft2:
+                        if (ft1 and gf1) or (ft2 and gf1) or gf1:
                             # using limit order
                             t = ib.tickers()[0]
                             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
@@ -1479,8 +1737,12 @@ class Agent:
                             self.order = LimitOrder('BUY', agent.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
                             self.order.account = self.tradingaccount
                         else:
+                            logger.info(f"blw_lsp: {blw_lsp}, ft1: {ft1}, ft2: {ft2}, gf1: {gf1}, no action")
                             return
-                elif not isFollowThrough: # original condition
+                    else:
+                        logger.info(f"blw_lsp: {blw_lsp}, gf1: {gf1}, no action")
+                        return
+                elif not isFollowThrough and gf1: # original condition, AND gf1 (19-Dec-2024)
                     # ok using market order
                     self.order = MarketOrder('BUY', agent.numshares)
                     self.order.account = self.tradingaccount
@@ -1546,7 +1808,8 @@ class Agent:
         tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time is {tdiff:.2f} seconds" + (f" ahead" if tdiff > 0 else " behind") + f" current time")
-        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} volume {t.volume:n}")
+        basprd = t.ask - t.bid
+        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} b/a spread {basprd:.2f} ({basprd/lastPrice_:.3%}) volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
 
         # volatility
@@ -1557,9 +1820,9 @@ class Agent:
        # calculate trapdoor index
         trdrIdx_ = 0
         # find the highest (down) milestone crossed, i.e. dnPctMilestone[trdrIdx_] > lastPrice_ > dnPctMilestone[trdrIdx_+1]
-        ret = (lastPrice_/self.prevclose-1.)
-        logger.info(f"lastPrice_={lastPrice_:.2f}, prevclose={self.prevclose:.2f}, ret={ret:.2%}")
-        while trdrIdx_ < len(self.dnPctMilestone) and ret < self.dnPctMilestone[trdrIdx_]:
+        # chg = (lastPrice_/self.prevclose-1.)
+        # logger.info(f"lastPrice_={lastPrice_:.2f}, prevclose={self.prevclose:.2f}, chg={chg:.2%}")
+        while trdrIdx_ < len(self.dnPctMilestone) and chg < self.dnPctMilestone[trdrIdx_]:
             trdrIdx_ += 1
             ret = (lastPrice_/self.prevclose-1.)
         logger.info(f"trdrIdx_={trdrIdx_}, dnPctMilestone[trdrIdx_]={self.dnPctMilestone[trdrIdx_]:.2%}")
@@ -1743,19 +2006,34 @@ class Agent:
 
         # to avoid negative expected pnl, we introduce drawdown condition from pnl high water mark
         # allow some retracement from pnl high water mark
-        max_retracement_pct = -1.0 * self.mile0_max_retracement_pct * pnl_hwm_pct
+        max_retracement_pct = -1.0 * self.mile0_max_retracement_pct * plus(daypnl_hwm_pct) # generally 20% retracement from high water mark
+        _recent_vol_tuplst = slice_deque(self.volatility_per_min, -2, None) # recent volatility tuples
+        logger.info(f"recent_vol_tup={_repr_vol_tup_lst(_recent_vol_tuplst)}")
+        if _recent_vol_tuplst:
+            _recent_vol = _recent_vol_tuplst[-2][2] # (gk,rs,pk) [2] is parkinson volatility, use the second last (full bar)
+        else:
+            _recent_vol = 0.006 # per minute
+        vol_based_dd_limit = -1.0 * _recent_vol * 5 # 5 times the recent parkinson volatility
+        vol_based_dd_limit_2 = -1.0 * _recent_vol * 4.0 * 3.0 # 3 std dev move in ~16 minutes
         # sometimes max_retracement_pct is too small (when pnl high water mark is close to zero), so we use the absolute min
-        cond2 = drawdown_pct < min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct) and self.idxMilestone >= 0
+        _abs_min_dd_limit = -1.0 * self.mile0_max_retracement_absolute_min_pct
+        _eff_dd_limit = min(_abs_min_dd_limit, max(max_retracement_pct, vol_based_dd_limit_2), vol_based_dd_limit)
+        cond2 = drawdown_pct < _eff_dd_limit and self.idxMilestone >= 0
         if self.idxMilestone >= 0:
-            logger.info(f"max retrc% {max_retracement_pct:.3%} floor {min(-1.0 * self.mile0_max_retracement_absolute_min_pct, max_retracement_pct):.3%}")
+            logger.info(f"dd limit {_eff_dd_limit:.3%} (min {_abs_min_dd_limit:.3%}, retr {max_retracement_pct:.3%}, vol based {vol_based_dd_limit:.3%}, 3stdev15 {vol_based_dd_limit_2:.3%})")
         logger.info(f"stpls={cond1}, ddrtrc={cond2}, idxMilestone={self.idxMilestone}")
         
+        # crossed below milestone, we should liquidate
+        if cond1: 
+            logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (ltd return = {lastPctReturn():.2%})")
+        elif cond2:
+            logger.warning(f"Crossed below dd limit {drawdown_pct:.2%}, last {lastPrice_:.2f} (ltd return = {lastPctReturn():.2%})")
         if cond1 or cond2: # (disabled for now)
-            # crossed below milestone, we should liquidate
-            if cond1: 
-                logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
-            elif cond2:
-                logger.warning(f"Crossed below max retracement {drawdown_pct:.2%}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            # # crossed below milestone, we should liquidate
+            # if cond1: 
+            #     logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
+            # elif cond2:
+            #     logger.warning(f"Crossed below max retracement {drawdown_pct:.2%}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
             bid_price = get_bid_price()
             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
             bid_price = round(bid_price / mintick) * mintick
@@ -1880,6 +2158,7 @@ class Agent:
             else:
                 logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
                 self.trade = None
+                self.tradeMgr.clear()
                 logger.error(logmsg + f", resetting trade to None")
         return # end of enforceMaxLoss
 
@@ -2391,7 +2670,8 @@ def main():
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--run_until', type=str, help='Run until this time (HH:MM)')
     argparser.add_argument('--live_trading', action='store_true', help='Live trading')
-    argparser.add_argument('--account', type=str, default='', help='Account number to use')
+    argparser.add_argument('--account', type=str, default='paper', help='Account number to use')
+    argparser.add_argument('--use5s', action='store_true', help='Use 5s bars')
     args = argparser.parse_args()
 
     # must come before any logging calls
@@ -2497,7 +2777,10 @@ def main():
     # IB
     global ib, managedAccounts
     ib = IB()
-    ib.connect(args.host, args.port, clientId=clientid, timeout=60)
+    if args.account != 'paper':
+        ib.connect(args.host, args.port, clientId=clientid, account=args.account)
+    else:
+        ib.connect(args.host, args.port, clientId=clientid, timeout=60)
     if ib.client._serverVersion < 178:
         logger.error(f'TWS version {ib.client._serverVersion} is too old. Update to latest version.')
         ib.disconnect()
@@ -2510,12 +2793,12 @@ def main():
     logger.info(f"Managed accounts: {managedAccounts}")
     # get account specific specs
     numshares_a, maxloss_a, account = 0, 0.0, ''
-    if args.account == '' and len(managedAccounts) == 1: # only one account
+    if args.account == 'paper' and len(managedAccounts) == 1: # only one account
         account = managedAccounts[0]
-    elif args.account == '' and len(managedAccounts) > 1:
+    elif args.account == 'paper' and len(managedAccounts) > 1:
         logger.error(f"Multiple accounts found, must specify account")
         sys.exit(1)
-    elif args.account != '' and args.account in managedAccounts: # specified account
+    elif args.account != 'paper' and args.account in managedAccounts: # specified account
         account = args.account
     else:
         logger.error(f"Account {args.account} not found in managed accounts")
@@ -2548,6 +2831,7 @@ def main():
                   , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * spec_p['milestone_multiplier']
                   , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * spec_p['milestone_multiplier']
                   , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * spec_p['milestone_multiplier']
+                  , use5s=True if args.use5s else False
     )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
@@ -2692,16 +2976,43 @@ def main():
             # agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
             contract_1 = agent.ibcontract
             ib.qualifyContracts(contract_1)
-            agent.bars = ib.reqHistoricalData(
-                contract_1,
-                endDateTime='',
-                durationStr='1 D',
-                barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
-                whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
-                useRTH=False, # start from ~4:00 AM
-                formatDate=1,
-                keepUpToDate=True)
-
+            if agent.use5s:
+                agent.bars5s = ib.reqHistoricalDataExt(
+                    contract_1,
+                    endDateTime='',
+                    durationStr='1 D',
+                    barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
+                    whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
+                    useRTH=False, # start from ~4:00 AM
+                    formatDate=1,
+                    keepUpToDate=True,
+                    _historicalDataEndHook=agent.initial_resample_hook
+                    )
+                # agent.bars = BarDataList()
+                agent.bars.reqId = agent.bars5s.reqId
+                agent.bars.contract = agent.bars5s.contract
+                agent.bars.endDateTime = agent.bars5s.endDateTime
+                agent.bars.durationStr = agent.bars5s.durationStr
+                agent.bars.barSizeSetting = agent.bars5s.barSizeSetting
+                agent.bars.whatToShow = agent.bars5s.whatToShow
+                agent.bars.useRTH = agent.bars5s.useRTH
+                agent.bars.formatDate = agent.bars5s.formatDate
+                agent.bars.keepUpToDate = agent.bars5s.keepUpToDate
+                agent.bars._init_npdata('', '')
+                procname = 'ib.reqHistoricalDataExt'
+            else:
+                agent.bars = ib.reqHistoricalData(
+                    contract_1,
+                    endDateTime='',
+                    durationStr='1 D',
+                    barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
+                    whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
+                    useRTH=False, # start from ~4:00 AM
+                    formatDate=1,
+                    keepUpToDate=True
+                    )
+                procname = 'ib.reqHistoricalData'
+            # agent.bars5m.initialize(agent.bars)
             if len(agent.bars) > 0:
                 if datetime.datetime.now().weekday() >= 5:  # Saturday or Sunday
                     logging.warning(f"{datetime.datetime.now().strftime('%A')} is not trading today")
@@ -2711,21 +3022,31 @@ def main():
                 assert False, "Expect at least one bar"
             agent.barsstartidx = len(agent.bars) - 1
             agent.beginprice = agent.bars[agent.barsstartidx].close
-            logger.info(f"ib.reqHistoricalData: {contract_1}, len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}, bar[-1]={agent.bars[-1]}")
+            logger.info(f"{procname}: len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}, bar[-1]={agent.bars[-1]}")
             # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
-            agent.bars.updateEvent += agent.onBarUpdate
-            global NPMKTOPENIDX
-            if NPMKTOPENIDX < 0:
-                results = np.ravel(np.where(agent.bars.date == NPMKTOPEN))
-                if len(results) > 0:
-                    # FIXME
-                    NPMKTOPENIDX = results[0]
-                    logger.info(f"market open idx={NPMKTOPENIDX} date={agent.bars.date[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
-                else:
-                    NPMKTOPENIDX = -1_000
-                    idx = agent.bars.idx - 3
-                    logger.warning(f"market is not open: {agent.bars.date[0:3]}..{agent.bars.date[idx:]}")
-                    # should we bail?
+            if agent.use5s:
+                logger.info(f'{agent.bars.buffer_size} {agent.bars._npidx} {len(agent.bars.open_prices)}')
+                agent.bars5s.updateEvent += agent.resample_from_5s
+            else:
+                agent.bars.updateEvent += agent.onBarUpdate
+            # agent.bars.updateEvent += agent.bars5m.__call__ # 1m to 5m resampling
+            # agent.bars5m.updateEvent += agent.on5mBarUpdate
+            # agent.bars5m.updateEvent += agent.bars10m.__call__ # 1m to 10m resampling
+            # agent.bars10m.updateEvent += agent.on10mBarUpdate
+            # # agent.bars.updateEvent += agent.bars15m.__call__ # 1m to 15m resampling
+
+            # global NPMKTOPENIDX
+            # if NPMKTOPENIDX < 0:
+            #     results = np.ravel(np.where(agent.bars.npdate_ == NPMKTOPEN))
+            #     if len(results) > 0:
+            #         # FIXME
+            #         NPMKTOPENIDX = results[0]
+            #         # logger.info(f"market open idx={NPMKTOPENIDX} date={agent.bars.npdate_[NPMKTOPENIDX:NPMKTOPENIDX+3]}")
+            #     else:
+            #         NPMKTOPENIDX = -1_000
+            #         idx = agent.bars._npidx - 3
+            #         logger.warning(f"market is not open: {agent.bars.npdate_[0:3]}..{agent.bars.npdate_[idx:]}")
+            #         # should we bail?
 
             status = agent.simpleLongStrategy1Init()
 
@@ -2859,11 +3180,29 @@ def main():
     # df = util.df(bars_3)
     # df.to_csv(f'IWM_{filesuffix}_H.csv')
 
-    if agent.bars:
+    if agent.bars and not agent.use5s:
         logger.info(f"cancelHistoricalData: len(bars)={len(agent.bars)}")
         ib.cancelHistoricalData(agent.bars)
+    elif agent.use5s:
+        logger.info(f"cancelHistoricalData: len(bars5s)={len(agent.bars5s)}, first={agent.bars5s[0] if agent.bars5s else 'N/A'}, last={agent.bars5s[-1] if agent.bars5s else 'N/A'}")
+        logger.info(f"len(bars)={len(agent.bars)}, first={agent.bars[0] if agent.bars else 'N/A'}, last={agent.bars[-1] if agent.bars else 'N/A'}")
+        logger.info(f"len(bars2m)={len(agent.bars2m)}, first={agent.bars2m[0] if agent.bars2m else 'N/A'}, last={agent.bars2m[-1] if agent.bars2m else 'N/A'}")
+        logger.info(f"len(bars5m)={len(agent.bars5m)}, first={agent.bars5m[0] if agent.bars5m else 'N/A'}, last={agent.bars5m[-1] if agent.bars5m else 'N/A'}")
+        logger.info(f"len(bars10m)={len(agent.bars10m)}, first={agent.bars10m[0] if agent.bars10m else 'N/A'}, last={agent.bars10m[-1] if agent.bars10m else 'N/A'}")
+        logger.info(f"len(bars15m)={len(agent.bars15m)}, first={agent.bars15m[0] if agent.bars15m else 'N/A'}, last={agent.bars15m[-1] if agent.bars15m else 'N/A'}")
+        ib.cancelHistoricalData(agent.bars5s)
 
     logger.info("Script has finished.")
+
+class ControlCTrap:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type: type, value: Exception, traceback: object) -> bool:
+        if exc_type is KeyboardInterrupt:
+            logger.info(f"Caught KeyboardInterrupt, exiting...")
+            return True
+        return False
 
 if __name__ == "__main__":
     # prevent system from sleeping
@@ -2908,9 +3247,26 @@ if __name__ == "__main__":
         restore_sleep()
 
 # if __name__ == "__main__":
+#     main()
+#     # with ControlCTrap():
+#     #     main()
+
 """
 open issues:
 - stop loss is susceptible to gap down
 - start getting bars before market open
+- sell limit order not filled on the way down, or due to wider bid/ask (META, AMD)
+- ib.portfolio and ib.position can they be different?
+- trade outside app, especially closing out longs
 
+future work:
+- low of the day + two green bars
+- trade pnl history
+- day cumuloss
+- today's price distribution
+- drawdown distribution given size of rally from recent low to recent high (rally follow by drawdown)
+- distribution of 15 min drawdowns, 30 min drawdowns, 1 hr drawdowns, 1d drawdowns (SPY)
+- statistics: filled - order time; time to run strategy;
+- heartbeat
+- send socket message to this; control-c doesn't work via remote desktop?
 """

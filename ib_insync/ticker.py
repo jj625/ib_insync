@@ -61,7 +61,7 @@ class Ticker:
     prevLast: float = nan
     prevLastSize: float = nan
     volume: float = nan
-    open: float = nan
+    open_: float = nan
     high: float = nan
     low: float = nan
     close: float = nan
@@ -114,6 +114,7 @@ class Ticker:
     regulatoryImbalance: float = nan
     bboExchange: str = ''
     snapshotPermissions: int = 0
+    lastTimestamp: Optional[datetime] = None # tickType 45, Time of the last trade (in UNIX time).
 
     def __post_init__(self):
         self.updateEvent = TickerUpdateEvent('updateEvent')
@@ -156,6 +157,8 @@ class Ticker:
             price = self.last
         return price
 
+    def __repr_minimal__(self):
+        return f'Ticker({self.contract.__repr_minimal__()})'
 
 class TickerUpdateEvent(Event):
     __slots__ = ()
@@ -247,7 +250,7 @@ class Midpoints(Tickfilter):
 @dataclass
 class Bar:
     time: Optional[datetime]
-    open: float = nan
+    open_: float = nan
     high: float = nan
     low: float = nan
     close: float = nan
@@ -284,8 +287,8 @@ class TimeBars(Op):
         if not self.bars:
             return
         bar = self.bars[-1]
-        if isNan(bar.open):
-            bar.open = bar.high = bar.low = price
+        if isNan(bar.open_):
+            bar.open_ = bar.high = bar.low = price
         bar.high = max(bar.high, price)
         bar.low = min(bar.low, price)
         bar.close = price
@@ -297,7 +300,7 @@ class TimeBars(Op):
         if self.bars:
             bar = self.bars[-1]
             if isNan(bar.close) and len(self.bars) > 1:
-                bar.open = bar.high = bar.low = bar.close = \
+                bar.open_ = bar.high = bar.low = bar.close = \
                     self.bars[-2].close
             self.bars.updateEvent.emit(self.bars, True)
             self.emit(bar)

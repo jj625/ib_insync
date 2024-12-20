@@ -1,16 +1,20 @@
 """Object hierarchy."""
 
 from dataclasses import dataclass, field
-from datetime import date as date_, datetime
+from datetime import date as date_, time as time_, datetime, timezone
 from typing import List, NamedTuple, Optional, Union
 
 from eventkit import Event
 
 from .contract import Contract, ScanData, TagValue
-from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER
+from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, NYNPMKTOPEN, NYNPMKTCLOSE, NYMKTOPEN, NYMKTCLOSE
 
 nan = float('nan')
 
+import numpy as np
+import pandas as pd
+import logging
+import math
 
 @dataclass
 class ScannerSubscription:
@@ -94,14 +98,28 @@ class ExecutionFilter:
 @dataclass
 class BarData:
     date: Union[date_, datetime] = EPOCH
-    open: float = 0.0
+    open_: float = 0.0
     high: float = 0.0
     low: float = 0.0
     close: float = 0.0
     volume: float = 0
     average: float = 0.0
     barCount: int = 0
-
+    timestamp: datetime = EPOCH # datetime.now(timezone.utc)
+    @property
+    def open(self) -> float:
+        return self.open_
+    def _repr_(self) -> str:
+        if isinstance(self.date, datetime):
+            d = self.date.astimezone().strftime(f"{r'%Y-%m-%d ' if self.date.date() != datetime.now().date() else ''}" '%H:%M:%S')
+            # if self.date.date() == datetime.datetime.now().date():
+            #     d = self.date.astimezone().strftime('%H:%M:%S')
+            # else:
+            #     d = self.date.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            d = self.date
+        ts = f" ts={self.timestamp.astimezone().strftime(f'%H:%M:%S,%f')[:-3]}" if self.timestamp != EPOCH else ''
+        return f"[{d} o={self.open_:.2f} h={self.high:.2f} l={self.low:.2f} c={self.close:.2f} v={int(self.volume):_} a={self.average:.2f} bc={self.barCount:n}{ts}]"
 
 @dataclass
 class RealTimeBar:
@@ -218,6 +236,7 @@ class AccountValue(NamedTuple):
     value: str
     currency: str
     modelCode: str
+    lastUpdateTime: datetime
 
 
 class TickData(NamedTuple):
@@ -313,6 +332,15 @@ class Position(NamedTuple):
     position: float
     avgCost: float
 
+# @dataclass
+class PositionMulti(NamedTuple):
+    # reqId: int
+    account: str
+    contract: Contract
+    position: float
+    avgCost: float
+    modelCode: str
+    lastUpdateTime: datetime
 
 class Fill(NamedTuple):
     contract: Contract
@@ -404,6 +432,8 @@ class BarDataList(List[BarData]):
 
         * ``updateEvent``
           (bars: :class:`.BarDataList`, hasNewBar: bool)
+        * ``historicalDataEndHook``
+
     """
 
     reqId: int
@@ -417,9 +447,76 @@ class BarDataList(List[BarData]):
     keepUpToDate: bool
     chartOptions: List[TagValue]
 
+    def _repr_(self) -> str:
+        # return f"{self.__class__.__name__}({super().__repr__()})"
+        return '[' + ', '.join([f'{bar._repr_()}' for bar in self]) + ']'
+
+    def _npbufsize(self) -> int:
+        """
+        Calculate the buffer size for numpy store from durationStr and barSizeSetting.
+        """
+
+        if hasattr(self, 'useRTH'):
+            if self.useRTH:
+                rthfactor = 6.5 # 6.5 hours per trading day
+            else:
+                rthfactor = 16 # assume 12 hours per trading day, 4am to 8pm
+        else:
+            rthfactor = 0
+
+        if hasattr(self, 'durationStr'):
+            dur_sec = dur_day = dur_week = dur_month = dur_year = 0
+            if self.durationStr.endswith(' S'):
+                dur_sec = int(60 / int(self.durationStr[:-2])) # number of bars in a minute
+            elif self.durationStr.endswith(' D'):
+                dur_day = int(self.durationStr[:-2]) * 1 # 1 trading day
+            elif self.durationStr.endswith(' W'):
+                dur_week = int(self.durationStr[:-2]) * 5 # equals 5 trading days
+            elif self.durationStr.endswith(' M'):
+                dur_month = int(self.durationStr[:-2]) * 21 # equals 21 trading days
+            elif self.durationStr.endswith(' Y'):
+                dur_year = int(self.durationStr[:-2]) * 252 # equals 252 trading days
+
+        num_bars = 100 # 4680 # default buffer size
+
+        if hasattr(self, 'barSizeSetting'):
+            if self.barSizeSetting.endswith(' min'):
+                barsz_min = int(self.barSizeSetting[:-4])
+                num_bars = math.ceil(dur_day * rthfactor * 60 / barsz_min)
+            elif self.barSizeSetting.endswith(' mins'):
+                barsz_min = int(self.barSizeSetting[:-5])
+                num_bars = math.ceil(dur_day * rthfactor * 60 / barsz_min)
+            elif self.barSizeSetting.endswith(' secs'):
+                barsz_sec = int(self.barSizeSetting[:-5])
+                num_bars = math.ceil(dur_day * rthfactor * 60 * 60 / barsz_sec)
+            elif self.barSizeSetting.endswith(' hour'):
+                barsz_hr = int(self.barSizeSetting[:-5])
+                num_bars = math.ceil(dur_day * rthfactor * barsz_hr)
+            elif self.barSizeSetting.endswith(' hours'):
+                barsz_hr = int(self.barSizeSetting[:-6])
+                num_bars = math.ceil(dur_day * rthfactor * barsz_hr)
+            elif self.barSizeSetting.endswith(' day'):
+                barsz_day = int(self.barSizeSetting[:-4])
+                num_bars = math.ceil(dur_day * rthfactor * barsz_day)
+
+        # eg: 1 day dur, 5 sec barSize/interval, 6.5 hours trading time, RTH -> 6.5 * 60 * 12 = 4680
+        # eg: 1 day dur, 1 min barSize/interval, 6.5 hours trading time, RTH -> 6.5 * 60 = 390
+        self._logger.info(f"_npbufsize: durationStr={self.durationStr} barSizeSetting={self.barSizeSetting} num_bars={num_bars}")
+        return num_bars
+
     def __init__(self, *args):
         super().__init__(*args)
         self.updateEvent = Event('updateEvent')
+        self._logger = logging.getLogger('ib_insync.objects')
+
+        # must be set from reqHistoricalDataExt
+        self._historicalDataEndHook = Event('BarDataList::historicalDataEndHook')
+        # self._historicalDataUpdateHook = Event('BarDataList::historicalDataUpdateHook')
+        # self.historicalDataHook = Event('BarDataList::historicalDataHook')
+        self._npidx = -1
+        self._npidx_rth_start = -1
+        self._npidx_rth_end = -1
+        self.buffer_size = 0
 
     def __eq__(self, other):
         return self is other
@@ -427,6 +524,298 @@ class BarDataList(List[BarData]):
     def __hash__(self):
         return id(self)
 
+    @property
+    def np_data(self):
+        return {
+            'date': self.npdate_[:self._npidx],
+            'open_prices': self.open_prices[:self._npidx],
+            'high_prices': self.high_prices[:self._npidx],
+            'low_prices': self.low_prices[:self._npidx],
+            'close_prices': self.close_prices[:self._npidx],
+            'average': self._average[:self._npidx]
+        }
+
+    @property
+    def npdate(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.npdate_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.npdate_[:self._npidx]
+    @property
+    def npopen(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.open_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.open_prices[:self._npidx]
+
+    @property
+    def nphigh(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.high_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.high_prices[:self._npidx]
+
+    @property
+    def nplow(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.low_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.low_prices[:self._npidx]
+
+    @property
+    def npclose(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.close_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.close_prices[:self._npidx]
+
+    @property
+    def npaverage(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self._average[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self._average[:self._npidx]
+
+    @property
+    def npvolume(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self._volume[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self._volume[:self._npidx]
+
+    @property
+    def npbarCount(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self._barCount[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self._barCount[:self._npidx]
+    
+    @property
+    def log_open(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_open_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_open_prices[:self._npidx]
+    
+    @property
+    def log_high(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_high_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_high_prices[:self._npidx]
+    
+    @property
+    def log_low(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_low_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_low_prices[:self._npidx]
+    
+    @property
+    def log_close(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_close_prices[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_close_prices[:self._npidx]
+    
+    @property
+    def log_volume(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_volume_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_volume_[:self._npidx]
+    
+    @property
+    def log_average(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_average_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_average_[:self._npidx]
+    
+    @property
+    def log_high_low(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_high_low_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_high_low_[:self._npidx]
+    
+    @property
+    def log_close_open(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_close_open_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_close_open_[:self._npidx]
+    
+    @property
+    def log_high_open(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_high_open_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_high_open_[:self._npidx]
+    
+    @property
+    def log_high_close(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_high_close_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_high_close_[:self._npidx]
+    
+    @property
+    def log_low_open(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_low_open_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_low_open_[:self._npidx]
+    
+    @property
+    def log_low_close(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_low_close_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_low_close_[:self._npidx]
+    
+    @property
+    def log_avg_avg(self, onlyRTH=True):
+        if onlyRTH and not self.useRTH:
+            return self.log_avg_avg_[self._npidx_rth_start:min(self._npidx_rth_end, self._npidx)]
+        else:
+            return self.log_avg_avg_[:self._npidx]
+
+    def _init_npdata(self, _start: str, _end: str):
+        if len(self) == 0:
+            self._logger.warning(f"len(self) == 0")
+            # return
+        self.buffer_size = self._npbufsize() # 4680 # 1 day data, 5 sec interval, 6.5 hours trading time, RTH
+        self.npdate_ = np.empty(self.buffer_size, dtype='datetime64[s]')
+        self.open_prices = np.zeros(self.buffer_size)
+        self.high_prices = np.zeros(self.buffer_size)
+        self.low_prices = np.zeros(self.buffer_size)
+        self.close_prices = np.zeros(self.buffer_size)
+        self._volume = np.zeros(self.buffer_size, dtype=int)
+        self._average = np.zeros(self.buffer_size)
+        self._barCount = np.zeros(self.buffer_size, dtype=int)
+
+        self.log_open_prices = np.zeros(self.buffer_size)
+        self.log_high_prices = np.zeros(self.buffer_size)
+        self.log_low_prices = np.zeros(self.buffer_size)
+        self.log_close_prices = np.zeros(self.buffer_size)
+        self.log_volume_ = np.zeros(self.buffer_size)
+        self.log_average_ = np.zeros(self.buffer_size)
+
+        self.log_high_low_ = np.zeros(self.buffer_size)
+        self.log_close_open_ = np.zeros(self.buffer_size)
+        self.log_high_open_ = np.zeros(self.buffer_size)
+        self.log_high_close_ = np.zeros(self.buffer_size)
+        self.log_low_open_ = np.zeros(self.buffer_size)
+        self.log_low_close_ = np.zeros(self.buffer_size)
+        self.log_close_close_ = np.zeros(self.buffer_size)
+        self.log_avg_avg_ = np.zeros(self.buffer_size)
+
+        self._npidx = 0
+
+        if self.useRTH:
+            # buffer is guaranteed to be filled with RTH data
+            self._npidx_rth_start = 0
+            self._npidx_rth_end = self.buffer_size
+        else:
+            # buffer contains more than just RTH data
+            self._npidx_rth_start = -1 # we don't know yet
+            self._npidx_rth_end = self._npidx
+
+        for bar in self:
+            self._add_npdata(bar)
+
+        #     # global NPMKTOPEN, NPMKTCLOSE, MKTOPEN, MKTCLOSE
+        #     # self._logger.debug(f"self.npdate_: {min(self.npdate_)} {max(self.npdate_)}")
+        #     # dt = pd.to_datetime(self.npdate_[-1])
+        #     # if NPMKTOPEN > self.npdate_[-1]:
+        #     #     MKTOPEN = datetime.combine(dt, time_(9, 30)).astimezone()
+        #     #     MKTCLOSE = datetime.combine(dt, time_(4, 0)).astimezone()
+        #     #     NPMKTOPEN = np.datetime64(MKTOPEN, 's')
+        #     #     NPMKTCLOSE = np.datetime64(MKTCLOSE, 's')
+        #     i = np.ravel(np.where(self.npdate_ == NYNPMKTOPEN))
+        #     self._logger.debug(f"_init_npdata: mktopen {NYNPMKTOPEN} @ {i}")
+        #     if len(i) > 0:
+        #         self._npidx_rth_start = i[0]
+        #     else:
+        #         self._npidx_rth_start = -1
+       
+        # i = np.ravel(np.where(self.npdate_ == NYNPMKTCLOSE))
+        # self._logger.debug(f"_init_npdata: mktclose {NYNPMKTCLOSE} @ {i}")
+        # if len(i) > 0:
+        #     self._npidx_rth_end = i[0]
+        # else:
+        #     self._npidx_rth_end = self.buffer_size
+
+
+    def _set_npdata(self, idx: int, bar: BarData):
+        """
+        Set numpy data at [idx] from BarData.
+        """
+        self.npdate_[idx] = bar.date.astimezone().replace(tzinfo=None) # convert to naive datetime
+        self.open_prices[idx] = bar.open_
+        self.high_prices[idx] = bar.high
+        self.low_prices[idx] = bar.low
+        self.close_prices[idx] = bar.close
+        self._volume[idx] = bar.volume
+        self._average[idx] = bar.average
+        self._barCount[idx] = bar.barCount
+
+        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else 0
+        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else 0
+        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else 0
+        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else 0
+        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else 0
+        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else 0
+
+        self.log_high_low_[idx] = np.log(bar.high / bar.low)
+        self.log_close_open_[idx] = np.log(bar.close / bar.open_)
+        self.log_high_open_[idx] = np.log(bar.high / bar.open_)
+        self.log_high_close_[idx] = np.log(bar.high / bar.close)
+        self.log_low_open_[idx] = np.log(bar.low / bar.open_)
+        self.log_low_close_[idx] = np.log(bar.low / bar.close)
+        if idx > 0:
+            self.log_close_close_[idx] = np.log(bar.close / self.close_prices[idx-1])
+            self.log_avg_avg_[idx] = np.log(bar.average / self._average[idx-1])
+        else:
+            self.log_close_close_[idx] = np.log(bar.close / bar.open_)
+            self.log_avg_avg_[idx] = np.log(bar.average / bar.open_)
+        # self.log_prevopen_close[idx] = np.log(bar.open_ / bar.close)
+
+    def _add_npdata(self, newbar: BarData):
+        """
+        to ensure data consistency between the underlying list and numpy arrays
+        wrapper.historicalDataUpdate calls _add_npdata and _set_last_npdata()
+        when adding data to list
+        """
+        if self._npidx >= self.buffer_size:
+            self._logger.error(f"buffer overflow: {self._npidx} >= {self.buffer_size}")
+            self._npidx = 0
+        # idx = self._npidx # % self.buffer_size
+        self._set_npdata(self._npidx, newbar)
+        self._npidx += 1
+
+        # when we add a new bar, we need to update the rth_start and rth_end index
+        if self.useRTH:
+            return # no need to update rth_start and rth_end
+        else:
+            if newbar.date == NYMKTOPEN:
+                self._npidx_rth_start = self._npidx - 1
+            if newbar.date <= NYMKTCLOSE:
+                self._npidx_rth_end = self._npidx - 1
+    
+    def _set_last_npdata(self, bar: BarData):
+        """
+        to ensure data consistency between the underlying list and numpy arrays
+        wrapper.historicalDataUpdate calls _add_npdata and _set_last_npdata()
+        when adding data to list
+        """
+        idx = (self._npidx - 1) # % self.buffer_size
+        bd_tmp = np.datetime64(bar.date.astimezone().replace(tzinfo=None), 's') # convert to naive datetime
+        if self.npdate_[idx] != bd_tmp:
+            self._logger.error(f"date mismatch: {self.npdate_[idx]} != {bd_tmp} ({type(self.npdate_[idx])} {type(bd_tmp)})")
+        # assert self.date[idx] == bar.date #.replace(tzinfo=None)
+        self._set_npdata(idx, bar)
 
 class RealTimeBarList(List[RealTimeBar]):
     """
