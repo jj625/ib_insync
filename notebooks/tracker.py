@@ -36,6 +36,21 @@ NYMKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(
 MKTCLOSE = NYMKTCLOSE
 PDMKTCLOSE = pd.to_datetime(MKTCLOSE)
 NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+
+def set_market_hours(start, end):
+    global NYMKTOPEN, MKTOPEN, PDMKTOPEN, NPMKTOPEN, NYMKTCLOSE, MKTCLOSE, PDMKTCLOSE, NPMKTCLOSE
+
+    NYMKTOPEN = start.astimezone()
+    MKTOPEN = NYMKTOPEN
+    PDMKTOPEN = pd.to_datetime(MKTOPEN)
+    NPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
+
+    NYMKTCLOSE = end.astimezone()
+    MKTCLOSE = NYMKTCLOSE
+    PDMKTCLOSE = pd.to_datetime(MKTCLOSE)
+    NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+    logger.info(f"Market hours set to {MKTOPEN:%H:%M} - {MKTCLOSE:%H:%M}")
+
 import dateutil
 import argparse
 import json
@@ -84,7 +99,7 @@ import ib_insync
 import ib_insync.ib
 ib_insync.ib.install_custom_repr_()
 
-from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, util, PortfolioItem
+from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, Stock, Future, Forex, util, PortfolioItem
 # probe for numpy support
 probe = BarDataList()
 if not hasattr(probe, '_init_npdata'):
@@ -348,7 +363,7 @@ def custom_formatter(value):
         return str(value)
     if isinstance(value, datetime.datetime):
         value_local = value.astimezone()  # Convert to local time
-        if value.date() == datetime.datetime.now().date():
+        if value_local.date() == datetime.datetime.now(local_tz).date():
             return value_local.strftime('%H:%M:%S')
         else:
             return value_local.strftime(r'%Y-%m-%d %H:%M:%S %Z')
@@ -411,9 +426,9 @@ def neg(num: numbers.Real) -> numbers.Real:
 
 def last_business_dt() -> datetime.date:
     """Return the last business date"""
-    today = datetime.datetime.now().date() + datetime.timedelta(days=0)
+    today = datetime.datetime.now(local_tz).date() + datetime.timedelta(days=0)
     # before 9:30am, use previous business day
-    if datetime.datetime.now().time() < datetime.time(16, 0):
+    if datetime.datetime.now(local_tz).time() < datetime.time(16, 0):
         today -= datetime.timedelta(days=1)
     # if today is Saturday or Sunday, use Friday
     while today.weekday() >= 5:  # Saturday or Sunday
@@ -706,6 +721,9 @@ class Agent:
     """class for keeping track of agent's state"""
 
     # all below are NOT instance variables, they are class variables
+    args: argparse.Namespace
+    # errorqueue: deque
+    strategynum: int
     symbol: str
     tradingaccount: str
     # position: ib_insync.objects.Position = None
@@ -713,6 +731,9 @@ class Agent:
     rput: float = 0.0 # if we have position, earning rate = return per unit time (rput)
     volatility_per_min: deque = field(default_factory=deque) # volatility every minute
     volatility_pm_running: deque = field(default_factory=deque) # running per minute volatility since open
+    contractType: str = 'STK'
+    expiry: str = ''
+    exchange: str = ''
     ibcontract: ib_insync.contract.Contract = None
     ibcontractDetails: ib_insync.contract.ContractDetails = None
     prevclose: float = 0.0
@@ -742,6 +763,7 @@ class Agent:
     # source bars
     bars5s: BarDataList = field(default_factory=BarDataList)
     # resampled bars
+    bars10s: BarDataList = field(default_factory=BarDataList)
     bars15s: BarDataList = field(default_factory=BarDataList)
     bars30s: BarDataList = field(default_factory=BarDataList)
     bars1m: BarDataList = field(default_factory=BarDataList)
@@ -761,7 +783,7 @@ class Agent:
     strategy_tasks: set[asyncio.Task] = field(default_factory=set) # keep separate references for strategy tasks
 
     # state variables and methods for simpleLongStrategy1
-    strategy1initstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
+    strategyinitstatus: int = -10 # -1 = failed, 0 = success, -10 = not initialized
     numshares: int = 0
     milestone_multiplier: float = 0.0
     upPctMilestone: List[float] = field(default_factory=list)
@@ -849,10 +871,12 @@ class Agent:
             else:
                 newcopy.date = outBars[-1].date # 
                 update_bar(outBars[-1], newcopy)
-                outBars._set_last_npdata(newcopy)
+                outBars._set_last_npdata(outBars[-1])
 
-        z = inBar
-        b = BarData(z.date, z.open, z.high, z.low, z.close, z.volume, z.average, z.barCount, z.timestamp)
+        b = z = inBar
+        # b = BarData(z.date, z.open, z.high, z.low, z.close, z.volume, z.average, z.barCount, z.timestamp)
+        # if b.volume == 0:
+        #     logger.warning(f"zero volume: {b}")
         atTopMinute = b.date.second % 60 == 0
         hasNewBar10s = b.date.second % 10 == 0
         hasNewBar15s = b.date.second % 15 == 0
@@ -888,7 +912,7 @@ class Agent:
             return
         _ = data.pop('trade_list', None) # no need for this anymore
         logger.info(f"Resuming session {format_dict(data)}")
-        self.session_start = data.get('session_start', []).append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or data['session_start']
+        self.session_start = data.get('session_start', []).append(datetime.datetime.now(local_tz)) or data['session_start']
         self.session_end = data.get('session_end', []) or data['session_end']
         self.buyopen_bar1m_idx = data.get('buyopen_bar1m_idx', []) or data['buyopen_bar1m_idx']
         self.buyopen_bar1m = data.get('buyopen_bar1m', []) or data['buyopen_bar1m'] # the bar1m where buy was recorded, valid across days
@@ -940,13 +964,29 @@ class Agent:
             logger.info(f"no trades done today")
         return # end of resume_session
 
+    def strategyInitPreMarket(self) -> int:
+        match self.strategynum:
+            case 1:
+                return self.simpleLongStrategy1InitPreMarket()
+            case _:
+                logger.error(f"Unknown strategy number {self.strategynum}")
+                return -1
+
+    def strategyInit(self) -> int:
+        match self.strategynum:
+            case 1:
+                return self.simpleLongStrategy1Init()
+            case _:
+                logger.error(f"Unknown strategy number {self.strategynum}")
+                return -1
+
     def simpleLongStrategy1InitPreMarket(self) -> int:
         logger.info(f"Pre-market initialization for {self.symbol}")
         # # get historical bars for the last 6 months
         # contract_ = Stock(self.symbol, 'SMART', 'USD')
         # self.histbars = ib.reqHistoricalData( # this method is blocking
         #     contract_,
-        #     endDateTime=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
+        #     endDateTime=(datetime.datetime.now(local_tz) + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
         #     durationStr='3 M',
         #     barSizeSetting='15 mins',
         #     whatToShow='TRADES',
@@ -956,7 +996,7 @@ class Agent:
         # # and may timeout
         # if self.histbars is None or len(self.histbars) == 0:
         #     logger.error(f"Failed to get historical bars for {self.symbol}")
-        #     # self.strategy1initstatus = -1
+        #     # self.strategyinitstatus = -1
         #     return -1
 
         filename = f'./data/{self.symbol}_1d.csv'
@@ -973,19 +1013,50 @@ class Agent:
         else:
             logger.warning(f"{filename} not found")
 
-        agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
-        ib.qualifyContracts(contract_1)
-        agent.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
+        if self.contractType == 'STK':
+            self.ibcontract = contract_1 = Stock(self.symbol, 'SMART', 'USD')
+        elif self.contractType == 'FUT':
+            if not self.expiry:
+                logger.error(f"Future contract must specify expiry date")
+                return -1
+            if not self.exchange:
+                logger.error(f"Future contract must specify exchange")
+                return -1
+            self.ibcontract = contract_1 = Future(self.symbol, self.expiry, self.exchange)
+        elif self.contractType == 'CASH':
+            self.ibcontract = contract_1 = Forex(self.symbol)
+        else:
+            logger.error(f"Unknown contract type {self.contractType}")
+            return -1
+        qcon = ib.qualifyContracts(contract_1)
+        if len(qcon) != 1:
+            logger.error(f"Contract must be unique, expected 1 contract, got {qcon}")
+            return -1
+        else:
+            logger.info(f"Contract: {qcon[0]}")
+            self.futAvgCostMult = 1.0
+            if self.contractType == 'FUT':
+                mult_ = float(qcon[0].multiplier)
+                # future contract avgcost is inflated by the multiplier
+                self.futAvgCostMult = 1./mult_
+            
+        self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
         if len(contractDetails) != 1:
             logger.error(f"Contract must be unique, expected 1 contractDetails, got {len(contractDetails)}")
             logger.error(f"{contractDetails}")
             return -1
-        cdl = contractDetails[0].liquidSessions()[0]
-        logger.info(f"trading hours: {cdl.start} to {cdl.end}")
+        cdliquid = contractDetails[0].liquidSessions()[0]
+        logger.info(f"liquid trading hours: {cdliquid.start.astimezone()} to {cdliquid.end.astimezone()}")
+        if cdliquid.start > MKTOPEN or cdliquid.end > MKTCLOSE:
+            set_market_hours(cdliquid.start, cdliquid.end)
+
+        cdl_full = contractDetails[0].tradingSessions()[0]
+        logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
 
         # request market data
         ib.reqMarketDataType(1)
         t = ib.reqMktData(contract_1, '', False, False, None)
+        ib.sleep(0.5)
         if len(ib.tickers()) != 1:
             logger.error(f"{ib.tickers()}: expected 1 ticker")
             return -1
@@ -994,11 +1065,11 @@ class Agent:
             if hasattr(t, 'time') and t.time is not None:
                 break
             logger.info(f"waiting for ticker to be fully populated")
-            ib.sleep(1)
+            ib.sleep(0.5)
         else: # no break
             logger.error(f"ticker is not populating")
             return -1
-        tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
+        tdiff = (t.time - datetime.datetime.now(local_tz)).total_seconds()
         if abs(tdiff) > 2.0:
             # report clock skew
             logger.warning(f"Tick time is {tdiff:.2f} seconds" + (" ahead" if tdiff > 0 else " behind") + " of current time")
@@ -1015,7 +1086,7 @@ class Agent:
             return -1
         elif t.close != prevclose_fromfile:
             logger.warning(f"ticker.close={t.close} != dailyclose.close={self.prevclose}")
-            if datetime.datetime.now(datetime.timezone.utc).weekday() >= 5:  # Saturday or Sunday
+            if datetime.datetime.now(local_tz).weekday() >= 5:  # Saturday or Sunday
                 logger.warning(f"Weekend using dailyclose.close as ticker.close is not reliable")
                 self.prevclose = prevclose_fromfile
             else: # weekday
@@ -1047,9 +1118,15 @@ class Agent:
         if self.stkpos and self.stkpos.position != 0:
             if self.high_since_buy_bar1m == []:
                 if self.bars:
-                    # self.high_since_buy_bar1m.append(self.bars[-1])
-                    self.high_since_buy_bar1m.append(max(self.bars, key=lambda bar: bar.average))
-                    logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
+                    if self.lastBuyTime and self.bars[0].date <= self.lastBuyTime and self.lastBuyTime <= self.bars[-1].date:
+                        # in self.bars, filter for the bars after lastBuyTime, then find the max
+                        barsSinceBuy = [b for b in self.bars if b.date >= self.lastBuyTime]
+                        if barsSinceBuy:
+                            self.high_since_buy_bar1m.append(max(barsSinceBuy, key=lambda bar: bar.average))
+                            logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
+                    else:
+                        # lastBuyTime is not in self.bars, so we need to get the max from the entire self.bars
+                        self.high_since_buy_bar1m.append(max(self.bars, key=lambda bar: bar.average))
                 else:
                     logger.warning(f"has position, bars is not set and high_since_buy_bar1m is empty")
         # stockpos = [p for p in ib.positions() if p.contract.symbol in [self.symbol] and p.contract.secType == 'STK']
@@ -1061,7 +1138,7 @@ class Agent:
         # contract_ = Stock(self.symbol, 'SMART', 'USD')
         # self.histbars = ib.reqHistoricalData( # this method is blocking
         #     contract_,
-        #     endDateTime=(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
+        #     endDateTime=(datetime.datetime.now(local_tz) + datetime.timedelta(days=-1)).strftime('%Y%m%d 16:20:00 US/Eastern'),
         #     durationStr='6 M',
         #     barSizeSetting='15 mins',
         #     whatToShow='TRADES',
@@ -1070,14 +1147,14 @@ class Agent:
         # # and may timeout
         # if self.histbars is None or len(self.histbars) == 0:
         #     logger.error(f"Failed to get historical bars for {self.symbol}")
-        #     self.strategy1initstatus = -1
+        #     self.strategyinitstatus = -1
         #     return -1
         # self.prevclose = self.histbars[-1].close
         # # self.recenthigh = (-1, self.histbars[-1]) # initialize to last bar data from prev day
         # # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
 
         # logger.info(f"SimpleLongStrategy1Init: histbars len={len(self.histbars)}")
-        self.strategy1initstatus = 0
+        self.strategyinitstatus = 0
         return 0
 
     def __str__(self):
@@ -1113,7 +1190,7 @@ class Agent:
         pkldump = {
             'symbol': self.symbol,
             'session_start': self.session_start,
-            'session_end': self.session_end, # .append(datetime.datetime.now(datetime.timezone.utc).astimezone()) or self.session_end,
+            'session_end': self.session_end, # .append(datetime.datetime.now(local_tz)) or self.session_end,
             'buyopen_bar1m_idx': self.buyopen_bar1m_idx, # current day only, not valid the next day
             'buyopen_bar1m': self.buyopen_bar1m, # the bar1m where buy was recorded, valid across days
             'sellclose_bar1m_idx': self.sellclose_bar1m_idx, # current day only, not valid the next day
@@ -1400,15 +1477,17 @@ class Agent:
             if self.high_since_buy_bar1m[-1].average <= currentBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
                 prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
-                self.high_since_buy_bar1m[-1] = currentBar
+                # self.high_since_buy_bar1m[-1] = currentBar
+                self.high_since_buy_bar1m.append(copy.copy(currentBar))
                 needCheckpoint = True
-                logger.info(f"high_since_buy_bar1m from {prev} to {currentBar}")
+                logger.info(f"high_since_buy_bar1m from {prev} to {self.high_since_buy_bar1m[-1]}")
             if self.high_since_buy_bar1m[-1].average <= currentFullBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
                 prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
-                self.high_since_buy_bar1m[-1] = currentFullBar
+                # self.high_since_buy_bar1m[-1] = currentFullBar
+                self.high_since_buy_bar1m.append(copy.copy(currentFullBar))
                 needCheckpoint = True
-                logger.info(f"high_since_buy_bar1m from {prev} to {currentFullBar}")
+                logger.info(f"high_since_buy_bar1m from {prev} to {self.high_since_buy_bar1m[-1]}")
         # we initialize it when we buy or when session starts and have position
         # else:
         #     self.high_since_buy_bar1m.append(currentBar)
@@ -1484,20 +1563,26 @@ class Agent:
         
         # schedule strategy execution
         if self.strategy_tasks == set(): # if empty set, no tasks running
-            # check if strategy initialization is complete
-            if self.strategy1initstatus == -10:
-                logger.info(f"waiting for strategy initialization to complete")
-                return
-            elif self.strategy1initstatus == -1:
-                logger.error(f"Failed to initialize strategy, exiting...")
-                self.set_state(99) # bail out of main loop               
-                return
-            elif datetime.datetime.now(datetime.timezone.utc) > MKTCLOSE + datetime.timedelta(seconds=15):
-                logger.info(f"Market closed, exiting...")
-                self.set_state(99) # bail out of main loop
-            assert self.strategy1initstatus == 0, "Strategy initialization should return success"
-            logger.info(f"scheduling strategy execution")
-            task = asyncio.create_task(self.simpleLongStrategy1())
+            match self.strategynum:
+                case 1:
+                    # check if strategy initialization is complete
+                    if self.strategyinitstatus == -10:
+                        logger.info(f"waiting for strategy initialization to complete")
+                        return
+                    elif self.strategyinitstatus == -1:
+                        logger.error(f"Failed to initialize strategy, exiting...")
+                        self.set_state(99) # bail out of main loop               
+                        return
+                    elif datetime.datetime.now(local_tz) > MKTCLOSE + datetime.timedelta(seconds=60):
+                        logger.info(f"Market closed, exiting...")
+                        self.set_state(99) # bail out of main loop
+                    assert self.strategyinitstatus == 0, "Strategy initialization should return success"
+                    logger.info(f"scheduling strategy execution")
+                    task = asyncio.create_task(self.simpleLongStrategy1())
+                case 2:
+                    pass
+                case 3:
+                    pass
             self.strategy_tasks.add(task)
             task.add_done_callback(self.strategy_tasks.discard)
             await task
@@ -1532,7 +1617,8 @@ class Agent:
         """
 
         def lastPctReturn():
-            return (lastPrice_ / self.stkpos.avgCost) - 1.0 # life-to-date return
+            avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+            return (lastPrice_ / avgCost_) - 1.0 # life-to-date return
 
         def two_bars_green_with_one_close_near_high():
             """Check if the last two bars are green and at least one of them close near the high"""
@@ -1714,16 +1800,16 @@ class Agent:
             pbcnh = pbcnh_real >= pbcnh_threshold # previous bar close near high
             pbg = prevBar.close > prevBar.open_ # previous bar green
             cbah = currentBar.average > prevBar.average # current bar average higher (than previous bar average)
-            at30s = datetime.datetime.now(datetime.timezone.utc).second >= 30 # at 30 seconds (or later)
+            at30s = datetime.datetime.now(local_tz).second >= 30 # at 30 seconds (or later)
             dl0m = dl1m = dl2m = dl3m = 0.0
             dl0mb = dl1mb = dl2mb = dl3mb = False
-            if agent.dayhilopct:
-                dl_arr = extract_field_as_array(slice_deque(agent.dayhilopct, -4, -1), 'low')
+            if self.dayhilopct:
+                dl_arr = extract_field_as_array(slice_deque(self.dayhilopct, -4, -1), 'low')
                 dlmb_arr = dl_arr <= 0.05
-                # dl0m = agent.dayhilopct[-1][2] # day low pct below 5%, current bar
-                # dl1m = agent.dayhilopct[-2][2] # day low pct below 5%, 1 bar ago
-                # dl2m = agent.dayhilopct[-3][2] # 2 bars ago
-                # dl3m = agent.dayhilopct[-4][2] # 3 bars ago
+                # dl0m = self.dayhilopct[-1][2] # day low pct below 5%, current bar
+                # dl1m = self.dayhilopct[-2][2] # day low pct below 5%, 1 bar ago
+                # dl2m = self.dayhilopct[-3][2] # 2 bars ago
+                # dl3m = self.dayhilopct[-4][2] # 3 bars ago
                 # dl0mb = dl0m <= 0.05
                 # dl1mb = dl1m <= 0.05
                 # dl2mb = dl2m <= 0.05
@@ -1734,7 +1820,7 @@ class Agent:
                     ft1 = nbr4 and pbonl and pbg and cbah and at30s
                     logger.info(f"ft1: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
                     ft2 = False
-                    if agent.dayhilopct:
+                    if self.dayhilopct:
                         # ft2 = (dl0mb or dl1mb or dl2mb or dl3mb) and pbg and cbah
                         ft2 = dlmb_arr.any() and pbg and cbah
                     # logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
@@ -1750,7 +1836,7 @@ class Agent:
                             t = ib.tickers()[0]
                             mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
                             mktPrice = round(t.marketPrice() / mintick) * mintick
-                            self.order = LimitOrder('BUY', agent.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
+                            self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
                             self.order.account = self.tradingaccount
                         else:
                             logger.info(f"blw_lsp: {blw_lsp}, ft1: {ft1}, ft2: {ft2}, gf1: {gf1}, no action")
@@ -1760,7 +1846,7 @@ class Agent:
                         return
                 elif not isFollowThrough and gf1: # original condition, AND gf1 (19-Dec-2024)
                     # ok using market order
-                    self.order = MarketOrder('BUY', agent.numshares)
+                    self.order = MarketOrder('BUY', self.numshares)
                     self.order.account = self.tradingaccount
                 else:
                     logger.info(f"orig_cond: {orig_cond}, isFollowThrough: {isFollowThrough}, gf1: {gf1}, no action")
@@ -1771,9 +1857,10 @@ class Agent:
                 # logger.info(f"trailing 5m hml {last_5m_hml_} ({np.array2string(last_5m_hml_ / self.lastPrice, formatter=np_pct)})")
                 # check if these two are the same
 
-                # self.order = MarketOrder('BUY', agent.numshares) # see elaboration above
-                contract_ = Stock(self.symbol, 'SMART', 'USD')
-                logger.info(f"Buying shares of {contract_} as {self.order}")
+                # self.order = MarketOrder('BUY', self.numshares) # see elaboration above
+                # contract_ = Stock(self.symbol, 'SMART', 'USD')
+                contract_ = self.ibcontract
+                logger.info(f"Buying {contract_} as {self.order}")
                 # before we place the order, make sure no outstanding trades
                 if self.trade and self.trade.orderStatus.status == 'Filled':
                     logger.info(f"clearing old trade {self.trade.log}")
@@ -1786,9 +1873,9 @@ class Agent:
                         if self.order.action == 'BUY':
                             self.lastBuyTrade = self.trade
                         logger.info(f"Trade placed: {self.trade}")
-                        self.buyopen_bar1m_idx.append(len(agent.bars) - 1) # remember the bar index when we placed the trade
-                        self.buyopen_bar1m.append(agent.bars[-1]) # remember the bar when we placed the trade
-                        self.high_since_buy_bar1m.append(agent.bars[-1]) # initialize high since buy
+                        self.buyopen_bar1m_idx.append(len(self.bars) - 1) # remember the bar index when we placed the trade
+                        self.buyopen_bar1m.append(copy.copy(self.bars[-1])) # remember the bar when we placed the trade
+                        self.high_since_buy_bar1m.append(copy.copy(self.bars[-1])) # initialize high since buy
                         self.checkpoint('buyopen')
                         loop = asyncio.get_running_loop()
                         # https://github.com/python/cpython/issues/104091
@@ -1824,7 +1911,7 @@ class Agent:
         lastPrice_ = get_market_price()
         t = ib.tickers()[0]
         chg = lastPrice_/t.close - 1.0
-        tdiff = (t.time - datetime.datetime.now(tz=datetime.timezone.utc)).total_seconds()
+        tdiff = (t.time - datetime.datetime.now(local_tz)).total_seconds()
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time is {tdiff:.2f} seconds" + (f" ahead" if tdiff > 0 else " behind") + f" current time")
         basprd = t.ask - t.bid
@@ -1956,8 +2043,9 @@ class Agent:
                     logger.error(logmsg + f", resetting trade to None")
                     return # proceed or not?
         elif self.get_state() == 99:
-            logger.warning(f"Exiting strategy...")
-            return
+            pass
+            # logger.warning(f"Exiting strategy...")
+            # return # we'll exit at the end of the function
         
         # if we have no position, just return
         if (self.stkpos is None) or (self.stkpos.position == 0):
@@ -1967,7 +2055,7 @@ class Agent:
         # update milestone index
         newIdx_ = 0
         # lastPrice_ = get_market_price()
-        avgCost_ = self.stkpos.avgCost
+        avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
         while newIdx_ < len(self.upPctMilestone) and lastPrice_ > avgCost_ * (1 + self.upPctMilestone[newIdx_]):
             newIdx_ += 1
         assert lastPctReturn() <= self.upPctMilestone[newIdx_], "last price should be at or below current milestone"
@@ -1990,7 +2078,7 @@ class Agent:
         rput = None
         if self.lastBuyTrade: # if we have a last buy trade
             nrpm = 60 # number of minutes per return
-            T = (datetime.datetime.now(datetime.timezone.utc).astimezone() - max_exec_time(self.lastBuyTrade)).total_seconds() / 60.0 / nrpm # in minutes
+            T = (datetime.datetime.now(local_tz) - max_exec_time(self.lastBuyTrade)).total_seconds() / 60.0 / nrpm # in minutes
             rput = lastPctReturn() / T # return per unit time
             logger.info(f"T={T:.1f} rput={rput:.3%}/{nrpm:n}min")
         logger.info(f"{logmsg}={self.idxMilestone} ({self.upPctMilestone[self.idxMilestone]:.2%}) last {lastPrice_:.2f}, return {lastPctReturn():.2%}{f' ({rput:.3%}/5min)'.format(rput=rput) if rput else ''}, stoploss {stoplossPrice_:.2f} ({stoplossPrice_/lastPrice_-1:.2%})")
@@ -2058,6 +2146,10 @@ class Agent:
         # are we plateauing or after a peak/inflexion point?
         pass # TODO
         
+        if self.get_state() == 99:
+            logger.warning(f"Exiting strategy...")
+            return
+
         # crossed below milestone, we should liquidate
         if cond1: 
             logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (ltd return = {lastPctReturn():.2%})")
@@ -2079,8 +2171,9 @@ class Agent:
             bid_price = round(bid_price / mintick) * mintick
             self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * self.milestone_multiplier * bid_price, 2))
             self.order.account = self.tradingaccount
-            contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
-            logger.warning(f"Selling shares of {contract_} as {self.order}")
+            # contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
+            contract_ = self.ibcontract
+            logger.warning(f"Selling {contract_} as {self.order}")
             # before we place the order, make sure no outstanding trades
             if self.trade is None:
                 if self.liveTrading:
@@ -2096,7 +2189,7 @@ class Agent:
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(
                         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
-                            , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
+                            , text=f"Selling {contract_} as {self.order} {self.trade.log}"))
                     background_tasks.add(task) # keep a reference to the task
                     task.add_done_callback(background_tasks.discard)
                 else:
@@ -2140,9 +2233,10 @@ class Agent:
         if lastPrice <= 0:
             logger.error(f"lastPrice is zero or negative: {lastPrice}, can't proceed")
             return
-        maxlossPct_ = maxloss_ / self.stkpos.avgCost / self.stkpos.position
-        currentPnl = (lastPrice - self.stkpos.avgCost) * self.stkpos.position
-        currentPnlPct = lastPrice / self.stkpos.avgCost - 1.
+        avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+        maxlossPct_ = maxloss_ / avgCost_ / self.stkpos.position
+        currentPnl = (lastPrice - avgCost_) * self.stkpos.position
+        currentPnlPct = lastPrice / avgCost_ - 1.
         logging.info(f"last {lastPrice}, pnl: {currentPnl:.2f} ({currentPnlPct:.2%}), max loss limit: {maxloss_:.2f} ({maxlossPct_:.2%})")
         if currentPnl < maxloss_:
             logger.warning(f"Current loss: {currentPnl:.2f}, max loss limit: {maxloss_:.2f}")
@@ -2156,10 +2250,11 @@ class Agent:
                 bid_price = round(bid_price / mintick) * mintick
                 self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * self.milestone_multiplier * bid_price, 2))
                 self.order.account = self.tradingaccount
-                contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
-                logger.warning(f"Selling shares of {contract_} as {self.order} ...")
+                # contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
+                contract_ = self.ibcontract
+                logger.warning(f"Selling {contract_} as {self.order} ...")
             if self.stkpos.position < 0 and self.trade is None:
-                logger.warning(f"Buying {-self.stkpos.position} shares of {self.symbol}...")
+                logger.warning(f"Buying {-self.stkpos.position} {self.symbol}...")
                 # ib.placeOrder(self.stkpos.contract, MarketOrder('BUY', -self.stkpos.position))
 
             # before we place the order, make sure no outstanding trades
@@ -2178,7 +2273,7 @@ class Agent:
                     logger.debug(get_asyncio_running_loop('get_event_loop()')) # expect 'no running event loop'
                     future = asyncio.ensure_future(
                         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID
-                            , text=f"Selling shares of {contract_} as {self.order} {self.trade.log}"))
+                            , text=f"Selling {contract_} as {self.order} {self.trade.log}"))
                     loop.run_until_complete(future)
                     logger.debug(get_asyncio_running_loop('run_until_complete()')) # expect 'no running event loop'
                 else:
@@ -2272,7 +2367,8 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
     if agent is None:
         logger.error(f"agent not initialized")
         return
-    if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK')):
+    # if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK')):
+    if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == agent.contractType)):
         if newpos.contract.secType == 'STK':
             logger.debug(f"skipping {newpos.contract.symbol}")
         else:
@@ -2293,7 +2389,7 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
     logger.info(logmsg)
     # traceback.print_stack()
     # only care about specific stock positions for now
-    if (newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK'):
+    if (newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == agent.contractType):
         # sanity check
         if newpos.position != 0 and newpos.avgCost == 0.0:
             p = [p for p in ib.positions() if p.contract.symbol == agent.symbol]
@@ -2304,7 +2400,7 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
         # agent.state = 1
         prevstkpos = agent.stkpos
         agent.stkpos = newpos
-        logger.info(f"updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos} (id={id(prevstkpos)})")
+        logger.info(f"updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos}" + (f" (id={id(prevstkpos)})" if prevstkpos else ""))
         # should we change state?
         # let's just warn about possible state change for now
         if (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position != 0 and agent.state == 0:
@@ -2314,6 +2410,9 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
             # print stack trace
         elif (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position != 0 and agent.state == 1:
             # nothing's wrong or inconsistent here
+            pass
+        elif (prevstkpos is None or (prevstkpos.position == 0)) and newpos.position == 0 and agent.state == 0:
+            # also nothing's wrong or inconsistent here
             pass
         elif (prevstkpos is not None and (prevstkpos.position != 0)) and newpos.position > prevstkpos.position and agent.state == 1:
             # also nothing's wrong or inconsistent here
@@ -2712,6 +2811,10 @@ def main():
     argparser.add_argument('--live_trading', action='store_true', help='Live trading')
     argparser.add_argument('--account', type=str, default='paper', help='Account number to use')
     argparser.add_argument('--use5s', action='store_true', help='Use 5s bars')
+    argparser.add_argument('--contract_type', type=str, default='STK', help='Contract type (FUT, STK, CASH)')
+    argparser.add_argument('--expiry', type=str, help='Contract expiry YYYYMM (for futures)')
+    argparser.add_argument('--exchange', type=str, help='Contract exchange')
+    argparser.add_argument('--strategy', type=int, default=1, help='Strategy number')
     args = argparser.parse_args()
 
     # must come before any logging calls
@@ -2724,13 +2827,13 @@ def main():
     # console_handler = logging.StreamHandler()
     # console_handler.setLevel(args.loglevel)
     # console_handler.setFormatter(formatter)
-    if args.account == 'default':
+    if args.account == 'paper':
         account_txt = ''
     else:
         account_txt = f"_{args.account}"
 
-    logfilesuffix = f'{datetime.datetime.now(datetime.timezone.utc):%y%m%d_%H%M}_{computername}{account_txt}_{program_name}'
-    datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now(datetime.timezone.utc):%y%m%d}_{computername}{account_txt}'
+    logfilesuffix = f'{datetime.datetime.now(local_tz):%y%m%d_%H%M}_{computername}{account_txt}_{program_name}'
+    datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now(local_tz):%y%m%d}_{computername}{account_txt}'
     logfilename = os.path.join(scriptdir, 'logs', f'{args.symbol}_{logfilesuffix}.log')
     file_handler = logging.FileHandler(logfilename)
     file_handler.setLevel(args.loglevel)
@@ -2751,6 +2854,7 @@ def main():
     logger.addHandler(file_handler)
 
     logging.getLogger('ib_insync').setLevel(logging.WARN)
+    logging.getLogger('ib_insync.objects').setLevel(logging.INFO)
 
     # logger.addFilter(NoParsingFilter())
 
@@ -2764,6 +2868,18 @@ def main():
 
     logger.info(f"args: {args}")
 
+    # args check
+    if args.contract_type == 'FUT':
+        all_good = True
+        if not args.expiry:
+            logger.error(f"Future contract must specify '--expiry'")
+            all_good = False
+        if not args.exchange:
+            logger.error(f"Future contract must specify '--exchange'")
+            all_good = False
+        if not all_good:
+            return -1
+ 
     spec = load_spec_file()
 
     # util.logToConsole(logging.DEBUG) # show network traffic
@@ -2777,13 +2893,32 @@ def main():
         logger.error(f"Symbol {args.symbol} not found in spec file, must provide numshares and maxloss")
         sys.exit(1)
     
-    if args.account != 'default' and args.account in spec and args.symbol in spec[args.account]:
-        spec_a = spec[args.account][args.symbol]
+    if args.account != 'paper' and args.account in spec and args.symbol in spec[args.account]:
+        # account, symbol are in spec file
+        spec_a = spec[args.account][args.symbol] # shortcut to account.symbol.*
     else:
         spec_a = {}
-    spec_p = spec['root'][args.symbol]
-    spec_d = spec['root']['default']
-    clientid = args.clientid if args.clientid else spec_p['clientid']
+    expiry = ''
+    exchange = 'SMART'
+    if args.symbol in spec['root']:
+        spec_p = spec['root'][args.symbol] # shortcut to root.symbol.*
+        # get the contract type
+        contract_type = spec_p.get('contract_type', '')
+        if contract_type in {'FUT'}:
+            expiry = spec_p.get('expiry', '')
+            exchange = spec_p.get('exchange', '')
+            if not expiry or not exchange:
+                logger.error(f"Contract type {contract_type} must specify expiry and exchange")
+                sys.exit(1)
+        elif contract_type in {'STK'}:
+            pass
+        else:
+            logger.error(f"Contract type {contract_type} not valid")
+            sys.exit(1)
+    else:
+        spec_p = {}
+    spec_d = spec['root']['default'] # shortcut to root.default.*
+    # clientid = args.clientid if args.clientid else spec_p['clientid']
     if args.clientid:
         clientid = args.clientid
     elif 'clientid' in spec_a:
@@ -2793,8 +2928,9 @@ def main():
     elif 'clientid' in spec_d:
         clientid = spec_d['clientid']
     else:
-        logger.error(f"TWS Client ID not found in spec file nor in command line")
-        sys.exit(1)
+        clientid = np.random.randint(5000, 50000)
+        # logger.error(f"TWS Client ID not found in spec file nor in command line")
+        # sys.exit(1)
     logger.info(f"Using TWS Client ID: {clientid}")
 
     h5file = os.path.join(scriptdir, 'data', f'tracker_{datafilesuffixdt}.h5')
@@ -2856,22 +2992,26 @@ def main():
     logger.info(f"Portfolio: {sp_}")
 
     # find stock position of a given symbol in the portfolio
-    sp_ = [p for p in ib.positions(account) if p.contract.symbol in [args.symbol] and p.contract.secType == 'STK']
+    sp_ = [p for p in ib.positions(account) if p.contract.symbol in [args.symbol] and p.contract.secType == contract_type]
     # assert len(sp_) == 1
     # if len(sp_) == 0:
     #     logger.warning(f"Stock position not found for {args.symbol}")
 
     global agent
+    milemult = spec_p.get('milestone_multiplier', 1)
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
+                  , contractType=contract_type, expiry=expiry, exchange=exchange
                   , tradingaccount=account
                   , maxloss=args.maxloss if args.maxloss else maxloss_a if maxloss_a != 0.0 else spec_p['maxloss']
                   , numshares=args.numshares if args.numshares else numshares_a if numshares_a !=0 else spec_p['numshares']
-                  , upPctMilestone=np.asarray(spec['root'][speckey]['upPctMilestone']) * spec_p['milestone_multiplier']
-                  , dnPctMilestone=np.asarray(spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])) * spec_p['milestone_multiplier']
-                  , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * spec_p['milestone_multiplier']
-                  , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * spec_p['milestone_multiplier']
-                  , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * spec_p['milestone_multiplier']
+                  , upPctMilestone=np.asarray(spec['root'][speckey]['upPctMilestone']) * milemult
+                  , dnPctMilestone=np.asarray(spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])) * milemult
+                  , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * milemult
+                  , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * milemult
+                  , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * milemult
                   , use5s=True if args.use5s else False
+                  , strategynum=args.strategy
+                  , args=args
     )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
@@ -2889,7 +3029,7 @@ def main():
         fpkl = open(pklfile, 'wb') # write binary
         pklinit = {
             'symbol': 'init',
-            'session_start': [datetime.datetime.now(datetime.timezone.utc).astimezone()],
+            'session_start': [datetime.datetime.now(local_tz)],
             'session_end': [],
             'buyopen_bar1m_idx': [],
             'sellclose_bar1m_idx': [],
@@ -2911,7 +3051,7 @@ def main():
             logger.error(f"Previous session symbol {data['symbol']} doesn't match {args.symbol}, resetting")
             # continue as normal
         else:
-            data['session_start'].append(datetime.datetime.now(datetime.timezone.utc).astimezone())
+            data['session_start'].append(datetime.datetime.now(local_tz))
             pass # all good
             # logger.info(f"Previous session data: {data}")
     if data:
@@ -2940,21 +3080,9 @@ def main():
     ib.positionEvent += onPositionUpdate
     # ib.reqPositions()
 
-    # contract_1 = Stock('NVDA', 'SMART', 'USD')
-    # bars_1 = ib.reqHistoricalData(
-    #     contract_1,
-    #     endDateTime='',
-    #     durationStr='1 D', # 900 S
-    #     barSizeSetting='5 secs',
-    #     whatToShow='TRADES',
-    #     useRTH=True,
-    #     formatDate=1,
-    #     keepUpToDate=True)
-    # # bars_1.updateEvent += onBarUpdate
-
-    dtnow = datetime.datetime.now(datetime.timezone.utc)
+    dtnow = datetime.datetime.now(local_tz)
     if args.run_until:
-        untilTime = datetime.datetime.combine(dtnow, datetime.datetime.strptime(args.run_until, '%H:%M').time()).astimezone()
+        untilTime = datetime.datetime.combine(dtnow, datetime.datetime.strptime(args.run_until, '%H:%M').time())
     else:           
         if dtnow.weekday() >= 5:  # Saturday or Sunday
             untilTime = dtnow + datetime.timedelta(minutes=1) # run for 10 minutes
@@ -2970,34 +3098,36 @@ def main():
     doOnce = True
 
     # run initialization before market open
-    status = agent.simpleLongStrategy1InitPreMarket() # could take 60 seconds to timeout/complete
+    status = agent.strategyInitPreMarket()
+    # status = agent.simpleLongStrategy1InitPreMarket() # could take 60 seconds to timeout/complete
     if status < 0:
         logger.error(f"Pre-Initialization failed: {status}")
         sys.exit(1)
     else:
         logger.info(f"Pre-Initialization successful")
-    cdl: ib_insync.contract.ContractDetails = agent.ibcontractDetails[0].liquidSessions()[0]
+    cdliquid: ib_insync.contract.ContractDetails = agent.ibcontractDetails[0].liquidSessions()[0]
+    cdl_full: ib_insync.contract.ContractDetails = agent.ibcontractDetails[0].tradingSessions()[0]
 
     if dtnow.weekday() >= 5:  # Saturday or Sunday
         pass
     elif not args.run_until:
         # wait until market open
         # waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
-        waitUntil = cdl.start - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
-        if datetime.datetime.now(datetime.timezone.utc) < waitUntil:
+        waitUntil = cdliquid.start - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
+        if datetime.datetime.now(local_tz) < waitUntil:
             logger.info(f"Waiting until {waitUntil}")
             util.waitUntil(waitUntil)
 
         waitUntil2 = dateutil.parser.parse('17:00:00').replace(tzinfo=local_tz) - datetime.timedelta(minutes=1)
         #if dtnow < waitUntil2 and dateutil.parser.parse('16:16:00') < dtnow:
-        if dateutil.parser.parse('16:58:00').replace(tzinfo=local_tz) < datetime.datetime.now(datetime.timezone.utc) < waitUntil2:
+        if dateutil.parser.parse('16:58:00').replace(tzinfo=local_tz) < datetime.datetime.now(local_tz) < waitUntil2:
             logger.info(f"Waiting until {waitUntil2}")
             util.waitUntil(waitUntil2)
 
     if not args.run_until:   
-        untilTime = cdl.end + datetime.timedelta(minutes=1) # end of market day
-    logger.info(f"Running until {untilTime:%H:%M:%S}")
-    while datetime.datetime.now(datetime.timezone.utc) < untilTime and agent.get_state() != 99:
+        untilTime = cdliquid.end + datetime.timedelta(minutes=1) # end of market day
+    logger.info(f"Running until {untilTime.astimezone():%H:%M:%S}")
+    while datetime.datetime.now(local_tz) < untilTime and agent.get_state() != 99:
         logger.debug(get_asyncio_running_loop('main loop: ')) # expect 'no running event loop'
         # get market data for all positions
         if doOnce:
@@ -3021,9 +3151,8 @@ def main():
                 logger.info(f"ib.reqAllOpenOrders: no outstanding orders")
 
             # request live market data
-            # agent.ibcontract = contract_1 = Stock(agent.symbol, 'SMART', 'USD')
             contract_1 = agent.ibcontract
-            ib.qualifyContracts(contract_1)
+            # ib.qualifyContracts(contract_1) # already qualified in premkt init
             if agent.use5s:
                 def initialize_bars(bars, barSizeSetting):
                     # bars.reqId = agent.bars5s.reqId
@@ -3075,11 +3204,13 @@ def main():
                 procname = 'ib.reqHistoricalData'
             # agent.bars5m.initialize(agent.bars)
             if len(agent.bars) > 0:
-                dtnow = datetime.datetime.now(datetime.timezone.utc)
+                dtnow = datetime.datetime.now(local_tz)
                 if dtnow.weekday() >= 5:  # Saturday or Sunday
                     logging.warning(f"{dtnow.strftime('%A')} is not trading today")
                 else:
-                    assert agent.bars[0].date.date() == dtnow.date(), f"Expect first bar {agent.bars[0]} to be today"
+                    if agent.bars[0].date.date() != dtnow.date():
+                        logging.warning(f"Expect first bar {agent.bars[0]} to be today")
+                    # assert agent.bars[0].date.date() == dtnow.date(), f"Expect first bar {agent.bars[0]} to be today"
             else:
                 assert False, "Expect at least one bar"
             agent.barsstartidx = len(agent.bars) - 1
@@ -3110,8 +3241,8 @@ def main():
             #         logger.warning(f"market is not open: {agent.bars.npdate_[0:3]}..{agent.bars.npdate_[idx:]}")
             #         # should we bail?
 
-            status = agent.simpleLongStrategy1Init()
-
+            # status = agent.simpleLongStrategy1Init()
+            status = agent.strategyInit()
         # for x in contracts:
         #     if x.symbol in agent.symbol:
         #         logger.debug(f"ib.reqMktData(snapshot=True) for {x.localSymbol}...")
@@ -3245,10 +3376,11 @@ def main():
     if agent.bars and not agent.use5s:
         logger.info(f"cancelHistoricalData: len(bars)={len(agent.bars)} {agent.bars._npidx} {agent.bars._npidx_rth_start} {agent.bars._npidx_rth_end}")
         ib.cancelHistoricalData(agent.bars)
-    elif agent.use5s and agent.bars5s and hasattr(agent.bar5s, 'reqId'):
+    elif agent.use5s and agent.bars5s and hasattr(agent.bars5s, 'reqId'):
         ib.cancelHistoricalData(agent.bars5s)
         logger.info(f"cancelHistoricalData: len(bars5s)={len(agent.bars5s)}") # , first={agent.bars5s[0] if agent.bars5s else 'N/A'}, last={agent.bars5s[-1] if agent.bars5s else 'N/A'}
-        logger.info(f"bars5s: {len(agent.bars5s)} {agent.bars5s._npidx} {agent.bars5s._npidx_rth_start} {agent.bars5s._npidx_rth_end}")
+        logger.info(f"bars5s: len={len(agent.bars5s)} {agent.bars5s._npidx} {agent.bars5s._npidx_rth_start} {agent.bars5s._npidx_rth_end}")
+        logger.info(f"bars1m: len={len(agent.bars)} {agent.bars._npidx} {agent.bars._npidx_rth_start} {agent.bars._npidx_rth_end}")
         # logger.info(f"bars10s: {len(agent.bars10s)} {agent.bars10s._npidx} {agent.bars10s._npidx_rth_start} {agent.bars10s._npidx_rth_end}")
         # logger.info(f"bars15s: {len(agent.bars15s)} {agent.bars15s._npidx} {agent.bars15s._npidx_rth_start} {agent.bars15s._npidx_rth_end}")
         # logger.info(f"bars30s: {len(agent.bars30s)} {agent.bars30s._npidx} {agent.bars30s._npidx_rth_start} {agent.bars30s._npidx_rth_end}")
@@ -3308,7 +3440,7 @@ if __name__ == "__main__":
         logger.exception(f"Caught exception {e}", exc_info=True, stack_info=True)
     finally:
         if agent:
-            agent.session_end.append(datetime.datetime.now(datetime.timezone.utc).astimezone())
+            agent.session_end.append(datetime.datetime.now(local_tz))
             agent.checkpoint('final')
         logger.info("Cleaning up...")
         if ib is not None:
