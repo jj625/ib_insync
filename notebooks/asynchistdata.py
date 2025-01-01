@@ -153,7 +153,30 @@ def onError(reqId, errorCode, errorString, contract):
 
 def onPendingTickers(tickers):
     for ticker in tickers:
-        print(ticker.time.astimezone(), ticker.contract.localSymbol, ticker.bid, ticker.ask, ticker.last)
+        x = (ticker.time.astimezone().__str__(), ticker.contract.localSymbol, ticker.bid, ticker.ask, ticker.last)
+        logger.info(x)
+
+def onTickSnapshotEnd(reqId: int):
+    logger.info("Tick snapshot end {reqId}")
+
+def onBarUpdate(bars: BarDataList, hasNewBar: bool):
+    logger.info(f"{len(bars)} {hasNewBar}")
+
+def future_done_callback(future: asyncio.Future):
+    loop = future.get_loop()
+    logger.info(f"future was bound to event loop {loop}")
+    if future.cancelled():
+        logger.info(f"future cancelled")
+    elif future.done():
+        # even if timeout
+        exception = future.exception()
+        logger.info(f"future done: {len(future.result())}")
+        if exception:
+            logger.error(f"future exception: {exception}")
+    else:
+        logger.error(f"future is neither done nor cancelled")
+    count = future.remove_done_callback(future_done_callback)
+    logger.info(f"future_done_callback removed: {count}")
 
 def main():
     scriptdir = os.path.dirname(os.path.realpath(__file__))
@@ -179,7 +202,6 @@ def main():
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--enddate', type=datetime.datetime.fromisoformat, help='End date')
     args = argparser.parse_args()
-    print(args)
 
     # Set up logging
     logging.basicConfig(level=args.loglevel, format=('%(asctime)s:' + logging.BASIC_FORMAT))
@@ -195,10 +217,14 @@ def main():
         r'|updateAccountValue|position|updatePortfolio|commissionReport|historicalData|Info 2104|Info 2106|Info 2158)'
     ))
 
+    logger.info(args)
+
     # Connect to IB Gateway
     ib = IB()
+    ib.tickSnapshotEndEvent += onTickSnapshotEnd
     ib.errorEvent += onError
     ib.pendingTickersEvent += onPendingTickers
+    ib.barUpdateEvent += onBarUpdate
 
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
 
@@ -255,7 +281,7 @@ def main():
         # initialize_bars(outBars30m, '30 mins', rthfactor_pad=rthfactor_pad)
 
         # create_task() failed with "RuntimeError: no running event loop"
-        task = asyncio.ensure_future(ib.reqHistoricalDataAsync(
+        future = asyncio.ensure_future(ib.reqHistoricalDataAsync(
                 contract_,
                 endDateTime=endDateTime,
                 durationStr='1 D',
@@ -264,16 +290,16 @@ def main():
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
                 formatDate=1,
-                timeout=60*5,
+                timeout=5, # if timeout, future is still marked as done, not cancelled
                 # _historicalDataEndHook=initial_resample_hook
                 )
         )
-        task.add_done_callback(lambda t: logger.info(f"task done: {len(t.result())}"))
+        future.add_done_callback(future_done_callback)
         # run the coroutine in the background
         # ib.run(coro)
 
         # logger.info(f"{len(bars5s)} bars5s downloaded")
-        logger.info(f"task started: {task}")
+        logger.info(f"future started: {future}")
         # bars1m = ib.reqHistoricalData(
         #         contract_,
         #         endDateTime=endDateTime,
@@ -286,32 +312,32 @@ def main():
         # bars1m.updateEvent += onBarUpdate1m
         # logger.info(f"{len(bars1m)} bars1m downloaded")
 
-    bars = None
+    bars: Optional[BarDataList] = None # hold result from ib.reqHistoricalDataAsync()
     # request market data
     ib.reqMarketDataType(1)
-    t = ib.reqMktData(contract_, '', False, False, None)
+    tkr = ib.reqMktData(contract_, '', False, False, None)
     ib.sleep(0.5)
     if len(ib.tickers()) != 1:
         logger.error(f"{ib.tickers()}: expected 1 ticker")
         return -1
-    t = ib.tickers()[0]
+    assert tkr == ib.tickers()[0], f"{tkr} != {ib.tickers()[0]}"
     for i in range(10):
-        if hasattr(t, 'time') and t.time is not None:
+        if hasattr(tkr, 'time') and tkr.time is not None:
             break
         logger.info(f"waiting for ticker to be fully populated")
         ib.sleep(0.5)
     else: # no break
         logger.error(f"ticker is not populating")
         return -1
-    tdiff = (t.time - datetime.datetime.now(local_tz)).total_seconds()
+    tdiff = (tkr.time - datetime.datetime.now(local_tz)).total_seconds()
     if abs(tdiff) > 2.0:
         # report clock skew
         logger.warning(f"Tick time is {tdiff:.2f} seconds" + (" ahead" if tdiff > 0 else " behind") + " of current time")
-    if np.isnan(t.bid) or np.isnan(t.ask) or np.isnan(t.last) or np.isnan(t.close) or np.isnan(t.open_):
-        bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
+    if np.isnan(tkr.bid) or np.isnan(tkr.ask) or np.isnan(tkr.last) or np.isnan(tkr.close) or np.isnan(tkr.open_):
+        bidasklast = f"bid {tkr.bid} ask {tkr.ask} last {tkr.last} close {tkr.close} open {tkr.open_}"
     else:
-        bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {t.volume:n}"
-    logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
+        bidasklast = f"bid {tkr.bid} ask {tkr.ask} last {tkr.last} chg {(tkr.ask+tkr.bid)/2.0/tkr.close-1.0:+.2%} open {tkr.open_} close {tkr.close} volume {tkr.volume:n}"
+    logger.info(f"{tkr.contract.localSymbol}: {tkr.time.astimezone():%H:%M:%S} {bidasklast}")
 
     s = 10
     hours, remainder = divmod(s, 3600)
@@ -326,12 +352,13 @@ def main():
     time_str = ", ".join(time_parts)
     logger.info(f"Waiting {time_str}...")
     ib.sleep(s)
-    # await task
-    while not task.done():
-        logger.info(f"Waiting for task to complete...")
+    # await future
+    while not future.done():
+        logger.info(f"Waiting for future to complete...")
         ib.sleep(2)
-    bars = task.result()
+    bars = future.result()
     print("result: len(bars) ", len(bars))
+    ib.cancelMktData(contract_)
     # Disconnect
     ib.disconnect()
     logger.info("Done")
