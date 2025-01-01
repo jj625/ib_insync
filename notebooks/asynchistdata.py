@@ -4,7 +4,6 @@ program_name = os.path.splitext(os.path.basename(__file__))[0]
 import sys
 import io
 import copy
-import pickle
 import inspect
 import re
 import asyncio
@@ -17,14 +16,9 @@ def get_asyncio_running_loop(prefix: str = '') -> str:
     return result
 
 # print(get_asyncio_running_loop('0. '))
-# import signal
-import ibapi
 import pandas as pd
 import numpy as np
-import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
-import scipy
-from scipy.ndimage import gaussian_filter1d
 import logging
 import datetime
 import zoneinfo
@@ -32,23 +26,12 @@ local_tz = zoneinfo.ZoneInfo('US/Eastern')  # Adjust for your local timezone, Am
 
 MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
 MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
-# import time
-import dateutil
 import argparse
-import json
-# import email.utils
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Optional
 import typing
 import numbers
-# import pdb
-import telegram
-if telegram.__version__ < '20.0':
-    print("Requires python-telegram-bot library version 20.0 or higher")
-    sys.exit(1)
-import rich
-from rich.logging import RichHandler
 from concurrent.futures import ThreadPoolExecutor
 import zoneinfo
 local_tz = zoneinfo.ZoneInfo('US/Eastern') # Adjust for your local timezone, America/New_York
@@ -184,22 +167,17 @@ def main():
         format=('%(asctime)s:%(levelname)s:%(funcName)s:%(message)s'), #  + logging.BASIC_FORMAT
         handlers=[
             logging.FileHandler(log_file),
-            #RichHandler(markup=True)
             logging.StreamHandler()
         ]
     )
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
-    # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
-    # argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
     argparser.add_argument('--clientid', type=int, help='IBKR API Client ID. Default is random between 1k and 10k.')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
-    argparser.add_argument('--dryrun', action='store_true', help='Dry run, don\'t actually download data')
     argparser.add_argument('--enddate', type=datetime.datetime.fromisoformat, help='End date')
-    # argparser.add_argument('--live_trading', action='store_true', help='Live trading')
     args = argparser.parse_args()
     print(args)
 
@@ -250,8 +228,6 @@ def main():
 
 
         logger.info(f"Requesting historical bars for {sym}...")
-        if args.dryrun:
-            continue
 
         global bars5s, bars1m
         def initialize_bars(bars: BarDataList, barSizeSetting, rthfactor_pad=0.):
@@ -278,6 +254,7 @@ def main():
         # initialize_bars(outBars15m, '15 mins', rthfactor_pad=rthfactor_pad)
         # initialize_bars(outBars30m, '30 mins', rthfactor_pad=rthfactor_pad)
 
+        # create_task() failed with "RuntimeError: no running event loop"
         task = asyncio.ensure_future(ib.reqHistoricalDataAsync(
                 contract_,
                 endDateTime=endDateTime,
@@ -295,11 +272,6 @@ def main():
         # run the coroutine in the background
         # ib.run(coro)
 
-        # b5s_eventhandler.initialize(bars5s)
-        # bars5s.updateEvent += b5s_eventhandler.__call__
-        # bars5s.updateEvent += onBarUpdate5s
-        # bars5s.updateEvent += resample
-        # ib.barUpdateEvent += onBarUpdate5s_ib
         # logger.info(f"{len(bars5s)} bars5s downloaded")
         logger.info(f"task started: {task}")
         # bars1m = ib.reqHistoricalData(
