@@ -196,7 +196,7 @@ def barplot(bars, title='', upColor='blue', downColor='red', fig_ax=None):
 
     ax.set_title(title)
     ax.grid(True)
-    fig.set_size_inches(10, 6)
+    # fig.set_size_inches(10, 6)
     for n, (open_, high, low, close) in enumerate(ohlcTups):
         if close >= open_:
             color = upColor
@@ -230,6 +230,54 @@ def barplot(bars, title='', upColor='blue', downColor='red', fig_ax=None):
     ax.autoscale_view()
     return fig, ax
 
+import pandas as pd
+from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
+
+def barplot_ohlc(bars, title='', upColor='green', downColor='red', fig_ax=None):
+    """
+    Create OHLC plot for the given bars. The bars can be given as
+    a DataFrame or as a list of bar objects.
+    """
+
+    if isinstance(bars, pd.DataFrame):
+        ohlcTups = [
+            tuple(v) for v in bars[['open', 'high', 'low', 'close']].values]
+    elif bars and hasattr(bars[0], 'open_'):
+        ohlcTups = [(b.open_, b.high, b.low, b.close) for b in bars]
+    else:
+        ohlcTups = [(b.open, b.high, b.low, b.close) for b in bars]
+
+    if fig_ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig, ax = fig_ax
+
+    ax.set_title(title)
+    # ax.grid(True)
+    ax.xaxis.grid(True, linestyle=(0, (5, 10)))
+    for n, (open_, high, low, close) in enumerate(ohlcTups):
+        line = Line2D(
+            xdata=(n, n),
+            ydata=(low, high),
+            color=upColor if close >= open_ else downColor,
+            linewidth=2)
+        ax.add_line(line)
+        line = Line2D(
+            xdata=(n - 0.3, n),
+            ydata=(open_, open_),
+            color=upColor if close >= open_ else downColor,
+            linewidth=1)
+        ax.add_line(line)
+        line = Line2D(
+            xdata=(n, n + 0.3),
+            ydata=(close, close),
+            color=upColor if close >= open_ else downColor,
+            linewidth=1)
+        ax.add_line(line)
+
+    ax.autoscale_view()
+    return fig, ax
 
 def allowCtrlC():
     """Allow Control-C to end program."""

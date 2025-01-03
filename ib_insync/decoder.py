@@ -454,7 +454,7 @@ class Decoder:
             tz = self.wrapper.ib.TimezoneTWS
             if tz:
                 time = time.replace(tzinfo=ZoneInfo(str(tz)))
-        ex.time = time.astimezone(timezone.utc)
+        ex.time = time.astimezone() # local tz instead of timezone.utc
         self.wrapper.execDetails(int(reqId), c, ex)
 
     def historicalData(self, fields):
@@ -471,7 +471,7 @@ class Decoder:
                 volume=float(get()),
                 average=float(get()),
                 barCount=int(get()),
-                timestamp=datetime.now(timezone.utc))
+                timestamp=datetime.now(timezone.utc).astimezone())
             self.wrapper.historicalData(int(reqId), bar)
 
         self.wrapper.historicalDataEnd(int(reqId), startDateStr, endDateStr)
@@ -489,7 +489,7 @@ class Decoder:
             low=float(get() or 0),
             average=float(get() or 0),
             volume=float(get() or 0),
-            timestamp=datetime.now(timezone.utc))
+            timestamp=datetime.now(timezone.utc).astimezone())
 
         self.wrapper.historicalDataUpdate(int(reqId), bar)
 

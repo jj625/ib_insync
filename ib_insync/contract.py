@@ -474,7 +474,8 @@ class DeltaNeutralContract:
 class TradingSession(NamedTuple):
     start: dt.datetime
     end: dt.datetime
-
+    def __repr__(self):
+        return f'{self.start.isoformat()} - {self.end.isoformat()}'
 
 @dataclass
 class ContractDetails:

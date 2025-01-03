@@ -310,7 +310,7 @@ class Wrapper:
     def updateAccountValue(
             self, tag: str, val: str, currency: str, account: str):
         key = (account, tag, currency, '')
-        acctVal = AccountValue(account, tag, val, currency, '', datetime.now(timezone.utc))
+        acctVal = AccountValue(account, tag, val, currency, '', datetime.now().astimezone())
         self.accountValues[key] = acctVal
         self._logger.info(f'updateAccountValue: {acctVal}')
         self.ib.accountValueEvent.emit(acctVal)
@@ -325,7 +325,7 @@ class Wrapper:
             self, reqId: int, account: str, modelCode: str, tag: str, val: str,
             currency: str):
         key = (account, tag, currency, modelCode)
-        acctVal = AccountValue(account, tag, val, currency, modelCode, datetime.now(timezone.utc))
+        acctVal = AccountValue(account, tag, val, currency, modelCode, datetime.now().astimezone())
         self.accountValues[key] = acctVal
         self._logger.info(f'accountUpdateMulti: {acctVal}, reqId {reqId}')
         self.ib.accountValueEvent.emit(acctVal)
@@ -339,7 +339,7 @@ class Wrapper:
             self, _reqId: int, account: str, tag: str, value: str,
             currency: str):
         key = (account, tag, currency)
-        acctVal = AccountValue(account, tag, value, currency, '', datetime.now(timezone.utc))
+        acctVal = AccountValue(account, tag, value, currency, '', datetime.now().astimezone())
         self.acctSummary[key] = acctVal
         self._logger.info(f'accountSummary: {acctVal} reqId {_reqId}')
         self.ib.accountSummaryEvent.emit(acctVal)
@@ -391,7 +391,7 @@ class Wrapper:
     def positionMulti(
             self, reqId: int, account: str, modelCode: str,
             contract: Contract, pos: float, avgCost: float):
-        pos = PositionMulti(account, contract, pos, avgCost, modelCode, datetime.now(timezone.utc))
+        pos = PositionMulti(account, contract, pos, avgCost, modelCode, datetime.now(timezone.utc).astimezone())
         self._logger.info(f'positionMulti: {pos}')
 
     def positionMultiEnd(self, reqId: int):
