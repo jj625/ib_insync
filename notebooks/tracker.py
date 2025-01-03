@@ -827,6 +827,25 @@ class Agent:
     def reset(self):
         pass
 
+        # if len(self.bars) > 0:
+        #     dtnow = datetime.datetime.now(local_tz)
+        #     if dtnow.weekday() >= 5:  # Saturday or Sunday
+        #         logging.warning(f"{dtnow.strftime('%A')} is not trading today")
+        #     else:
+        #         if self.bars[0].date.date() != dtnow.date():
+        #             logging.warning(f"Expect first bar {self.bars[0]} to be today")
+        #         # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
+        # else:
+        #     assert False, "Expect at least one bar"
+        # self.barsstartidx = len(self.bars) - 1
+        # self.beginprice = self.bars[self.barsstartidx].close
+        # logger.info(f"{procname}: len(bars)={len(self.bars)}, bar[0]={self.bars[0]}, bar[-1]={self.bars[-1]}")
+        # # self.bars.updateEvent += lambda x, y: self.onBarUpdate(x, y) # are these two equivalent?
+        # if self.use5s:
+        #     logger.info(f'{self.bars.buffer_size} {self.bars._npidx} {len(self.bars.open_prices)}')
+        #     self.bars5s.updateEvent += self.resample_from_5s # resample then call onBarUpdate
+        # else:
+        #     self.bars.updateEvent += self.onBarUpdate
     async def initial_resample_hook(self, start: str, end: str, bars: BarDataList):
         logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
         for b in bars:
@@ -1077,6 +1096,25 @@ class Agent:
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
         else:
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {t.volume:n}"
+        if len(self.bars) > 0:
+            dtnow = datetime.datetime.now(local_tz)
+            if dtnow.weekday() >= 5:  # Saturday or Sunday
+                logging.warning(f"{dtnow.strftime('%A')} is not trading today")
+            else:
+                if self.bars[0].date.date() != dtnow.date():
+                    logging.warning(f"Expect first bar {self.bars[0]} to be today")
+                # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
+        else:
+            assert False, "Expect at least one bar"
+        self.barsstartidx = len(self.bars) - 1
+        self.beginprice = self.bars[self.barsstartidx].close
+        logger.info(f"reqHistoricalData: len(bars)={len(self.bars)}, bar[0]={self.bars[0]}, bar[-1]={self.bars[-1]}")
+        # self.bars.updateEvent += lambda x, y: self.onBarUpdate(x, y) # are these two equivalent?
+        if self.use5s:
+            logger.info(f'{self.bars.buffer_size} {self.bars._npidx} {len(self.bars.open_prices)}')
+            self.bars5s.updateEvent += self.resample_from_5s # resample then call onBarUpdate
+        else:
+            self.bars.updateEvent += self.onBarUpdate
         logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
 
         if t.close > 0:
@@ -1096,6 +1134,25 @@ class Agent:
         # self.recenthigh = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
         # self.recentlow = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
 
+        if len(self.bars) > 0:
+            dtnow = datetime.datetime.now(local_tz)
+            if dtnow.weekday() >= 5:  # Saturday or Sunday
+                logging.warning(f"{dtnow.strftime('%A')} is not trading today")
+            else:
+                if self.bars[0].date.date() != dtnow.date():
+                    logging.warning(f"Expect first bar {self.bars[0]} to be today")
+                # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
+        else:
+            assert False, "Expect at least one bar"
+        self.barsstartidx = len(self.bars) - 1
+        self.beginprice = self.bars[self.barsstartidx].close
+        logger.info(f"reqHistoricalData: len(bars)={len(self.bars)}, bar[0]={self.bars[0]}, bar[-1]={self.bars[-1]}")
+        # self.bars.updateEvent += lambda x, y: self.onBarUpdate(x, y) # are these two equivalent?
+        if self.use5s:
+            logger.info(f'{self.bars.buffer_size} {self.bars._npidx} {len(self.bars.open_prices)}')
+            self.bars5s.updateEvent += self.resample_from_5s # resample then call onBarUpdate
+        else:
+            self.bars.updateEvent += self.onBarUpdate
         # logger.info(f"dailyclose len={len(self.dailyclose)}, dailyclose[0]={self.dailyclose[0]}, dailyclose[-1]={self.dailyclose[-1]}")
         return 0
 
