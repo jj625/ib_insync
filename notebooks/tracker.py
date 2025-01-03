@@ -49,7 +49,17 @@ def set_market_hours(start, end):
     MKTCLOSE = NYMKTCLOSE
     PDMKTCLOSE = pd.to_datetime(MKTCLOSE)
     NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
-    logger.info(f"Market hours set to {MKTOPEN:%H:%M} - {MKTCLOSE:%H:%M}")
+    logger.info(f"Market hours set to {MKTOPEN.astimezone()} - {MKTCLOSE.astimezone()}")
+
+    util.NYMKTOPEN = NYMKTOPEN
+    util.MKTOPEN = NYMKTOPEN # for compatibility
+    util.NYNPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
+    util.NPMKTOPEN = util.NYNPMKTOPEN
+    util.NYMKTCLOSE = NYMKTCLOSE
+    util.MKTOPEN = NYMKTOPEN
+    util.MKTCLOSE = NYMKTCLOSE
+    util.NYNPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+    util.NPMKTCLOSE = util.NYNPMKTCLOSE
 
 import dateutil
 import argparse
@@ -450,6 +460,7 @@ class TradeManager:
         self.trade.cancelEvent += self.on_cancel_event
         self.trade.cancelledEvent += self.on_cancelled_event
         self.ok2clear = False
+        self.lastErrorCode = 0
 
     def clear(self):
         if not self.ok2clear:
@@ -503,6 +514,11 @@ class TradeManager:
         logger.info(f"{trade}")
 
     def on_cancelled_event(self, trade: Trade):
+        if trade.orderStatus.status == 'Cancelled':
+            if trade.log and trade.log[-1].status == 'Cancelled' and trade.log[-1].errorCode == 460:
+                # no trading permissions
+                self.lastErrorCode = 460
+
         logger.info(f"{trade}")
 
 # Function to flatten the trade structure
@@ -721,13 +737,24 @@ class Agent:
     """class for keeping track of agent's state"""
 
     # all below are NOT instance variables, they are class variables
+    ib: ib_insync.IB
     args: argparse.Namespace
     # errorqueue: deque
     strategynum: int
     symbol: str
     tradingaccount: str
+    avgcost_prevclose: bool
+    ibBarUpdateTime: datetime.datetime = datetime.datetime.now(local_tz)
+    # resampler
+    hasNewBar1m: bool = False
+    hasNewBar5m: bool = False
+    hasNewBar10m: bool = False
+    hasNewBar15m: bool = False
+    hasNewBar30m: bool = False
+    bars_tick: List[BarData] = field(default_factory=list)
     # position: ib_insync.objects.Position = None
     stkpos: ib_insync.objects.Position = None
+    useAvgCost: float = 0.0 # set to prev close if avgcost_prevclose is True, else set to zero
     rput: float = 0.0 # if we have position, earning rate = return per unit time (rput)
     volatility_per_min: deque = field(default_factory=deque) # volatility every minute
     volatility_pm_running: deque = field(default_factory=deque) # running per minute volatility since open
@@ -771,6 +798,7 @@ class Agent:
     bars5m: BarDataList = field(default_factory=BarDataList)
     bars10m: BarDataList = field(default_factory=BarDataList)
     bars15m: BarDataList = field(default_factory=BarDataList)
+    bars30m: BarDataList = field(default_factory=BarDataList)
 
     highs: List[float] = field(default_factory=list)
     lows: List[float] = field(default_factory=list)
@@ -827,6 +855,79 @@ class Agent:
     def reset(self):
         pass
 
+    def request_historical_data(self, contract_1: ib_insync.contract.Contract, cdl: ib_insync.contract.ContractDetails) -> asyncio.Future:
+        # contract_1 = self.ibcontract
+        # ib.qualifyContracts(contract_1) # already qualified in premkt init
+        cdliquid = cdl.liquidSessions()[0]
+        cdl_full = cdl.tradingSessions()[0]
+        if cdl_full.start.astimezone().time() == datetime.time(18, 0): # 6:00 PM
+            rthfactor_pad = 7
+        else:
+            rthfactor_pad = 0
+        ib.barUpdateEvent += self.onBarUpdate_ib
+        if self.use5s:
+            def initialize_bars(bars, barSizeSetting):
+                # bars.reqId = agent.bars5s.reqId
+                bars.contract = contract_1
+                bars.endDateTime = ''
+                bars.durationStr = '1 D'
+                bars.barSizeSetting = barSizeSetting
+                bars.whatToShow = 'TRADES'
+                bars.useRTH = False
+                # bars.formatDate = agent.bars5s.formatDate
+                bars.keepUpToDate = True
+                bars._init_npdata('', '', rthfactor_pad=rthfactor_pad)
+
+            # must init before initial_resample_hook
+            # initialize_bars(self.bars10s, '10 secs')
+            # initialize_bars(self.bars15s, '15 secs')
+            # initialize_bars(self.bars30s, '30 secs')
+            initialize_bars(self.bars, '1 min')
+            # initialize_bars(self.bars2m, '2 mins')
+            initialize_bars(self.bars5m, '5 mins')
+            initialize_bars(self.bars10m, '10 mins')
+            initialize_bars(self.bars15m, '15 mins')
+            initialize_bars(self.bars30m, '30 mins')
+
+            # self.bars5s 
+            future = asyncio.ensure_future(self.ib.reqHistoricalDataExtAsync(
+                contract_1,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='15 secs',
+                whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
+                useRTH=False, # start from ~4:00 AM
+                formatDate=1,
+                keepUpToDate=True,
+                _historicalDataEndHook=self.initial_resample_hook,
+                # tradingHours=cdl
+                )
+            )
+            # self.bars = BarDataList()
+            # task.add_done_callback(lambda t: logger.info(f"task reqHistoricalDataExt done: len(bars) {len(t.result())}"))
+            # while not task.done():
+            #     logger.info(f"Waiting for task reqHistoricalDataExt() to complete...")
+            #     self.ib.sleep(2)
+            # self.bars5s = task.result()
+            procname = 'ib.reqHistoricalDataExt'
+        else:
+            # self.bars 
+            future = asyncio.ensure_future(self.ib.reqHistoricalDataAsync(
+                contract_1,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
+                whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
+                useRTH=False, # start from ~4:00 AM
+                formatDate=1,
+                keepUpToDate=True
+                )
+            )
+            procname = 'ib.reqHistoricalData'
+        
+        future.add_done_callback(lambda t: logger.info(f"task {procname} done: len(bars) {len(t.result())}"))
+        return future
+        # self.bars5m.initialize(self.bars)
         # if len(self.bars) > 0:
         #     dtnow = datetime.datetime.now(local_tz)
         #     if dtnow.weekday() >= 5:  # Saturday or Sunday
@@ -863,9 +964,54 @@ class Agent:
         """
         Resample 5s bars to 1m, 2m, 5m, 10m, and 15m bars.
         """
-        await self.resample_from_5s_core(inBars[-1], inBarHasNewBar)
-        hasNewBar1m = inBars[-1].date.second == 0
-        await self.onBarUpdate(self.bars, hasNewBar1m) # every 5 secs
+        # global bars_tick
+        b = inBars[-1] # shortcut to the last bar
+        if inBarHasNewBar:
+            self.bars_tick = []
+        # unravel the bar
+        if not inBarHasNewBar:
+            # logger.info(bars_tick)
+            if self.bars_tick: # b.date 5, 10, 20, 25, 35, 40, 50, 55 (all 5s ticks except 0, 15, 30, 45)
+                bc_diff = b.barCount - self.bars_tick[-1].barCount
+                v_diff = b.volume - self.bars_tick[-1].volume
+                current_sum = b.volume * b.average
+                prev_sum = self.bars_tick[-1].volume * self.bars_tick[-1].average
+                avg_inc = (current_sum - prev_sum) / v_diff if v_diff > 0 else b.close
+                new_date = b.date + datetime.timedelta(seconds=len(self.bars_tick)*5)
+                # logger.info(f"new_date={new_date}")
+                new_b = BarData(new_date, b.open, b.high, b.low, b.close, v_diff, avg_inc, bc_diff, b.timestamp)
+            else: # bar_tick == []
+                new_b = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average, b.barCount, b.timestamp)
+        elif inBarHasNewBar:
+            if len(inBars) > 1: # b.date 0, 15, 30, 45
+                new_b = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average, b.barCount, b.timestamp)
+                # bc_diff = b.barCount - inBars[-2].barCount
+                # v_diff = b.volume - inBars[-2].volume
+                # current_sum = b.volume * b.average
+                # prev_sum = inBars[-2].volume * inBars[-2].average
+                # avg_inc = (current_sum - prev_sum) / v_diff if v_diff > 0 else b.close
+                # new_b = BarData(b.date, b.open, b.high, b.low, b.close, v_diff, avg_inc, bc_diff, b.timestamp)
+            else: # len(inBars) <= 1, just send the only bar
+                new_b = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average, b.barCount, b.timestamp)
+        # else:
+        #     v_diff = 0
+        #     avg_inc = b.close
+        #     bc_diff = 0
+        #     new_b = BarData(b.date, b.open, b.high, b.low, b.close, b.volume, b.average, b.barCount, b.timestamp)
+        # logger.info(f"used_date={new_b.date}")
+
+        self.bars_tick.append(copy.copy(b))
+
+        # await self.resample_from_5s_core(inBars[-1], inBarHasNewBar)
+        await self.resample_from_5s_core(new_b, inBarHasNewBar)
+        # hasNewBar1m = inBars[-1].date.second == 0
+        self.hasNewBar1m = new_b.date.second == 0
+        # self.hasNewBar2m = self.hasNewBar1m and new_b.date.minute % 2 == 0
+        self.hasNewBar5m = self.hasNewBar1m and new_b.date.minute % 5 == 0
+        self.hasNewBar10m = self.hasNewBar1m and new_b.date.minute % 10 == 0
+        self.hasNewBar15m = self.hasNewBar1m and new_b.date.minute % 15 == 0
+        self.hasNewBar30m = self.hasNewBar1m and new_b.date.minute % 30 == 0
+        await self.onBarUpdate(self.bars, self.hasNewBar1m) # every 5 secs
 
     async def resample_from_5s_core(self, inBar: BarData, inBarHasNewBar: bool):
         """
@@ -905,6 +1051,7 @@ class Agent:
         hasNewBar5m = hasNewBar1m and b.date.minute % 5 == 0
         hasNewBar10m = hasNewBar1m and b.date.minute % 10 == 0
         hasNewBar15m = hasNewBar1m and b.date.minute % 15 == 0
+        hasNewBar30m = hasNewBar1m and b.date.minute % 30 == 0
 
         handle_new_bar(self.bars, b, hasNewBar1m)
         handle_new_bar(self.bars10s, b, hasNewBar10s)
@@ -917,6 +1064,7 @@ class Agent:
         handle_new_bar(self.bars5m, b, hasNewBar5m)
         handle_new_bar(self.bars10m, b, hasNewBar10m)
         handle_new_bar(self.bars15m, b, hasNewBar15m)
+        handle_new_bar(self.bars30m, b, hasNewBar30m)
 
         # await self.onBarUpdate(self.bars, hasNewBar1m) # every 5 secs
         # onResampledBar2m(outBars2m, hasNewBar2m)
@@ -983,10 +1131,10 @@ class Agent:
             logger.info(f"no trades done today")
         return # end of resume_session
 
-    def strategyInitPreMarket(self) -> int:
+    def strategyInitPreOpen(self) -> int:
         match self.strategynum:
             case 1:
-                return self.simpleLongStrategy1InitPreMarket()
+                return self.simpleLongStrategy1InitPreOpen()
             case _:
                 logger.error(f"Unknown strategy number {self.strategynum}")
                 return -1
@@ -999,7 +1147,7 @@ class Agent:
                 logger.error(f"Unknown strategy number {self.strategynum}")
                 return -1
 
-    def simpleLongStrategy1InitPreMarket(self) -> int:
+    def simpleLongStrategy1InitPreOpen(self) -> int:
         logger.info(f"Pre-market initialization for {self.symbol}")
         # # get historical bars for the last 6 months
         # contract_ = Stock(self.symbol, 'SMART', 'USD')
@@ -1072,6 +1220,9 @@ class Agent:
         cdl_full = contractDetails[0].tradingSessions()[0]
         logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
 
+        # request historical data
+        future = self.request_historical_data(contract_1, contractDetails[0]) # onBarUpdate could fire before this method returns
+
         # request market data
         ib.reqMarketDataType(1)
         t = ib.reqMktData(contract_1, '', False, False, None)
@@ -1096,25 +1247,6 @@ class Agent:
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
         else:
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {t.volume:n}"
-        if len(self.bars) > 0:
-            dtnow = datetime.datetime.now(local_tz)
-            if dtnow.weekday() >= 5:  # Saturday or Sunday
-                logging.warning(f"{dtnow.strftime('%A')} is not trading today")
-            else:
-                if self.bars[0].date.date() != dtnow.date():
-                    logging.warning(f"Expect first bar {self.bars[0]} to be today")
-                # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
-        else:
-            assert False, "Expect at least one bar"
-        self.barsstartidx = len(self.bars) - 1
-        self.beginprice = self.bars[self.barsstartidx].close
-        logger.info(f"reqHistoricalData: len(bars)={len(self.bars)}, bar[0]={self.bars[0]}, bar[-1]={self.bars[-1]}")
-        # self.bars.updateEvent += lambda x, y: self.onBarUpdate(x, y) # are these two equivalent?
-        if self.use5s:
-            logger.info(f'{self.bars.buffer_size} {self.bars._npidx} {len(self.bars.open_prices)}')
-            self.bars5s.updateEvent += self.resample_from_5s # resample then call onBarUpdate
-        else:
-            self.bars.updateEvent += self.onBarUpdate
         logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
 
         if t.close > 0:
@@ -1133,6 +1265,28 @@ class Agent:
             # not fatal, just a warning
         # self.recenthigh = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
         # self.recentlow = (-1, self.dailyclose[-1]) # initialize to last bar data from prev day
+
+        # IB avgCost is adjusted by wash-sale. 
+        # Plus we sometimes sit on a gain or loss that we want to ignore
+        # and use the previous close as avgCost.
+        if self.stkpos and self.stkpos.position > 0:
+            if self.avgcost_prevclose:
+                self.useAvgCost = self.prevclose
+                logger.info(f"Using prevclose {self.useAvgCost} as avgcost")
+                # self.stkpos.avgCost = self.useAvgCost
+                # logger.info(f"Override avgcost {self.stkpos.avgCost} with {self.useAvgCost}")
+            else:
+                self.useAvgCost = self.stkpos.avgCost
+        else:
+            self.useAvgCost = 0.0
+
+        while not future.done():
+            logger.info(f"Waiting for future to complete...")
+            ib.sleep(1)
+        if self.use5s:
+            self.bars5s = future.result() # self.bars will populate indirectly from resampler
+        else:
+            self.bars = future.result()
 
         if len(self.bars) > 0:
             dtnow = datetime.datetime.now(local_tz)
@@ -1258,6 +1412,11 @@ class Agent:
         pickle.dump(pkldump, fpkl)
         fpkl.flush()
 
+    def onBarUpdate_ib(self, bars: BarDataList, hasNewBar: bool):
+        self.ibBarUpdateTime = datetime.datetime.now(datetime.timezone.utc)
+        logger.info("") # f"hasNewBar={hasNewBar}, {_repr_bar(bars[-1])}"
+
+    # @measure_time
     async def onBarUpdate(self, bars: BarDataList, hasNewBar: bool):
         def dayhilo(bars: BarDataList) -> tuple:
             """Calculate day high/low"""
@@ -1634,7 +1793,7 @@ class Agent:
                         logger.info(f"Market closed, exiting...")
                         self.set_state(99) # bail out of main loop
                     assert self.strategyinitstatus == 0, "Strategy initialization should return success"
-                    logger.info(f"scheduling strategy execution")
+                    logger.info(f"scheduling strategy #1")
                     task = asyncio.create_task(self.simpleLongStrategy1())
                 case 2:
                     pass
@@ -1674,7 +1833,8 @@ class Agent:
         """
 
         def lastPctReturn():
-            avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+            # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+            avgCost_ = self.useAvgCost * self.futAvgCostMult
             return (lastPrice_ / avgCost_) - 1.0 # life-to-date return
 
         def two_bars_green_with_one_close_near_high():
@@ -2112,7 +2272,8 @@ class Agent:
         # update milestone index
         newIdx_ = 0
         # lastPrice_ = get_market_price()
-        avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+        # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+        avgCost_ = self.useAvgCost * self.futAvgCostMult
         while newIdx_ < len(self.upPctMilestone) and lastPrice_ > avgCost_ * (1 + self.upPctMilestone[newIdx_]):
             newIdx_ += 1
         assert lastPctReturn() <= self.upPctMilestone[newIdx_], "last price should be at or below current milestone"
@@ -2290,7 +2451,8 @@ class Agent:
         if lastPrice <= 0:
             logger.error(f"lastPrice is zero or negative: {lastPrice}, can't proceed")
             return
-        avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+        # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
+        avgCost_ = self.useAvgCost * self.futAvgCostMult
         maxlossPct_ = maxloss_ / avgCost_ / self.stkpos.position
         currentPnl = (lastPrice - avgCost_) * self.stkpos.position
         currentPnlPct = lastPrice / avgCost_ - 1.
@@ -2457,6 +2619,7 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
         # agent.state = 1
         prevstkpos = agent.stkpos
         agent.stkpos = newpos
+        agent.useAvgCost = newpos.avgCost
         logger.info(f"updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos}" + (f" (id={id(prevstkpos)})" if prevstkpos else ""))
         # should we change state?
         # let's just warn about possible state change for now
@@ -2501,8 +2664,8 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
         # if prevstkpos is None:
         #     logger.info(f"onPositionUpdate: agent initialized with stock position: {agent.stkpos}, state={agent.state}")
         # logger.info(f"onPositionUpdate: agent initialized with stock position: {agent.stkpos}, state={agent.state}")
-    elif (newpos.contract.symbol != agent.symbol) and (newpos.contract.secType == 'STK'):
-        logger.warning(f"ignoring stock position: {newpos}")
+    elif (newpos.contract.symbol != agent.symbol) and (newpos.contract.secType == agent.contractType):
+        logger.warning(f"not my symbol: {newpos}")
     else:
         logger.warning(f"ignoring new position: {newpos}")
     return # end of onPositionUpdate
@@ -2687,7 +2850,7 @@ def chebyshev_fit(x, y, degree):
     
     return cheb_poly
 
-def resample_bars(bars, resample_interval='2min'):
+def resample_bars(bars: BarDataList, resample_interval='2min', use_np_data: bool=False):
     """
     Resample a list of BarData objects into a specified interval.
 
@@ -2699,15 +2862,27 @@ def resample_bars(bars, resample_interval='2min'):
     pd.DataFrame: The resampled OHLC data.
     """
     # Convert the list of BarData objects to a DataFrame
-    data = {
-        'date': [bar.date for bar in bars],
-        'open': [bar.open_ for bar in bars],
-        'high': [bar.high for bar in bars],
-        'low': [bar.low for bar in bars],
-        'close': [bar.close for bar in bars],
-        'volume': [bar.volume for bar in bars],
-        'barCount': [bar.barCount for bar in bars]
-    }
+
+    if use_np_data:
+        data = {
+            'date': bars.get_npdate(False),
+            'open': bars.get_npopen(False),
+            'high': bars.get_nphigh(False),
+            'low': bars.get_nplow(False),
+            'close': bars.get_npclose(False),
+            'volume': bars.get_npvolume(False),
+            'barCount': bars.get_npbarCount(False)
+        }
+    else:
+        data = {
+            'date': [bar.date for bar in bars],
+            'open': [bar.open_ for bar in bars],
+            'high': [bar.high for bar in bars],
+            'low': [bar.low for bar in bars],
+            'close': [bar.close for bar in bars],
+            'volume': [bar.volume for bar in bars],
+            'barCount': [bar.barCount for bar in bars]
+        }
     df = pd.DataFrame(data)
     df.set_index('date', inplace=True)
 
@@ -2872,6 +3047,7 @@ def main():
     argparser.add_argument('--expiry', type=str, help='Contract expiry YYYYMM (for futures)')
     argparser.add_argument('--exchange', type=str, help='Contract exchange')
     argparser.add_argument('--strategy', type=int, default=1, help='Strategy number')
+    argparser.add_argument('--avgcost_prevclose', action='store_true', help='Use previous closing level as average cost')
     args = argparser.parse_args()
 
     # must come before any logging calls
@@ -3067,8 +3243,10 @@ def main():
                   , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * milemult
                   , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * milemult
                   , use5s=True if args.use5s else False
+                  , avgcost_prevclose=True if args.avgcost_prevclose else False
                   , strategynum=args.strategy
                   , args=args
+                  , ib=ib
     )
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
@@ -3139,7 +3317,7 @@ def main():
 
     dtnow = datetime.datetime.now(local_tz)
     if args.run_until:
-        untilTime = datetime.datetime.combine(dtnow, datetime.datetime.strptime(args.run_until, '%H:%M').time())
+        untilTime = datetime.datetime.combine(dtnow, datetime.datetime.strptime(args.run_until, '%H:%M').time(), tzinfo=local_tz)
     else:           
         if dtnow.weekday() >= 5:  # Saturday or Sunday
             untilTime = dtnow + datetime.timedelta(minutes=1) # run for 10 minutes
@@ -3155,8 +3333,8 @@ def main():
     doOnce = True
 
     # run initialization before market open
-    status = agent.strategyInitPreMarket()
-    # status = agent.simpleLongStrategy1InitPreMarket() # could take 60 seconds to timeout/complete
+    status = agent.strategyInitPreOpen()
+    # status = agent.simpleLongStrategy1InitPreOpen() # could take 60 seconds to timeout/complete
     if status < 0:
         logger.error(f"Pre-Initialization failed: {status}")
         sys.exit(1)
@@ -3181,10 +3359,14 @@ def main():
             logger.info(f"Waiting until {waitUntil2}")
             util.waitUntil(waitUntil2)
 
-    if not args.run_until:   
+    if not args.run_until:
+        logger.info("no --run_until specified, running until market close")
         untilTime = cdliquid.end + datetime.timedelta(minutes=1) # end of market day
+        if untilTime < datetime.datetime.now(local_tz):
+            untilTime = cdl_full.end + datetime.timedelta(minutes=1) # end of full trading day
     logger.info(f"Running until {untilTime.astimezone():%H:%M:%S}")
-    while datetime.datetime.now(local_tz) < untilTime and agent.get_state() != 99:
+    # logger.info(f"Running until {untilTime.astimezone().isoformat()}, now is {datetime.datetime.now(local_tz).isoformat()}")
+    while datetime.datetime.now(datetime.timezone.utc) < untilTime and agent.get_state() != 99:
         logger.debug(get_asyncio_running_loop('main loop: ')) # expect 'no running event loop'
         # get market data for all positions
         if doOnce:
@@ -3208,83 +3390,8 @@ def main():
                 logger.info(f"ib.reqAllOpenOrders: no outstanding orders")
 
             # request live market data
-            contract_1 = agent.ibcontract
-            # ib.qualifyContracts(contract_1) # already qualified in premkt init
-            if agent.use5s:
-                def initialize_bars(bars, barSizeSetting):
-                    # bars.reqId = agent.bars5s.reqId
-                    bars.contract = contract_1
-                    bars.endDateTime = ''
-                    bars.durationStr = '1 D'
-                    bars.barSizeSetting = barSizeSetting
-                    bars.whatToShow = 'TRADES'
-                    bars.useRTH = False
-                    # bars.formatDate = agent.bars5s.formatDate
-                    bars.keepUpToDate = True
-                    bars._init_npdata('', '')
-
-                # must init before initial_resample_hook
-                initialize_bars(agent.bars10s, '10 secs')
-                initialize_bars(agent.bars15s, '15 secs')
-                initialize_bars(agent.bars30s, '30 secs')
-                initialize_bars(agent.bars, '1 min')
-                initialize_bars(agent.bars2m, '2 mins')
-                initialize_bars(agent.bars5m, '5 mins')
-                initialize_bars(agent.bars10m, '10 mins')
-                initialize_bars(agent.bars15m, '15 mins')
-                agent.bars5s = ib.reqHistoricalDataExt(
-                    contract_1,
-                    endDateTime='',
-                    durationStr='1 D',
-                    barSizeSetting='5 secs',
-                    whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
-                    useRTH=False, # start from ~4:00 AM
-                    formatDate=1,
-                    keepUpToDate=True,
-                    _historicalDataEndHook=agent.initial_resample_hook,
-                    # tradingHours=cdl
-                    )
-                # agent.bars = BarDataList()
-
-                procname = 'ib.reqHistoricalDataExt'
-            else:
-                agent.bars = ib.reqHistoricalData(
-                    contract_1,
-                    endDateTime='',
-                    durationStr='1 D',
-                    barSizeSetting='1 min', # '5 secs', # always ticks every 5 secs
-                    whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
-                    useRTH=False, # start from ~4:00 AM
-                    formatDate=1,
-                    keepUpToDate=True
-                    )
-                procname = 'ib.reqHistoricalData'
-            # agent.bars5m.initialize(agent.bars)
-            if len(agent.bars) > 0:
-                dtnow = datetime.datetime.now(local_tz)
-                if dtnow.weekday() >= 5:  # Saturday or Sunday
-                    logging.warning(f"{dtnow.strftime('%A')} is not trading today")
-                else:
-                    if agent.bars[0].date.date() != dtnow.date():
-                        logging.warning(f"Expect first bar {agent.bars[0]} to be today")
-                    # assert agent.bars[0].date.date() == dtnow.date(), f"Expect first bar {agent.bars[0]} to be today"
-            else:
-                assert False, "Expect at least one bar"
-            agent.barsstartidx = len(agent.bars) - 1
-            agent.beginprice = agent.bars[agent.barsstartidx].close
-            logger.info(f"{procname}: len(bars)={len(agent.bars)}, bar[0]={agent.bars[0]}, bar[-1]={agent.bars[-1]}")
-            # agent.bars.updateEvent += lambda x, y: agent.onBarUpdate(x, y) # are these two equivalent?
-            if agent.use5s:
-                logger.info(f'{agent.bars.buffer_size} {agent.bars._npidx} {len(agent.bars.open_prices)}')
-                agent.bars5s.updateEvent += agent.resample_from_5s
-            else:
-                agent.bars.updateEvent += agent.onBarUpdate
-            # agent.bars.updateEvent += agent.bars5m.__call__ # 1m to 5m resampling
-            # agent.bars5m.updateEvent += agent.on5mBarUpdate
-            # agent.bars5m.updateEvent += agent.bars10m.__call__ # 1m to 10m resampling
-            # agent.bars10m.updateEvent += agent.on10mBarUpdate
-            # # agent.bars.updateEvent += agent.bars15m.__call__ # 1m to 15m resampling
-
+            # agent.request_historical_data() # moved to strategyInitPreOpen
+            
             # global NPMKTOPENIDX
             # if NPMKTOPENIDX < 0:
             #     results = np.ravel(np.where(agent.bars.npdate_ == NPMKTOPEN))
@@ -3326,19 +3433,10 @@ def main():
             logger.info(f"Market Value: {agent.bars[-1].close * agent.stkpos.position:.2f}")
         logger.debug(f"Bars: len={len(agent.bars)} last={agent.bars[-1]}")
 
-        # # if no position, we just quit
-        # if agent.stkpos.position == 0:
-        #     logger.warning(f"No position, quitting...")
-        #     break
-
         # enforce max loss
         if agent.stkpos and agent.stkpos.position > 0:
             # agent.enforceMaxLoss(agent.bars[-1].close)
             agent.enforceMaxLoss(get_bid_price())
-
-        # # try simple strategy
-        # if (agent.stkpos.position > 0) and agent.trade is None:
-        #     agent.simpleLongStrategy1()
 
         # resample the bars
         df5m = resample_bars(agent.bars, '5min')
