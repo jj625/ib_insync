@@ -1,9 +1,13 @@
 import datetime
+import zoneinfo
+tz_NY = zoneinfo.ZoneInfo('America/New_York')
 import argparse
 import logging
+logger = None # global
 import pandas as pd
 import numpy as np
 import re
+import pathlib
 import tqdm
 
 # to import local code
@@ -42,6 +46,11 @@ def last_business_dt() -> datetime.datetime:
         return today + datetime.timedelta(days=-1)
 
 def main():
+    # Set up logging
+    global logger
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
     # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
@@ -51,13 +60,12 @@ def main():
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--dryrun', action='store_true', help='Dry run, don\'t actually download data')
+    argparser.add_argument('--date', type=str, help='Date to download data for')
     # argparser.add_argument('--live_trading', action='store_true', help='Live trading')
     args = argparser.parse_args()
-    print(args)
-
-    # Set up logging
-    logging.basicConfig(level=args.loglevel)
-    logger = logging.getLogger(__name__)
+    if args.loglevel and args.loglevel.upper() not in ['INFO']:
+        logger.setLevel(args.loglevel.upper())
+    logger.info(args)
     
     wlogger = logging.getLogger('ib_insync.wrapper')
     wlogger.addFilter(LoggerFilter('ib_insync.wrapper', 
@@ -69,13 +77,25 @@ def main():
     ib = IB()
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
 
-    syms = args.symbols or ['SPY','QQQ','IWM','TLT','NVDA','TSLA','AMD','META','MSFT','GOOG','AAPL','PLTR','MSTR','ANET','COIN']
-    dayoffset: int = 0
-    if datetime.datetime.now().time() < datetime.time(20, 0):
-        dayoffset = -1
+    if args.symbols is None or len(args.symbols) == 0:
+        syms = args.symbols or ['SPY','QQQ','IWM','TLT','NVDA','TSLA','AMD','META','MSFT','GOOG','GOOGL','AAPL'
+                                ,'PLTR','MSTR','ANET','COIN','AVGO','PYPL','SQ','SHOP','ROKU','ZM','AMZN','COST'
+                                ,'NFLX','TMUS','ADBE','CSCO','PEP','AMD','ISRG','INTU','QCOM','MELI','INTC','MU'
+                                ,'MRVL','CRWD','CRM','ASML','SMCI','MRNA','JD','AXON','NTES','EQIX','TCOM','UAL'
+                                ,'WDAY','DELL','DKNG','BABA','CVNA','SCCO','HOOD','JPM','LLY','V','XOM','UNH','WMT'
+                                ,'TGT','BAC','ORCL','ABBV','CVX','MRK','KO','NOW','MCD','IBM','DIS','AXP']
     else:
-        dayoffset = 0
-    endDateTime = datetime.datetime.combine(datetime.datetime.now().date() + datetime.timedelta(days=dayoffset), datetime.time(21, 0))
+        syms = args.symbols
+    dayoffset: int = 0
+
+    if args.date:
+        endDateTime = pd.to_datetime(args.date)
+    else:       
+        if datetime.datetime.now().time() < datetime.time(9, 30):
+            dayoffset = -1
+        else:
+            dayoffset = 0
+        endDateTime = datetime.datetime.combine(datetime.datetime.now().date() + datetime.timedelta(days=dayoffset), datetime.time(21, 0), tzinfo=tz_NY)
     # endDateTime = datetime.datetime.now() + datetime.timedelta(days=0)
     # endDateTime = pd.to_datetime('2024-11-20 21:00:00-05:00')
     for sym in syms:
@@ -87,9 +107,9 @@ def main():
         else:
             logger.info(f"Contract details {temp[0].contract}")
             contract_ = temp[0].contract
-        logger.info(f"Requesting historical bars for {sym}...")
         if args.dryrun:
             continue
+        logger.info(f"Requesting daily historical bars for {sym}... ending {endDateTime}")
         histbars = ib.reqHistoricalData( # this method is blocking
             contract_,
             endDateTime=endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
@@ -103,8 +123,31 @@ def main():
             logger.error(f"Failed to get historical bars for {sym}")
         else:
             histdf = util.df(histbars)
-            histdf.to_csv(f'./data/{sym}_1d.csv', mode='a', header=not os.path.exists(f'./data/{sym}_1d.csv'), index=False)
+            if 'open_' in histdf.columns: # rename open_ to open
+                histdf.rename(columns={'open_':'open'}, inplace=True)
+            if 'timestamp' in histdf.columns: # drop it
+                histdf.drop(columns=['timestamp'], inplace=True)
+            histdf['volume'] = histdf['volume'].astype(int)
+            filename = pathlib.Path(f'./data/{sym}_1d.csv').resolve()
+            file_exist = filename.exists()
+            if file_exist:
+                existing_histdf = pd.read_csv(filename, parse_dates=['date'])
+                if pd.to_datetime(histdf.date.iloc[-1]) in existing_histdf.date.values:
+                    logger.info(f"Updating {filename}")
+                    # histdf = histdf[~histdf['date'].isin(existing_histdf['date'])]
+                    existing_histdf = existing_histdf.set_index('date')
+                    histdf = histdf.set_index('date')
+                    combined_df = existing_histdf.combine_first(histdf).reset_index().drop_duplicates(keep='last')
+                    combined_df.to_csv(filename, index=False)
+                else:
+                    logger.info(f"Appending to {str(filename)}")
+                    histdf.to_csv(filename, mode='a', header=not file_exist, index=False)
+            else:
+                logger.info(f"Writing to {str(filename)}")
+                histdf.to_csv(filename, index=False)
+                # histdf.to_csv(f'./data/{sym}_1d.csv', mode='a', header=not file_exist, index=False)
 
+        logger.info(f"Requesting 1m historical bars for {sym}...")
         histbars = ib.reqHistoricalData( # this method is blocking
             contract_,
             endDateTime=endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
@@ -118,8 +161,15 @@ def main():
             logger.error(f"Failed to get historical bars for {sym}")
         else:
             histdf = util.df(histbars)
-            histdf.to_csv(f'./data/{sym}_1m_{endDateTime:%Y%m%d}.csv', index=False)
+            if 'open_' in histdf.columns: # rename open_ to open
+                histdf.rename(columns={'open_':'open'}, inplace=True)
+            if 'timestamp' in histdf.columns: # drop it
+                histdf.drop(columns=['timestamp'], inplace=True)
+            filename = pathlib.Path(f'./data/{sym}_1m_{endDateTime:%Y%m%d}.csv').resolve()
+            logger.info(f"Writing to {str(filename)}")
+            histdf.to_csv(filename, index=False)
 
+        logger.info(f"Requesting 5s historical bars for {sym}...")
         histbars = ib.reqHistoricalData( # this method is blocking
             contract_,
             endDateTime=endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
@@ -133,8 +183,15 @@ def main():
             logger.error(f"Failed to get historical bars for {sym}")
         else:
             histdf = util.df(histbars)
-            histdf.to_csv(f'./data/{sym}_5s_{endDateTime:%Y%m%d}.csv', index=False)
+            if 'open_' in histdf.columns: # rename open_ to open
+                histdf.rename(columns={'open_':'open'}, inplace=True)
+            if 'timestamp' in histdf.columns: # drop it
+                histdf.drop(columns=['timestamp'], inplace=True)
+            filename = pathlib.Path(f'./data/{sym}_5s_{endDateTime:%Y%m%d}.csv').resolve()
+            logger.info(f"Writing to {str(filename)}")
+            histdf.to_csv(filename, index=False)
 
+    logger.info("Done!")
     return # end of main
 
 if __name__ == '__main__':
