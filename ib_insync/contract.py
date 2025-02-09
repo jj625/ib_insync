@@ -3,6 +3,7 @@
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional
+from enum import Enum
 
 import ib_insync.util as util
 
@@ -86,6 +87,7 @@ class Contract:
     conId: int = 0
     symbol: str = ''
     lastTradeDateOrContractMonth: str = ''
+    lastTradeDate: str = '' # MIN_SERVER_VER_LAST_TRADE_DATE=182
     strike: float = 0.0
     right: str = ''
     multiplier: str = ''
@@ -451,6 +453,12 @@ class TagValue(NamedTuple):
     tag: str
     value: str
 
+class IneligibilityReason(NamedTuple):
+    id_: str
+    description: str
+
+    def __repr__(self):
+        return f'id={self.id_}, desc={self.description}'
 
 @dataclass
 class ComboLeg:
@@ -476,6 +484,28 @@ class TradingSession(NamedTuple):
     end: dt.datetime
     def __repr__(self):
         return f'{self.start.isoformat()} - {self.end.isoformat()}'
+
+class TradingSessionList():
+    def __init__(self, sessions: List[TradingSession]):
+        self.sessions = sessions
+    def __repr__(self):
+        return ', '.join(map(str, self.sessions))
+
+class FundAssetType(Enum):
+    NoneItem = ("None", "None")
+    Others = ("000", "Others"), 
+    MoneyMarket = ("001", "Money Market")
+    FixedIncome = ("002", "Fixed Income")
+    MultiAsset = ("003", "Multi-asset")
+    Equity = ("004", "Equity")
+    Sector = ("005", "Sector")
+    Guaranteed = ("006", "Guaranteed")
+    Alternative = ("007", "Alternative")
+
+class FundDistributionPolicyIndicator(Enum):
+    NoneItem = ("None", "None")
+    AccumulationFund = ("N", "Accumulation Fund")
+    IncomeFund = ("Y", "Income Fund")
 
 @dataclass
 class ContractDetails:
@@ -524,6 +554,27 @@ class ContractDetails:
     nextOptionType: str = ''
     nextOptionPartial: bool = False
     notes: str = ''
+
+    # FUND values, MIN_SERVER_VER_FUND_DATA_FIELDS=179
+    fundName: str = ''
+    fundFamily: str = ''
+    fundType: str = ''
+    fundFrontLoad: str = ''
+    fundBackLoad: str = ''
+    fundBackLoadTimeInterval: str = ''
+    fundManagementFee: str = ''
+    fundClosed: bool  = False
+    fundClosedForNewInvestors: bool  = False
+    fundClosedForNewMoney: bool  = False
+    fundNotifyAmount: str = ''
+    fundMinimumInitialPurchase: str = ''
+    fundSubsequentMinimumPurchase: str = ''
+    fundBlueSkyStates: str = ''
+    fundBlueSkyTerritories: str = ''
+    fundDistributionPolicyIndicator = FundDistributionPolicyIndicator.NoneItem
+    fundAssetType = FundAssetType.NoneItem
+    # MIN_SERVER_VER_INELIGIBILITY_REASONS=186
+    ineligibilityReasonList: list[IneligibilityReason] = field(default_factory=list)
 
     def tradingSessions(self) -> List[TradingSession]:
         return self._parseSessions(self.tradingHours)

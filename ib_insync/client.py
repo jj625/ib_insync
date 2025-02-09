@@ -15,6 +15,7 @@ from .connection import Connection
 from .contract import Contract
 from .decoder import Decoder
 from .objects import ConnectionStats, WshEventData
+from .order import Order
 from .util import UNSET_DOUBLE, UNSET_INTEGER, dataclassAsTuple, getLoop, run
 
 from .wrapper import Wrapper
@@ -86,7 +87,7 @@ class Client:
     RequestsInterval = 1
 
     MinClientVersion = 157
-    MaxClientVersion = 178
+    MaxClientVersion = 187 # 178
 
     (DISCONNECTED, CONNECTING, CONNECTED) = range(3)
 
@@ -165,9 +166,9 @@ class Client:
         """Get new request ID."""
         if not self.isReady():
             raise ConnectionError('Not connected')
-        self._logger.debug('Client::getReqId')
         newId = self._reqIdSeq
         self._reqIdSeq += 1
+        self._logger.debug(f'Client::getReqId {newId}')
         return newId
 
     def updateReqId(self, minReqId: int):
@@ -415,8 +416,14 @@ class Client:
     def cancelMktData(self, reqId):
         self.send(2, 2, reqId)
 
-    def placeOrder(self, orderId, contract, order):
+    def placeOrder(self, orderId, contract, order: Order):
         version = self.serverVersion()
+        if version < 183 and order.customerAccount: # MIN_SERVER_VER_BOND_ACCRUED_INTEREST=183
+            raise ValueError('customerAccount only available with server version 183+')
+        if version < 184 and order.professionalCustomer: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
+            raise ValueError('professionalCustomer only available with server version 184+')
+        if version < 187 and (order.externalUserId or order.manualOrderIndicator != UNSET_INTEGER): # MIN_SERVER_VER_RFQ_FIELDS=187
+            raise ValueError('externalUserId and manualOrderIndicator only available with server version 187+')
         fields = [
             3, orderId,
             contract,
@@ -626,6 +633,12 @@ class Client:
                     fields += [order.midOffsetAtWhole, order.midOffsetAtHalf]
             elif order.orderType in ('PEG MID', 'PEGMID'):
                 fields += [order.midOffsetAtWhole, order.midOffsetAtHalf]
+        if version >= 183: # MIN_SERVER_VER_CUSTOMER_ACCOUNT=183
+            fields += [order.customerAccount]
+        if version >= 184: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
+            fields += [order.professionalCustomer]
+        if version >= 187: # MIN_SERVER_VER_RFQ_FIELDS=187
+            fields += [order.externalUserId, order.manualOrderIndicator]
 
         self.send(*fields)
 
@@ -731,9 +744,18 @@ class Client:
         self.send(*fields)
 
     def exerciseOptions(
-            self, reqId, contract, exerciseAction,
-            exerciseQuantity, account, override):
-        self.send(
+            self, reqId, contract, exerciseAction: int,
+            exerciseQuantity: int, account: str, override: int,
+            manualOrderTime: str, customerAccount: str, professionalCustomer: bool
+            ):
+        serverVersion = self.serverVersion()
+        if serverVersion < 180 and manualOrderTime: # MIN_SERVER_VER_MANUAL_ORDER_TIME_EXERCISE_OPTIONS=180
+            raise ValueError('manualOrderTime only available with server version 180+')
+        if serverVersion < 183 and customerAccount: # MIN_SERVER_VER_CUSTOMER_ACCOUNT=183
+            raise ValueError('customerAccount only available with server version 183+')
+        if serverVersion < 184 and professionalCustomer: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
+            raise ValueError('professionalCustomer only available with server version 184+')
+        fields = [
             21, 2, reqId,
             contract.conId,
             contract.symbol,
@@ -746,7 +768,14 @@ class Client:
             contract.currency,
             contract.localSymbol,
             contract.tradingClass,
-            exerciseAction, exerciseQuantity, account, override)
+            exerciseAction, exerciseQuantity, account, override]
+        if serverVersion >= 180:
+            fields += [manualOrderTime]
+        if serverVersion >= 183:
+            fields += [customerAccount]
+        if serverVersion >= 184:
+            fields += [professionalCustomer]
+        self.send(*fields)
 
     def reqScannerSubscription(
             self, reqId, subscription, scannerSubscriptionOptions,

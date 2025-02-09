@@ -65,6 +65,9 @@ def set_market_hours(start, end):
     # util.NYNPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
     util.NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
 
+def get_market_hours():
+    return MKTOPEN, MKTCLOSE
+
 import dateutil
 import argparse
 import json
@@ -110,9 +113,11 @@ import eventkit
 import ib_insync
 import ib_insync.ib
 ib_insync.ib.install_custom_repr_()
+from ib_insync.ib import _execution_repr, _fill_repr
 
 from ib_insync import IB, MarketOrder, LimitOrder, Trade, Fill, CommissionReport, BarData, BarDataList, \
-    Stock, Option, Future, Forex, MutualFund, util, PortfolioItem, Ticker
+    Stock, Option, Future, Forex, MutualFund, util, PortfolioItem, Ticker, \
+    Execution, ExecutionFilter, ExecutionCondition
 
 # probe for numpy support
 probe = BarDataList()
@@ -382,8 +387,11 @@ def almost_zero_vector(v: NDArray, tol: float = 0.0001) -> tuple[bool, float]:
     norm = np.linalg.norm(v)
     return (np.all(np.abs(v) < tol), norm)
 
+def extract_field_as_list(group: Iterable, field_name: str) -> list:
+    return [getattr(item, field_name) for item in group]
+
 def extract_field_as_array(group: Iterable, field_name: str) -> NDArray:
-    return np.asarray([getattr(item, field_name) for item in group])
+    return np.asarray(extract_field_as_list(group, field_name))
 
 def slice_deque(dq: deque, start=None, end=None) -> list:
     length = len(dq)
@@ -552,10 +560,13 @@ class TradeManager:
 
     def on_cancelled_event(self, trade: Trade):
         if trade.orderStatus.status == 'Cancelled':
-            if trade.log and trade.log[-1].status == 'Cancelled' and trade.log[-1].errorCode == 460:
-                # no trading permissions
-                self.lastErrorCode = 460
-
+            if trade.log and trade.log[-1].status == 'Cancelled' and trade.log[-1].errorCode in {451,460}:
+                # 460=no trading permissions
+                # 451=order exceeds the Total Value Limit of 100,000 USD. Restriction is specified in Precautionary Settings of Global Configuration/Presets.
+                self.lastErrorCode = trade.log[-1].errorCode
+            else:
+                self.lastErrorCode = 999
+                logger.info(f"unknown error code: {trade.log[-1].errorCode}")
         logger.info(f"{trade}")
 
 # Function to flatten the trade structure
@@ -843,7 +854,8 @@ annualization_factor_21_390 = np.sqrt(21 * 390) # 1m = 21d * 390m
 #         self.P = self.P - np.dot(np.dot(K, self.H), self.P)
 
 # Example usage
-dt = 1.0  # Time step
+dt_one = 1.0  # Time step
+dt_oneminute = 1./60. # in hours
 # Simulate some data (e.g., measurements of position, velocity, and acceleration)
 #measurements = [np.array([i, i, i]) for i in range(10)]
 # measurements = [np.array([i]) for i in range(10)]
@@ -921,7 +933,7 @@ class Agent:
     ibcontract: ib_insync.contract.Contract = None
     ibcontractDetails: ib_insync.contract.ContractDetails = None
     prevclose: float = 0.0
-    begintime: datetime.datetime = datetime.datetime.now()
+    todayopen: float = 0.0
     barsstartidx: int = 0
     beginprice: float = 0.0
     highsincestart: float = 0.0
@@ -947,11 +959,12 @@ class Agent:
     # source bars
     bars5s: BarDataList = field(default_factory=BarDataList)
     # resampled bars
-    bars10s: BarDataList = field(default_factory=BarDataList)
+    # bars10s: BarDataList = field(default_factory=BarDataList)
     bars15s: BarDataList = field(default_factory=BarDataList)
     bars30s: BarDataList = field(default_factory=BarDataList)
     bars1m: BarDataList = field(default_factory=BarDataList)
     bars2m: BarDataList = field(default_factory=BarDataList)
+    bars3m: BarDataList = field(default_factory=BarDataList)
     bars5m: BarDataList = field(default_factory=BarDataList)
     bars10m: BarDataList = field(default_factory=BarDataList)
     bars15m: BarDataList = field(default_factory=BarDataList)
@@ -962,6 +975,8 @@ class Agent:
     lastPrice: float = 0.0 # cache bars[-1].close
     maxloss: float = 0.0
     trade: ib_insync.order.Trade = None # trade that we placed
+    orderId: int = -1
+    tradePermId: int = -1
     tradeMgr: TradeManager = None
     # order: ib_insync.objects.Order = None
     liveTrading: bool = False
@@ -1008,20 +1023,28 @@ class Agent:
     direction_s16: str = ''
     direction_s24: str = ''
     gf1: bool = False
-
+    gf1_serial: deque = field(default_factory=lambda: deque(maxlen=12*30)) # 12 5-sec ticks per minute, 30 minutes = 0.5 hour worth of ticks
     seen_abs_low: list = field(default_factory=list)
     seen_abs_high: list = field(default_factory=list)
     absolute_low_last5m: bool = False
+    absolute_low_last10m: bool = False
+    absolute_low_last15m: bool = False
+    absolute_low_last30m: bool = False
     absolute_high_last5m: bool = False
+    absolute_high_last10m: bool = False
+    absolute_high_last15m: bool = False
+    absolute_high_last30m: bool = False
     absolute_low: bool = False
     absolute_high: bool = False
- 
+
     def reset(self):
         pass
 
     def request_historical_data(self, contract_1: ib_insync.contract.Contract, cdl: ib_insync.contract.ContractDetails) -> asyncio.Future:
         # contract_1 = self.ibcontract
         # ib.qualifyContracts(contract_1) # already qualified in premkt init
+        start_mkt, end_mkt = get_market_hours()
+        trdSession = ib_insync.contract.TradingSession(start_mkt, end_mkt)
         cdliquid = cdl.liquidSessions()[0]
         cdl_full = cdl.tradingSessions()[0]
         if cdl_full.start.astimezone().time() == datetime.time(18, 0): # 6:00 PM
@@ -1048,24 +1071,25 @@ class Agent:
             # initialize_bars(self.bars15s, '15 secs')
             # initialize_bars(self.bars30s, '30 secs')
             initialize_bars(self.bars, '1 min')
-            # initialize_bars(self.bars2m, '2 mins')
+            initialize_bars(self.bars3m, '3 mins')
             initialize_bars(self.bars5m, '5 mins')
             initialize_bars(self.bars10m, '10 mins')
             initialize_bars(self.bars15m, '15 mins')
             initialize_bars(self.bars30m, '30 mins')
 
             # self.bars5s 
+            useRTH = False
             future = asyncio.ensure_future(self.ib.reqHistoricalDataExtAsync(
                 contract_1,
                 endDateTime='',
                 durationStr='1 D',
                 barSizeSetting='15 secs',
                 whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
-                useRTH=False, # start from ~4:00 AM
+                useRTH=useRTH, # start from ~4:00 AM
                 formatDate=1,
                 keepUpToDate=True,
                 _historicalDataEndHook=self.initial_resample_hook,
-                # tradingHours=cdl
+                _tradingHours=trdSession if useRTH else cdl_full
                 )
             )
             # self.bars = BarDataList()
@@ -1121,6 +1145,13 @@ class Agent:
 
     async def initial_resample_hook(self, start: str, end: str, bars: BarDataList):
         logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
+        N = 2000
+        for n, b in enumerate(bars, start=1):
+            await self.resample_from_5s_core(b, False)
+            if n % N == 0:
+                await asyncio.sleep(0) # yield control to event loop
+        logger.info(f"len(self.bars)={len(self.bars)} {self.bars._npidx} {self.bars._npidx_rth_start} {self.bars._npidx_rth_end}")
+        # logger.info(f"len(self.bars10s)={len(self.bars10s)}")
         # logger.info(f"{self.bars10s._npidx} {self.bars10s._npidx_rth_start} {self.bars10s._npidx_rth_end}")
         # logger.info(f"{pd.DataFrame({'date': self.bars10s.npdate, 'open': self.bars10s.npopen,
         #                              'close': self.bars10s.npclose, 'high': self.bars10s.nphigh,
@@ -1136,13 +1167,6 @@ class Agent:
         # util.df(self.bars15s).rename(columns={'open_': 'open'}).drop(columns=['timestamp']).to_csv('bars15s.csv', index=False)
         # util.df(self.bars30s).rename(columns={'open_': 'open'}).drop(columns=['timestamp']).to_csv('bars30s.csv', index=False)
         # exit(0)
-        N = 2000
-        for n, b in enumerate(bars, start=1):
-            await self.resample_from_5s_core(b, False)
-            if n % N == 0:
-                await asyncio.sleep(0) # yield control to event loop
-        logger.info(f"len(self.bars)={len(self.bars)} {self.bars._npidx} {self.bars._npidx_rth_start} {self.bars._npidx_rth_end}")
-        # logger.info(f"len(self.bars10s)={len(self.bars10s)}")
 
     async def resample_from_5s(self, inBars: BarDataList, inBarHasNewBar: bool):
         """
@@ -1232,6 +1256,7 @@ class Agent:
         hasNewBar30s = b.date.second % 30 == 0
         hasNewBar1m = b.date.second == 0
         hasNewBar2m = hasNewBar1m and b.date.minute % 2 == 0
+        hasNewBar3m = hasNewBar1m and b.date.minute % 3 == 0
         hasNewBar5m = hasNewBar1m and b.date.minute % 5 == 0
         hasNewBar10m = hasNewBar1m and b.date.minute % 10 == 0
         hasNewBar15m = hasNewBar1m and b.date.minute % 15 == 0
@@ -1247,6 +1272,7 @@ class Agent:
         # handle_new_bar(self.bars15s, b, hasNewBar15s)
         # handle_new_bar(self.bars30s, b, hasNewBar30s)
         # handle_new_bar(self.bars2m, b, hasNewBar2m)
+        handle_new_bar(self.bars3m, b, hasNewBar3m)
         handle_new_bar(self.bars5m, b, hasNewBar5m)
         handle_new_bar(self.bars10m, b, hasNewBar10m)
         handle_new_bar(self.bars15m, b, hasNewBar15m)
@@ -1271,7 +1297,11 @@ class Agent:
         self.buyopen_bar1m = data.get('buyopen_bar1m', []) or data['buyopen_bar1m'] # the bar1m where buy was recorded, valid across days
         self.sellclose_bar1m_idx = data.get('sellclose_bar1m_idx', []) or data['sellclose_bar1m_idx']
         self.sellclose_bar1m = data.get('sellclose_bar1m', []) or data['sellclose_bar1m'] # the bar1m where sell was recorded, valid across days
-        self.high_since_buy_bar1m = data.get('high_since_buy_bar1m', []) or data['high_since_buy_bar1m']
+        if self.get_state() == 0:
+            self.high_since_buy_bar1m = []
+        else:
+            # only restore high_since_buy_bar1m if we are in state 1
+            self.high_since_buy_bar1m = data.get('high_since_buy_bar1m', []) or data['high_since_buy_bar1m']
         logger.info(f"session_start: {self.session_start[-1].astimezone()}")
 
         # if self.high_since_buy_bar1m is None:
@@ -1388,23 +1418,32 @@ class Agent:
         else:
             logger.error(f"Unknown contract type {self.contractType}")
             return -1
-        qcon = ib.qualifyContracts(contract_1)
+        self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
+        qcon1 = contractDetails[0].contract
+        qcon = ib.qualifyContracts(contract_1) # won't need this after we have contractDetails
+        assert qcon1 == qcon[0]
         if len(qcon) != 1:
             logger.error(f"Contract must be unique, expected 1 contract, got {qcon}")
             return -1
         else:
             logger.info(f"Contract: {qcon[0]}")
             self.futAvgCostMult = 1.0
+            self.contract_multiplier = 1.0
             if self.contractType == 'FUT':
-                mult_ = float(qcon[0].multiplier)
+                self.contract_multiplier = mult_ = float(qcon[0].multiplier)
                 # future contract avgcost is inflated by the multiplier
                 self.futAvgCostMult = 1./mult_
-            
-        self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
+                expiration_date = datetime.datetime.strptime(contractDetails[0].realExpirationDate, r'%Y%m%d')
+                days_to_expiration = (expiration_date - datetime.datetime.now()).days
+                logger.info(f"Future contract expires in {days_to_expiration} days")
+        # self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1) # moved up
         self.ibTradingSessionIdx = 0
         if len(contractDetails) != 1:
             logger.error(f"Contract must be unique, expected 1 contractDetails, got {len(contractDetails)}")
             logger.error(f"{contractDetails}")
+            return -1
+        elif contractDetails[0].tradingHours == '' or contractDetails[0].liquidHours == '' or contractDetails[0].timeZoneId == '':
+            logger.error(f"Missing trading hours data in contractDetails: {contractDetails[0]}")
             return -1
         dtnow = datetime.datetime.now(local_tz)
         tradingHours_ld = parse_hours(contractDetails[0].tradingHours, contractDetails[0].timeZoneId)
@@ -1420,10 +1459,14 @@ class Agent:
             return -1
         cdliquid = contractDetails[0].liquidSessions()[0]
         logger.info(f"liquid trading hours: {cdliquid.start.astimezone()} to {cdliquid.end.astimezone()}")
+        start_mkt, end_mkt = get_market_hours()
+        if (start_mkt != cdliquid.start or end_mkt != cdliquid.end) and dtnow < cdliquid.end:
+            # logger.info(f"Market hours have changed from {start_mkt.astimezone()} to {cdliquid.start.astimezone()} and from {end_mkt.astimezone()} to {cdliquid.end.astimezone()}")
+            set_market_hours(cdliquid.start, cdliquid.end)
         cdl_full = contractDetails[0].tradingSessions()[0]
         logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
         if cdliquid.end < dtnow and dtnow <= cdl_full.end: # contractDetails[0].liquidSessions()[1].start:
-            logger.info(f"Switching to full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
+            logger.info(f"Liquid trading session has ended, switching to full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
             set_market_hours(cdl_full.start, cdl_full.end)
         elif cdl_full.end < dtnow:
             cdliquid_1 = contractDetails[0].liquidSessions()[1]
@@ -1433,11 +1476,17 @@ class Agent:
                 logger.info(f"Switching to next full trading hours: {cdl_full_1.start.astimezone()} to {cdl_full_1.end.astimezone()}")
                 self.ibTradingSessionIdx = 1
                 set_market_hours(cdl_full_1.start, cdl_full_1.end)
+            elif dtnow < cdl_full_1.start and dtnow <= cdl_full_1.end:
+                logger.info(f"Trading hours have ended for today")
+                logger.info(f"Next full trading hours: {cdl_full_1.start.astimezone()} to {cdl_full_1.end.astimezone()}")
+                self.ibTradingSessionIdx = 1
+                set_market_hours(cdl_full_1.start, cdl_full_1.end)
             else:
                 logger.error(f"Trading hours have ended for today and the next one starts at {cdl_full_1.start.astimezone()}")
                 return -1
 
         # request historical data
+        start_mkt, end_mkt = get_market_hours()
         future = self.request_historical_data(contract_1, contractDetails[0]) # onBarUpdate could fire before this method returns
 
         # request market data
@@ -1512,13 +1561,16 @@ class Agent:
         # IB avgCost is adjusted by wash-sale. 
         # Plus we sometimes sit on a gain or loss that we want to ignore
         # and use the previous close as avgCost.
+        # only adjust if it's a carry over position from previous day. new trades aren't affected.
         if self.stkpos and self.stkpos.position > 0:
             if self.avgcost_prevclose:
                 self.useAvgCost = self.prevclose
-                logger.info(f"Using prevclose {self.useAvgCost} as avgcost")
+                logger.info(f"IB avgCost {self.stkpos.avgCost} is not used, using prevclose {self.useAvgCost} as avgcost")
                 # self.stkpos.avgCost = self.useAvgCost
                 # logger.info(f"Override avgcost {self.stkpos.avgCost} with {self.useAvgCost}")
-            else:
+            elif not self.avgcost_prevclose or self.ib.trades():
+                if self.ib.trades():
+                    logger.info(f"IB avgCost {self.stkpos.avgCost * self.futAvgCostMult}") #  is not adjusted
                 self.useAvgCost = self.stkpos.avgCost
         else:
             self.useAvgCost = 0.0
@@ -1535,16 +1587,16 @@ class Agent:
         else:
             self.bars = future.result()
 
-        if len(self.bars) > 0:
-            dtnow = datetime.datetime.now(local_tz)
-            if dtnow.weekday() >= 5:  # Saturday or Sunday
-                logging.warning(f"{dtnow.strftime('%A')} is not trading today")
-            else:
-                if self.bars[0].date.date() != dtnow.date():
-                    logging.warning(f"Expect first bar {self.bars[0]} to be today")
-                # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
-        else:
-            assert False, "Expect at least one bar"
+        # if len(self.bars) > 0:
+        #     dtnow = datetime.datetime.now(local_tz)
+        #     if dtnow.weekday() >= 5:  # Saturday or Sunday
+        #         logging.warning(f"{dtnow.strftime('%A')} is not trading today")
+        #     else:
+        #         if self.bars[0].date.date() != dtnow.date():
+        #             logging.warning(f"Expect first bar {self.bars[0]} to be today")
+        #         # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
+        # else:
+        #     assert False, "Expect at least one bar"
         self.barsstartidx = len(self.bars) - 1
         self.beginprice = self.bars[self.barsstartidx].close
         isResampled = f'(resampled)' if self.use5s else ''
@@ -1581,22 +1633,27 @@ class Agent:
         # x0 = np.array([0, 0, 0])
         # kf = KalmanFilter(A, B, H, Q, R, P, x0)
 
-        self.kf_ca = make_ca_filter(dt, std_R=1)
+        initial_price = get_market_price() or self.prevclose
+
+        self.kf_ca = make_ca_filter(dt_one, std_R=1)
         self.kf_ca_saver = Saver(self.kf_ca)
-        self.kf_ca.x = np.array([self.prevclose, 0, 0]).T
-        self.kf_ca.P *= 0.0001
-        self.kf_ca.R *= 0.01
-        self.kf_ca.Q = Q_continuous_white_noise(dim=3, dt=0.05, spectral_density=1.)
+        self.kf_ca.x = np.array([initial_price, 0, 0]).T
+        self.kf_ca.P *= 0.05 * initial_price
+        self.kf_ca.R *= 0.01 * initial_price
+        self.kf_ca.Q = Q_continuous_white_noise(dim=3, dt=dt_one, spectral_density=1.)
         # self.kf_cv = make_cv_filter(dt, std_R=1)
 
-        def fx_cv(x, dt):
+        def fx_nonlinear(x, dt):
             """
             P_1 = P_0 * exp(return * dt), return = x[1], P_0 = x[0]
             """
-            assert x.shape == (2, 1)
-            exp_term = np.exp(x[1] * dt)
-            xout = np.asarray([[x[0] * exp_term], [x[1]]])
-            assert xout.shape == (2, 1)
+            # assert x.shape == (2, 1)
+            price, r = x[0], x[1]
+            # exp_term = np.exp(x[1] * dt)
+            # xout = np.asarray([[x[0] * exp_term], [x[1]]])
+            new_price = price * np.exp(r * dt)
+            xout = np.asarray([new_price, r])
+            # assert xout.shape == (2, 1)
             return xout
 
         def hx_cv(x):
@@ -1605,19 +1662,20 @@ class Agent:
             state variables: [log price, instantaneous continuously-compounded return]
             measurement variables: [price]
             """
-            assert x.shape == (2, 1)
-            xout = np.exp([x[:1]]) # log price to price
-            assert xout.shape == (1, 1)
+            # assert x.shape == (2, 1)
+            # xout = np.exp([x[:1]]) # log price to price
+            xout = np.asarray([x[0]])
+            # assert xout.shape == (1, 1)
             return xout
 
         sigmas_merwe = MerweScaledSigmaPoints(n=2, alpha=0.5, beta=2., kappa=1.)
         sigmas_julier = JulierSigmaPoints(n=2, kappa=1)
-        self.ukf_cv = UnscentedKalmanFilter(dim_x=2, dim_z=1, dt=dt, hx=hx_cv, fx=fx_cv, points=sigmas_merwe)
-        self.ukf_cv.x = np.array([[self.prevclose], [0]])
-        assert self.ukf_cv.x.shape == (2, 1)
-        self.ukf_cv.P *= 0.0001
-        self.ukf_cv.R *= 0.01
-        self.ukf_cv.Q = Q_continuous_white_noise(dim=2, dt=0.05, spectral_density=1.)
+        self.ukf_cv = UnscentedKalmanFilter(dim_x=2, dim_z=1, dt=dt_oneminute, hx=hx_cv, fx=fx_nonlinear, points=sigmas_merwe)
+        self.ukf_cv.x = np.array([initial_price, 0])
+        # assert self.ukf_cv.x.shape == (2, 1)
+        self.ukf_cv.P *= 0.05 * initial_price # 5% of initial price
+        self.ukf_cv.R *= 0.01 * initial_price # measurement noise
+        # self.ukf_cv.Q = Q_continuous_white_noise(dim=2, dt=0.05, spectral_density=1.)
         return 0
 
     def simpleShortStrategyInit(self) -> int:
@@ -1802,23 +1860,25 @@ class Agent:
             logger.info(f"K={s.K[-2:]}")
             logger.info(f"y={s.y[-2:]}")
 
-            # self.ukf_cv.predict()
-            # self.ukf_cv.update(currentFullBar.average)
-            # logger.info("ukf_cv")
-            # logger.info(f"x={self.ukf_cv.x[-2:]}")
-            # logger.info(f"P={self.ukf_cv.P[-2:]}")
-            # logger.info(f"K={self.ukf_cv.K[-2:]}")
-            # logger.info(f"y={self.ukf_cv.y[-2:]}")
+            self.ukf_cv.predict()
+            self.ukf_cv.update(np.asarray([currentFullBar.average]))
+            logger.info("ukf_cv")
+            logger.info(f"x={self.ukf_cv.x[-2:]}")
+            logger.info(f"P={self.ukf_cv.P[-2:]}")
+            logger.info(f"K={self.ukf_cv.K[-2:]}")
+            logger.info(f"y={self.ukf_cv.y[-2:]}")
 
         if self.use5s:
+            cBar3m = self.bars3m[-1]
             cBar5m = self.bars5m[-1]
             cBar10m = self.bars10m[-1]
             cBar15m = self.bars15m[-1]
             cBar30m = self.bars30m[-1]
-            cFull5m = self.bars5m[-2]
-            cFull10m = self.bars10m[-2]
-            cFull15m = self.bars15m[-2]
-            cFull30m = self.bars30m[-2]
+            cFull3m = self.bars3m[-2:][-1]
+            cFull5m = self.bars5m[-2:][-1]
+            cFull10m = self.bars10m[-2:][-1]
+            cFull15m = self.bars15m[-2:][-1]
+            cFull30m = self.bars30m[-2:][-1]
             logger.info(f"cur: 5m {_repr_bar(cBar5m)}, 10m {_repr_bar(cBar10m)}, 15m {_repr_bar(cBar15m)}, 30m {_repr_bar(cBar30m)}")
             logger.info(f"full: 5m {_repr_bar(cFull5m)}, 10m {_repr_bar(cFull10m)}, 15m {_repr_bar(cFull15m)}, 30m {_repr_bar(cFull30m)}")
             if cBar5m: gkvol5m = garman_klass_volatility(cBar5m.open_, cBar5m.high, cBar5m.low, cBar5m.close, 1)
@@ -1957,6 +2017,7 @@ class Agent:
             #     f" (ann) {annualization_factor_252_390 * pkvol:.2%}"
             # )
             if self.use5s:
+                gkrunvol3m = garman_klass_volatility(self.bars3m.npopen, self.bars3m.nphigh, self.bars3m.nplow, self.bars3m.npclose, len(self.bars3m.npopen))
                 gkrunvol5m = garman_klass_volatility(self.bars5m.npopen, self.bars5m.nphigh, self.bars5m.nplow, self.bars5m.npclose, len(self.bars5m.npopen))
                 gkrunvol10m = garman_klass_volatility(self.bars10m.npopen, self.bars10m.nphigh, self.bars10m.nplow, self.bars10m.npclose, len(self.bars10m.npopen))
                 gkrunvol15m = garman_klass_volatility(self.bars15m.npopen, self.bars15m.nphigh, self.bars15m.nplow, self.bars15m.npclose, len(self.bars15m.npopen))
@@ -1988,7 +2049,7 @@ class Agent:
             pkvol = parkinson_volatility(high_prices, low_prices, n)
             logger.info(f"parkinson run vol {pkvol:.3%}/min {annualization_factor_390 * pkvol:.2%}/d {annualization_factor_5_390 * pkvol:.2%}/5d {annualization_factor_21_390 * pkvol:.2%}/21d {annualization_factor_252_390 * pkvol:.2%}/y")
 
-        logger.info(f"current bar: {currentBar.date.isoformat()}, MKTOPEN {MKTOPEN.isoformat()}, MKTCLOSE {MKTCLOSE.isoformat()}")
+        # logger.info(f"current bar: {currentBar.date.isoformat()}, MKTOPEN {MKTOPEN.isoformat()}, MKTCLOSE {MKTCLOSE.isoformat()}")
         if currentBar.date >= MKTOPEN and currentBar.date <= MKTCLOSE:
             if not self.dayhilopct: # initialize
                 # logger.info(f"initialize dayhilopct")
@@ -2021,29 +2082,68 @@ class Agent:
             logger.info(f"log day hi/lo (a,h,l,c): {dayloghl_avg:.2%} {dayloghl_high:.2%} {dayloghl_low:.2%} {dayloghl_close:.2%} ({dayhl_avg-1.:.2%} {dayhl_high-1.:.2%} {dayhl_low-1.:.2%} {dayhl_close-1.:.2%})")
             logger.info(f"cur%: {curratio_avg:.1%} {curratio_high:.1%} {curratio_low:.1%} {curratio_close:.1%}")
             absolute_low_thres = 0.0004
-            self.absolute_low = curratio_avg < absolute_low_thres and curratio_high < absolute_low_thres and curratio_low < absolute_low_thres and curratio_close < absolute_low_thres
+            self.absolute_low = (curratio_avg < absolute_low_thres and curratio_high < absolute_low_thres and curratio_low < absolute_low_thres and curratio_close < absolute_low_thres) \
+                or (curratio_avg < absolute_low_thres and curratio_high < absolute_low_thres) or (curratio_low < absolute_low_thres and curratio_close < absolute_low_thres) \
+                or (curratio_high < absolute_low_thres and curratio_close < absolute_low_thres) or (curratio_avg < absolute_low_thres and curratio_high < absolute_low_thres)
             absolute_high_thres = 0.9995
             self.absolute_high = curratio_avg >= absolute_high_thres and curratio_high >= absolute_high_thres and curratio_low >= absolute_high_thres and curratio_close >= absolute_high_thres
-            self.absolute_low_last5m = False
-            self.absolute_high_last5m = False
+            self.absolute_low_last30m = self.absolute_low_last15m = self.absolute_low_last10m = self.absolute_low_last5m = False
+            self.absolute_high_last30m = self.absolute_high_last15m = self.absolute_high_last10m = self.absolute_high_last5m = False
+            five_minutes = 5*60 # 5 minutes in seconds
+            ten_minutes = 10*60 # 10 minutes in seconds
+            fifteen_minutes = 15*60 # 15 minutes in seconds
+            thirty_minutes = 30*60 # 30 minutes in seconds
             if self.absolute_low and not self.seen_abs_low:
                 self.seen_abs_low.append(dtnow)
                 self.absolute_low_last5m = False # first time seen, we don't care
-            elif self.absolute_low and (dtnow - self.seen_abs_low[-1]).total_seconds() < 5*60:
+            elif self.absolute_low and self.seen_abs_low and (dtnow - self.seen_abs_low[-1]).total_seconds() < five_minutes:
                 logger.info(f"absolute low within 5 minutes")
                 self.seen_abs_low[-1] = dtnow
                 self.absolute_low_last5m = True
-            elif not self.absolute_low and self.seen_abs_low and (dtnow - self.seen_abs_low[-1]).total_seconds() < 5*60:
+            elif not self.absolute_low and self.seen_abs_low and (dtnow - self.seen_abs_low[-1]).total_seconds() < five_minutes:
                 logger.info(f"absolute low within 5 minutes")
                 self.absolute_low_last5m = True
+            elif self.absolute_low and self.seen_abs_low and (dtnow - self.seen_abs_low[-1]).total_seconds() >= five_minutes:
+                self.seen_abs_low.append(dtnow)
+                logger.info(f"seen_abs_low: count={len(self.seen_abs_low)}")
+                self.absolute_low_last5m = False # seeing it again for the first time after the previous 5 minutes interval
+            else:
+                pass
 
             if self.absolute_high and not self.seen_abs_high:
                 self.seen_abs_high.append(dtnow)
+                self.absolute_high_last5m = False # first time seen, we don't care
+            elif self.absolute_high and self.seen_abs_high and (dtnow - self.seen_abs_high[-1]).total_seconds() < five_minutes:
+                logger.info(f"absolute high within 5 minutes")
+                self.seen_abs_high[-1] = dtnow
                 self.absolute_high_last5m = True
-            elif self.absolute_high and (dtnow - self.seen_abs_high[-1]).total_seconds() < 5*60:
+            elif not self.absolute_high and self.seen_abs_high and (dtnow - self.seen_abs_high[-1]).total_seconds() < five_minutes:
                 logger.info(f"absolute high within 5 minutes")
                 self.absolute_high_last5m = True
-            
+            elif self.absolute_high and self.seen_abs_high and (dtnow - self.seen_abs_high[-1]).total_seconds() >= five_minutes:
+                self.seen_abs_high.append(dtnow)
+                logger.info(f"seen_abs_high: count={len(self.seen_abs_high)}")
+                self.absolute_high_last5m = False # seeing it again for the first time after the previous 5 minutes interval
+            else:
+                pass
+
+            # match (self.absolute_high, bool(self.seen_abs_high), (dtnow - self.seen_abs_high[-1]).total_seconds() if self.seen_abs_high else None):
+            #     case (True, False, _):
+            #         self.seen_abs_high.append(dtnow)
+            #         self.absolute_high_last5m = False # first time seen, we don't care
+            #     case (True, True, seconds) if seconds < 5*60:
+            #         logger.info(f"absolute high within 5 minutes")
+            #         self.seen_abs_high[-1] = dtnow
+            #         self.absolute_high_last5m = True
+            #     case (False, True, seconds) if seconds < 5*60:
+            #         logger.info(f"absolute high within 5 minutes")
+            #         self.absolute_high_last5m = True
+            #     case (True, True, seconds) if seconds >= 5*60:
+            #         self.seen_abs_high.append(dtnow)
+            #         self.absolute_high_last5m = False # seeing it again for the first time after the previous 5 minutes interval
+            #     case _:
+            #         pass
+
             # logger.info(f"30m: {self.bars30m[-10:]}")
             self.b30m_serially_lower_avg = [bb[0].average > bb[1].average for bb in pairwise(self.bars30m)]
             self.b30m_serially_lower_high = [bb[0].high > bb[1].high for bb in pairwise(self.bars30m)]
@@ -2071,6 +2171,24 @@ class Agent:
             logger.info(f"5m serially lower high: {list(map(int, self.b5m_serially_lower_high[-10:]))}")
             logger.info(f"5m serially lower low: {list(map(int, self.b5m_serially_lower_low[-10:]))}")
             logger.info(f"5m serially lower close: {list(map(int, self.b5m_serially_lower_close[-10:]))}")
+
+            self.b3m_serially_lower_avg = [bb[0].average > bb[1].average for bb in pairwise(self.bars3m)]
+            self.b3m_serially_lower_high = [bb[0].high > bb[1].high for bb in pairwise(self.bars3m)]
+            self.b3m_serially_lower_low = [bb[0].low > bb[1].low for bb in pairwise(self.bars3m)]
+            self.b3m_serially_lower_close = [bb[0].close > bb[1].close for bb in pairwise(self.bars3m)]
+            logger.info(f"3m serially lower avg: {list(map(int, self.b3m_serially_lower_avg[-10:]))}")
+            logger.info(f"3m serially lower high: {list(map(int, self.b3m_serially_lower_high[-10:]))}")
+            logger.info(f"3m serially lower low: {list(map(int, self.b3m_serially_lower_low[-10:]))}")
+            logger.info(f"3m serially lower close: {list(map(int, self.b3m_serially_lower_close[-10:]))}")
+
+            self.b1m_serially_lower_avg = [bb[0].average > bb[1].average for bb in pairwise(self.bars)]
+            self.b1m_serially_lower_high = [bb[0].high > bb[1].high for bb in pairwise(self.bars)]
+            self.b1m_serially_lower_low = [bb[0].low > bb[1].low for bb in pairwise(self.bars)]
+            self.b1m_serially_lower_close = [bb[0].close > bb[1].close for bb in pairwise(self.bars)]
+            logger.info(f"1m serially lower avg: {list(map(int, self.b1m_serially_lower_avg[-10:]))}")
+            logger.info(f"1m serially lower high: {list(map(int, self.b1m_serially_lower_high[-10:]))}")
+            logger.info(f"1m serially lower low: {list(map(int, self.b1m_serially_lower_low[-10:]))}")
+            logger.info(f"1m serially lower close: {list(map(int, self.b1m_serially_lower_close[-10:]))}")
 
             # volatility
             if not self.volatility_per_min:
@@ -2128,7 +2246,11 @@ class Agent:
                 self.volatility_per_min[-1] = vol_tup
         # rate of change
         roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
-        logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
+        if len(bars) > 2:
+            roc2 = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, min(11, len(bars)))]
+            if not np.isclose(roc, roc2, atol=1e-6).all():
+                logger.warning(f"roc != roc2: {roc} != {roc2}")
+            logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
         # high minus low
         hml_ = currentBar.high - currentBar.low
         hmlpct_ = hml_ / self.prevclose
@@ -2148,21 +2270,22 @@ class Agent:
         # update high water mark since last buy, for the purpose of calculating drawdown
         needCheckpoint = False
         if self.high_since_buy_bar1m:
-            b = self.high_since_buy_bar1m[-1]
-            if self.high_since_buy_bar1m[-1].average <= currentBar.average:
+            b = self.high_since_buy_bar1m[-1] # just for shortening
+            prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
+            if b.average <= currentBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
-                prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
                 # self.high_since_buy_bar1m[-1] = currentBar
+                self.high_since_buy_bar1m.clear()
                 self.high_since_buy_bar1m.append(copy.copy(currentBar))
                 needCheckpoint = True
-                logger.info(f"high_since_buy_bar1m from {prev} to {self.high_since_buy_bar1m[-1]}")
-            if self.high_since_buy_bar1m[-1].average <= currentFullBar.average:
+                logger.info(f"high_since_buy_bar1m from {_repr_bar(prev)} to cbar {_repr_bar(self.high_since_buy_bar1m[-1])}")
+            if b.average <= currentFullBar.average:
                 # prev = self.high_since_buy_bar1m[-1].copy()
-                prev = BarData(b.date, b.open_, b.high, b.low, b.close, b.volume, b.average)
                 # self.high_since_buy_bar1m[-1] = currentFullBar
+                self.high_since_buy_bar1m.clear()
                 self.high_since_buy_bar1m.append(copy.copy(currentFullBar))
                 needCheckpoint = True
-                logger.info(f"high_since_buy_bar1m from {prev} to {self.high_since_buy_bar1m[-1]}")
+                logger.info(f"high_since_buy_bar1m from {_repr_bar(prev)} to fbar {_repr_bar(self.high_since_buy_bar1m[-1])}")
         # we initialize it when we buy or when session starts and have position
         # else:
         #     self.high_since_buy_bar1m.append(currentBar)
@@ -2253,6 +2376,8 @@ class Agent:
                         self.set_state(99) # bail out of main loop               
                         return
                     elif datetime.datetime.now(local_tz) > MKTCLOSE + datetime.timedelta(seconds=60):
+                        start_mkt, end_mkt = get_market_hours()
+                        logger.info(f"start_mkt={start_mkt}, end_mkt={end_mkt}")
                         logger.info(f"Market closed, exiting...")
                         self.set_state(99) # bail out of main loop
                     assert self.strategyinitstatus == 0, "Strategy initialization should return success"
@@ -2334,6 +2459,7 @@ class Agent:
                 if self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade status: {self.trade}"
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                     # allow to proceed
@@ -2341,6 +2467,7 @@ class Agent:
                     logger.error(f"Trade was cancelled: {self.trade}, undoing state change ({self.state} -> {self.prevstate}), resetting trade to None")
                     self.state = self.prevstate # undo state change
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     return
             else: # self.trade is None, stkpos is not None
@@ -2369,11 +2496,13 @@ class Agent:
                     logmsg = f"Trade is filled: {self.trade.log}"
                     # self.state = 1
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                 else:
                     logmsg = f"Trade not filled: {self.trade.log}"
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.error(logmsg + f", resetting trade to None")
                     return # proceed or not?
@@ -2450,7 +2579,7 @@ class Agent:
             
             if tbg or tbg1y or cnh:
                 logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh ({cnhratio_actual2:.3},{cnhratio_actual3:.3})={cnh}")
-                logger.info(f"bars[-2]={self.bars[-2]} bars[-3]={self.bars[-3]}")
+                logger.info(f"bars[-2]={_repr_bar(self.bars[-2])} bars[-3]={_repr_bar(self.bars[-3])}")
             if hml2 <= self.ibcontractDetails[0].minTick or hml3 <= self.ibcontractDetails[0].minTick:
                 logging.warning(f"hml too small, result invalid: hml2={hml2} hml3={hml3} minTick={self.ibcontractDetails[0].minTick}")
                 return False
@@ -2531,6 +2660,46 @@ class Agent:
                     break
             return count
 
+        # 11/26/24: when to buy? ft=True, near low of the day, last 4 bars are not green, 
+        #   follow by one green, and current bar average is higher than previous at the bottom of current minute
+        #   nvda 14:26
+        def mn_bars_red(bars: BarDataList, start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
+            """
+            start, end are negative list index
+            count the number of consecutive red bars from start to end
+            """
+            # if len(bars) < abs(start) or len(bars) < abs(end):
+            #     return False
+            count = 0
+            # logger.info(f"bars: {bars[start:end:-1]}")
+            for bar in bars[start:end:-1]: # from the tail end
+                if bar.close < bar.open_:
+                    count += 1
+                elif relax and bar.close == bar.open_: # yellow bar ok if relax
+                    count += 1
+                elif not relax and bar.close == bar.open_: # yellow bar not ok if not relax
+                    break
+                elif consecutive: # we're looking for consecutive red bars
+                    break
+            return count
+
+        def mn_bars_green(bars: BarDataList, start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
+            """
+            start, end are negative list index
+            count the number of consecutive green bars from start to end
+            """
+            count = 0
+            for bar in bars[start:end:-1]: # from the tail end
+                if bar.close > bar.open_:
+                    count += 1
+                elif relax and bar.close == bar.open_: # yellow bar ok if relax
+                    count += 1
+                elif not relax and bar.close == bar.open_: # yellow bar not ok if not relax
+                    break
+                elif consecutive: # we're looking for consecutive red bars
+                    break
+            return count
+
         def seekEntry(isFollowThrough: bool = False):
             """
             pre-condition: no position, no outstanding trades, milestone has been reset
@@ -2561,30 +2730,39 @@ class Agent:
             # when "following through" (ft), basically we got stoppped out near recent low
             # we should wait for the next opportunity to buy below last sold price and avoid trashing
 
-            # 11/26/24: when to buy? ft=True, near low of the day, last 4 bars are not green, 
-            #   follow by one green, and current bar average is higher than previous at the bottom of current minute
-            #   nvda 14:26
-            def mn_bars_red(bars: BarDataList, start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
-                """
-                start, end are negative list index
-                count the number of consecutive red bars from start to end
-                """
-                # if len(bars) < abs(start) or len(bars) < abs(end):
-                #     return False
-                count = 0
-                for bar in bars[start:end:-1]: # from the tail end
-                    if bar.close < bar.open_:
-                        count += 1
-                    elif relax and bar.close == bar.open_: # yellow bar ok if relax
-                        count += 1
-                    elif not relax and bar.close == bar.open_: # yellow bar not ok if not relax
-                        break
-                    elif consecutive: # we're looking for consecutive red bars
-                        break
-                return count
-            lkbk = -3
-            nbr_actual: int = mn_bars_red(self.bars[lkbk-20:], lkbk, lkbk-20, relax=True, consecutive=True)
+            # # 11/26/24: when to buy? ft=True, near low of the day, last 4 bars are not green, 
+            # #   follow by one green, and current bar average is higher than previous at the bottom of current minute
+            # #   nvda 14:26
+            # def mn_bars_red(bars: BarDataList, start: int, end: int, relax: bool=False, consecutive: bool=False) -> int:
+            #     """
+            #     start, end are negative list index
+            #     count the number of consecutive red bars from start to end
+            #     """
+            #     # if len(bars) < abs(start) or len(bars) < abs(end):
+            #     #     return False
+            #     count = 0
+            #     for bar in bars[start:end:-1]: # from the tail end
+            #         if bar.close < bar.open_:
+            #             count += 1
+            #         elif relax and bar.close == bar.open_: # yellow bar ok if relax
+            #             count += 1
+            #         elif not relax and bar.close == bar.open_: # yellow bar not ok if not relax
+            #             break
+            #         elif consecutive: # we're looking for consecutive red bars
+            #             break
+            #     return count
+            lkbk3 = -3
+            nbr_actual: int = mn_bars_red(self.bars[lkbk3-20:], lkbk3, lkbk3-20, relax=True, consecutive=True)
             nbr4 = nbr_actual >= 4 # looking for strings of 4+ red bars, starting from -3
+
+            lkbk2 = -2 # second to last bar, we'll test the last bar (most recent bar) separately
+            nb5mr_actual: int = mn_bars_red(self.bars5m[lkbk2-8:], lkbk2, lkbk2-8, relax=True, consecutive=True)
+            nb5mr = nb5mr_actual >= 4 # looking for strings of 4+ red bars, starting from -3
+
+            lkbk1 = -1 # last bar (aka most recent bar)
+            nbg_actual: int = mn_bars_green(self.bars5m[lkbk1-8:], lkbk1, lkbk1-8, relax=True, consecutive=True)
+            nbg4 = nbg_actual >= 4 # looking for strings of 4+ red bars, starting from -3
+
             pbonl_threshold = 0.2
             pbhml_ = prevBar.high - prevBar.low
             pbonl_realized: float = (prevBar.open_ - prevBar.low) / pbhml_ if pbhml_ != 0.0 else 0.0 # previous bar open near low
@@ -2613,48 +2791,88 @@ class Agent:
 
             seconds_after_open = (datetime.datetime.now(local_tz) - MKTOPEN).seconds
             if currentBar.average < self.prevclose and (seconds_after_open < 5*60):
-                logger.info(f"open lower, , no action")
+                logger.info(f"open lower, no action")
                 return
 
-            if orig_cond or isFollowThrough or self.gf1 or (not self.absolute_low and self.absolute_low_last5m): # must add additional check when isFollowThrough
+            # buy when no more absolute low after seeing absolute low in the last X minutes
+            # and bar3m is not red and bar3m serial average is lower
+            # and bar3m exit is higher than average
+            if currentBar.date >= MKTOPEN:
+                b5m_ser_lwr_avg_4 = list(map(int, self.b5m_serially_lower_avg[-4:]))
+                logger.info(f"b5m_ser_lwr_avg_4: {b5m_ser_lwr_avg_4}")
+            if self.absolute_low_last5m:
+                logger.info(f"bar1m: {_repr_barlist(self.bars[-3:])}")
+                logger.info(f"bar3m: {_repr_barlist(self.bars3m[-3:])}")
+                logger.info(f"bar5m: {_repr_barlist(self.bars5m[-3:])}")
+                logger.info(f"bar15m: {_repr_barlist(self.bars15m[-3:])}")
+                logger.info(f"bar30m: {_repr_barlist(self.bars30m[-3:])}")
+            abs_low_buy = False
+            match len(self.seen_abs_low):
+                case 1:
+                    abs_low_buy = not self.absolute_low and self.absolute_low_last5m
+                case 2:
+                    abs_low_buy = not self.absolute_low and self.absolute_low_last5m \
+                        and self.bars3m[-1].close > self.bars3m[-1].average and self.b3m_serially_lower_avg[-2:] == [True, True]
+                case _:
+                    abs_low_buy = not self.absolute_low and self.absolute_low_last5m and not (self.b30m_serially_lower_avg[-3:] == [True, True, True])
+            if orig_cond or isFollowThrough or self.gf1 or abs_low_buy: # must add additional check when isFollowThrough
                 buy_action = False
                 if isFollowThrough:
                     # fyi
                     ft1 = nbr4 and pbonl and pbg and cbah and at30s
-                    logger.info(f"ft1: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
+                    logger.info(f"ft1={ft1}: nbr4({nbr_actual:n})={nbr4}, pbonl({pbonl_realized:.3})={pbonl}, pbg={pbg}, cbah={cbah}, at30s={at30s}")
                     ft2 = False
                     if self.dayhilopct:
                         # ft2 = (dl0mb or dl1mb or dl2mb or dl3mb) and pbg and cbah
                         ft2 = dlmb_arr.any() and pbg and cbah
                     # logger.info(f"ft2: dl0m({dl0m:.1%})={dl0mb}, dl1m({dl1m:.1%})={dl1mb}, dl2m({dl2m:.1%})={dl2mb}, dl3m({dl3m:.1%})={dl3mb}, pbcnh({pbcnh_real:.3})={pbcnh}")
-                    logger.info(f"ft2: dlmb={dlmb_arr}, pbg={pbg}, cbah={cbah}")
+                    logger.info(f"ft2={ft2}: dlmb={dlmb_arr}, pbg={pbg}, cbah={cbah}")
+                    b5m_ser_lwr_avg_6_lst = list(map(int, self.b5m_serially_lower_avg[-6:]))
+                    b5m_ser_lwr_avg_6 = b5m_ser_lwr_avg_6_lst == [1, 1, 1, 1, 1, 0]
+                    nb5mr = nb5mr_actual >= 4 # looking for strings of 4+ red bars, starting from -3
+                    ft3 = nb5mr and b5m_ser_lwr_avg_6 and currentBar.average > self.todayopen
+                    logger.info(f"ft3={ft3}: b5m_ser_lwr_avg_6={b5m_ser_lwr_avg_6_lst}, nb5mr({nb5mr_actual})={nb5mr}, cBar/open={currentBar.average/self.todayopen-1.:.2%}")
                     if not blw_lsp and not self.gf1:
                         logger.info(f"blw_lsp: {blw_lsp}, gf1: {self.gf1}, no action")
                         return
+                    elif (blw_lsp and ft3):
+                        logger.info(f"blw_lsp: {blw_lsp}, ft3: {ft3}, buying...")
+                        buy_action = True
                     elif (blw_lsp and self.gf1) or (not blw_lsp and self.gf1 and (ft1 or ft2)): # AND gf1 (19-Dec-2024)
                         # we are below last sold price OR gauss filter indic are all positives, we can buy
                         # but only if ...
-                        if (ft1 and self.gf1) or (ft2 and self.gf1) or self.gf1:
-                            # using limit order
-                            t = ib.tickers()[0]
-                            mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
-                            mktPrice = round(t.marketPrice() / mintick) * mintick
-                            self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
-                            self.order.account = self.tradingaccount
+                        # if (ft1 and self.gf1) or (ft2 and self.gf1) or self.gf1:
+                        if (ft1 and self.gf1) or (ft2 and self.gf1):
+                            buy_action = True
+                            # # using limit order
+                            # t = ib.tickers()[0]
+                            # mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
+                            # mktPrice = round(t.marketPrice() / mintick) * mintick
+                            # self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
+                            # self.order.account = self.tradingaccount
                         else:
                             logger.info(f"blw_lsp: {blw_lsp}, ft1: {ft1}, ft2: {ft2}, gf1: {self.gf1}, no action")
                             return
                     elif (not self.absolute_low and self.absolute_low_last5m):
                         logger.info(f"absolute_low {self.absolute_low}, absolute_low_last5m {self.absolute_low_last5m}, buying...")
+                        buy_action = True
+                        # # using limit order
+                        # t = ib.tickers()[0]
+                        # mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
+                        # mktPrice = round(t.marketPrice() / mintick) * mintick
+                        # self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
+                        # self.order.account = self.tradingaccount
+                    else:
+                        logger.info(f"blw_lsp: {blw_lsp}, gf1: {self.gf1}, no action")
+                        return
+                    if buy_action:
                         # using limit order
                         t = ib.tickers()[0]
                         mintick = self.ibcontractDetails[0].minTick  # Assuming the minimum tick size is 0.01, adjust as necessary
                         mktPrice = round(t.marketPrice() / mintick) * mintick
                         self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
                         self.order.account = self.tradingaccount
-                    else:
-                        logger.info(f"blw_lsp: {blw_lsp}, gf1: {self.gf1}, no action")
-                        return
+
                 elif not isFollowThrough and self.gf1: # original condition, AND gf1 (19-Dec-2024)
                     # ok using market order
                     logger.info(f"isFollowThrough: {isFollowThrough}, gf1: {self.gf1}, buying...")
@@ -2681,10 +2899,13 @@ class Agent:
                 if self.trade and self.trade.orderStatus.status == 'Filled':
                     logger.info(f"clearing old trade {self.trade.log}")
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                 if self.trade is None:
                     if self.liveTrading:
                         self.set_state(1) # because this is market order, we can change state immediately
                         self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                        self.orderId = self.trade.order.orderId # we only have orderId after the order is placed, no permId yet
+                        # self.tradePermId = self.trade.order.permId
                         self.tradeMgr = TradeManager(self.trade)
                         if self.order.action == 'BUY':
                             self.lastBuyTrade = self.trade
@@ -2712,6 +2933,7 @@ class Agent:
                     logger.info(f"Trade is filled: {self.trade.log}")
                     self.set_state(1)
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                 else:
                     logger.warning(f"should not reach here {self.trade}")
@@ -2731,7 +2953,7 @@ class Agent:
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time is {tdiff:.2f} seconds" + (f" ahead" if tdiff > 0 else " behind") + f" current time")
         basprd = t.ask - t.bid
-        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} b/a spread {basprd:.2f} ({basprd/lastPrice_:.3%}) volume {t.volume:n}")
+        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} b/a spread {basprd:.2f} ({basprd/lastPrice_:.3%}) high {t.high} low {t.low} volume {t.volume:n}")
         # lastPrice_ = get_market_price() # move to the top
 
         # volatility
@@ -2741,12 +2963,13 @@ class Agent:
 
        # calculate trapdoor index
         trdrIdx_ = 0
+        chgDn = lastPrice_/self.prevclose-1.
         # find the highest (down) milestone crossed, i.e. dnPctMilestone[trdrIdx_] > lastPrice_ > dnPctMilestone[trdrIdx_+1]
         # chg = (lastPrice_/self.prevclose-1.)
         # logger.info(f"lastPrice_={lastPrice_:.2f}, prevclose={self.prevclose:.2f}, chg={chg:.2%}")
         while trdrIdx_ < len(self.dnPctMilestone) and chg < self.dnPctMilestone[trdrIdx_]:
             trdrIdx_ += 1
-            ret = (lastPrice_/self.prevclose-1.)
+            # chg = (lastPrice_/self.prevclose-1.)
         logger.info(f"trdrIdx_={trdrIdx_}, dnPctMilestone[trdrIdx_]={self.dnPctMilestone[trdrIdx_]:.2%}")
         if trdrIdx_ > 0:
             trdrIdx_ -= 1 # Adjust because when the loop exits, dnPctMilestone[trdrIdx_] > lastPrice_
@@ -2779,7 +3002,7 @@ class Agent:
         sp_: List[PortfolioItem] = [p for p in ib.portfolio(self.tradingaccount) if p.contract.symbol in [self.symbol]]
         if len(sp_) > 0:
             for p in sp_:
-                logger.info(f"portfolio: {p.position:n} {p.contract.symbol}, avgcost {p.averageCost:,.2f}, mktprc {p.marketPrice:.2f} mv {p.marketValue:,.2f}, dailypnl {p.unrealizedPNL+p.realizedPNL:,.2f} ({(p.unrealizedPNL+p.realizedPNL)/self.prevclose/p.position:+.2%}), unrlzd {p.unrealizedPNL:,.2f} rlzd {p.realizedPNL:,.2f}")
+                logger.info(f"portfolio: {p.position:n} {p.contract.symbol}, IB avgcost {p.averageCost * self.futAvgCostMult:.2f}, use avgcost {self.useAvgCost * self.futAvgCostMult}, mktprc {p.marketPrice:.2f} mv {p.marketValue:.2f}, dailypnl {p.unrealizedPNL+p.realizedPNL:.2f} ({(p.unrealizedPNL+p.realizedPNL)/self.prevclose/p.position:+.2%}), unrlzd {p.unrealizedPNL:.2f} rlzd {p.realizedPNL:.2f}")
         else:
             logger.info(f"portfolio: no position")
         if self.get_state() in [0, 2]:
@@ -2796,6 +3019,7 @@ class Agent:
                 if self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade status: {self.trade}"
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                     self.high_since_buy_bar1m = [] # reset high since buy
@@ -2804,6 +3028,7 @@ class Agent:
                     logger.error(f"Trade was cancelled: {self.trade}, undoing state change ({self.state} -> {self.prevstate}), resetting trade to None")
                     self.state = self.prevstate # undo state change
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     return
             else: # self.trade is None, stkpos is not None
@@ -2850,11 +3075,14 @@ class Agent:
                     logmsg = f"Trade is filled: {self.trade.log}"
                     # self.state = 1
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
+                    self.high_since_buy_bar1m.append(copy.copy(currentBar))
                     logger.info(logmsg + f", resetting trade to None")
                 else:
                     logmsg = f"Trade not filled: {self.trade.log}"
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.error(logmsg + f", resetting trade to None")
                     return # proceed or not?
@@ -2914,13 +3142,21 @@ class Agent:
         #     j_timestamp = self.bars[j].date
         #     logger.info(f"highest_since_buy bar[{j}]={self.bars[j]}")
 
+        hsb_bar = None
         if self.high_since_buy_bar1m:
-            highest_since_buy = self.high_since_buy_bar1m[-1].average # using average is more realistic
+            hsb_bar = self.high_since_buy_bar1m[-1]
+            highest_since_buy = hsb_bar.average # using average is more realistic
+        elif currentBar.date >= MKTOPEN:
+            self.high_since_buy_bar1m.append(copy.copy(currentBar)) # initialize high since buy
+            highest_since_buy = currentBar.average
+        elif currentBar.date < MKTOPEN:
+            highest_since_buy = 0
+            pass # we wait until open
         else:
             logger.warning(f"high_since_buy_bar1m is not set")
             highest_since_buy = lastPrice_
         hwm = max(highest_since_buy, lastPrice_)
-        logger.info(f"highest_since_buy={highest_since_buy:.2f} vs hwm={hwm:.2f}")
+        logger.info("highest_since_buy=" + (f"{_repr_bar(hsb_bar)}" if hsb_bar else f"{highest_since_buy:.2f}") + f" vs hwm={hwm:.2f}")
         drawdown = min(0, lastPrice_ - hwm) # always from today's point of view, irrespective of last buy time
         drawdown_pct = drawdown / hwm # hwm is the base
         pnl_hwm = hwm - avgCost_
@@ -2978,6 +3214,10 @@ class Agent:
             logger.info(f"gfe2: {gfe2}, no exit condition met")
             return
         if cond1 or cond2: # (disabled for now)
+            # except ....
+            if self.absolute_low_last5m and self.idxMilestone > 1:
+                logger.warning(f"absolute_low_last5m {self.absolute_low_last5m}, idxMilestone {self.idxMilestone}, not exiting")
+                return
             # # crossed below milestone, we should liquidate
             # if cond1: 
             #     logger.warning(f"Crossed below stopLoss {stoplossPrice_:.2f}, last {lastPrice_:.2f} (return = {lastPctReturn():.2%})")
@@ -2995,6 +3235,8 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    self.orderId = self.trade.order.orderId # we only have orderId after the order is placed, no permId yet
+                    # self.tradePermId = self.trade.order.permId
                     self.tradeMgr = TradeManager(self.trade)
                     if self.order.action == 'SELL':
                         self.lastSellTrade = self.trade
@@ -3016,6 +3258,7 @@ class Agent:
             else: # self.trade is not in ib.openTrades()
                 logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
                 self.trade = None
+                self.orderId = self.tradePermId = -1
                 self.tradeMgr.clear()
                 logger.error(logmsg + f", resetting trade to None")
             # 
@@ -3052,8 +3295,8 @@ class Agent:
             return
         # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
         avgCost_ = self.useAvgCost * self.futAvgCostMult
-        maxlossPct_ = maxloss_ / avgCost_ / self.stkpos.position
-        currentPnl = (lastPrice - avgCost_) * self.stkpos.position
+        maxlossPct_ = maxloss_ / avgCost_ / self.stkpos.position / self.contract_multiplier
+        currentPnl = (lastPrice - avgCost_) * self.stkpos.position * self.contract_multiplier
         currentPnlPct = lastPrice / avgCost_ - 1.
         logging.info(f"last {lastPrice}, pnl: {currentPnl:.2f} ({currentPnlPct:.2%}), max loss limit: {maxloss_:.2f} ({maxlossPct_:.2%})")
         if currentPnl < maxloss_:
@@ -3079,6 +3322,8 @@ class Agent:
             if self.trade is None:
                 if self.liveTrading:
                     self.trade = ib.placeOrder(contract_, self.order) # non-blocking
+                    self.orderId = self.trade.order.orderId # we only have orderId after the order is placed, no permId yet
+                    # self.tradePermId = self.trade.order.permId
                     self.tradeMgr = TradeManager(self.trade)
                     if self.order.action == 'SELL':
                         self.lastSellTrade = self.trade
@@ -3102,6 +3347,7 @@ class Agent:
                 if self.trade.orderStatus.status == 'Filled':
                     logmsg = f"Trade is filled: {self.trade.log}"
                     self.trade = None
+                    self.orderId = self.tradePermId = -1
                     self.tradeMgr.clear()
                     logger.info(logmsg + f", resetting trade to None")
                 else:
@@ -3111,6 +3357,7 @@ class Agent:
             else:
                 logmsg = f"Impossible state: trade {self.trade} not in {ib.openTrades()}"
                 self.trade = None
+                self.orderId = self.tradePermId = -1
                 self.tradeMgr.clear()
                 logger.error(logmsg + f", resetting trade to None")
         return # end of enforceMaxLoss
@@ -3179,7 +3426,16 @@ def onPortfolioUpdate(portfolioItem: ib_insync.objects.PortfolioItem) -> None:
     # pdb.set_trace()
     return # end of onPortfolioUpdate
 
-def onPositionUpdate(newpos: ib_insync.objects.Position):
+async def onPositionUpdate(newpos: ib_insync.objects.Position):
+    def _repr_exec(exec_: Execution):
+        return f"({exec_.execId} {exec_.time} {exec_.side})"
+
+    def _repr_exec_lst(execs: list[Execution]):
+        return ', '.join([_repr_exec(exec_) for exec_ in execs]) if execs else []
+
+    def _execs_list2tuplst(execs: list[Execution]) -> list[tuple]:
+        return [(exec_.execId, exec_.time, exec_.side) for exec_ in execs] if execs else []
+
     # only care about specific stock positions for now
     # logger.debug(get_asyncio_running_loop(''))
     if agent is None:
@@ -3187,11 +3443,59 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
         return
     # if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == 'STK')):
     if not ((newpos.contract.symbol == agent.symbol) and (newpos.contract.secType == agent.contractType)):
-        if newpos.contract.secType == 'STK':
-            logger.debug(f"skipping {newpos.contract.symbol}")
-        else:
-            logger.warning(f"unexpected secType: {newpos}")
+        logger.debug(f"skipping {newpos.contract.secType} {newpos.contract.symbol}")
+        # if newpos.contract.secType == 'STK':
+        #     logger.debug(f"skipping {newpos.contract.symbol}")
+        # else:
+        #     logger.warning(f"unexpected secType: {newpos}")
         return
+    # check if a trade is triggered outside of the app
+    # get all trades so far
+    excFilt = ExecutionFilter(symbol=agent.symbol)
+    all_fills = await ib.reqExecutionsAsync(excFilt)
+    all_execs = [fill.execution for fill in all_fills]
+
+    # ibtrades has all trades for the symbol since app started plus subsequent internal trades but no external trades
+    ibtrades = [t for t in ib.trades() if t.contract.symbol == agent.symbol]
+    ibfills = [t.fills for t in ibtrades]
+    ibexecs = [fill.execution for sublist in ibfills for fill in sublist]
+
+    ext_execs = list(set(_execs_list2tuplst(all_execs)) - set(_execs_list2tuplst(ibexecs)))
+    ext_execs_last: Optional[Execution] = None
+    if ext_execs:
+        # get the most recent external trade
+        ext_execs_lst = list(ext_execs)
+        # print(f"external execs {ext_execs_lst}")
+        ext_execs_last = sorted(ext_execs_lst, key=lambda x: x[1], reverse=True)[0]
+        # make sure the timestamp is recent enough, within 1 minute
+        if (datetime.datetime.now(local_tz) - ext_execs_last[1]).total_seconds() < 30:
+            logger.info(f"external trade: {_execution_repr(ext_execs_last)}")
+        else:
+            ext_execs_last = None
+
+    # logger.info(f"all_execs={_repr_exec_lst(all_execs)}, ibexecs={_repr_exec_lst(ibexecs)}")
+    # logger.info(f"all_execs - ibexecs={set(_execs_list2tuplst(all_execs)) - set(_execs_list2tuplst(ibexecs))}")
+
+    # data = [(o.orderId, o.permId, t) for t, o in [(t, t.order) for t in ibtrades]]
+    # # logger.info(f"ib.trades()={data}")
+    # want = agent.orderId
+    # agent.tradePermId = permId = next((x for orderId, x, _ in data if orderId == want), None)
+    # # get the most recent trade (whose permId is highest)
+    # most_recent_trade = max(ibtrades, key=lambda t: t.order.permId)
+    # # most_recent_trade = max(ibtrades, key=lambda t: t.)
+    # if permId is None:
+    #     logger.info(f"permId {most_recent_trade.order.permId} is an external trade, action was {most_recent_trade.order.action}")
+    #     # if self.lastBuyTime and self.bars[0].date <= self.lastBuyTime and self.lastBuyTime <= self.bars[-1].date:
+    #     # in self.bars, filter for the bars after lastBuyTime, then find the max
+    #     # if t.order.action == 'BUY':
+    #     #     timenow = datetime.datetime.now(local_tz)
+    #     #     agent.high_since_buy_bar1m.clear()
+    #     #     agent.high_since_buy_bar1m.append(agent.bars[-1])
+    #     #     logger.info(f"high_since_buy_bar1m initialized to: {agent.high_since_buy_bar1m}")
+    #     # else:
+    #     #     pass # SELL order
+    # else:
+    #     logger.info(f"tradePermId={agent.tradePermId} internal trade")
     logmsg = f"{newpos} id={id(newpos)}"
     if agent:
         logmsg += f" agent.state={agent.state} agent.idxMilestone={agent.idxMilestone}"
@@ -3200,6 +3504,7 @@ def onPositionUpdate(newpos: ib_insync.objects.Position):
             if agent.trade.orderStatus.status == 'Filled' and agent.state == 0:
                 logmsg += f" state is zero and last trade is filled, resetting trade status"
                 agent.trade = None
+                agent.orderId = agent.tradePermId = -1
             if agent.idxMilestone >= 0:
                 agent.reset_milestone() # reset milestone
                 logmsg += f" resetting strategy1 milestone to -1"
@@ -3349,12 +3654,18 @@ def onOrderStatus(trade: ib_insync.order.Trade):
         logger.error(f"order id mismatch: agent's {agent.trade.order.orderId} != {trade.order.orderId}")
         return
     if trade.orderStatus.status in {'Cancelled', 'Inactive'}:
+        if trade.log[-1].errorCode in {451,460}:
+            logger.warning(f"Order was {trade.orderStatus.status} due to {trade.log[-1].errorCode}: {trade}")
+            logger.warning(f"shutting down agent")
+            agent.set_state(99) # bail out of main loop
+            return
         if trade.orderStatus.filled == 0:
             logmsg = f"Order was {trade.orderStatus.status}, nothing done, agent state={agent.state}, resetting agent's trade to None"
             if agent.state == 1:
                 agent.state = agent.prevstate # undo state change
                 logmsg += f", undoing state change"
             agent.trade = None
+            agent.orderId = agent.tradePermId = -1
             logger.warning(logmsg)
         else:
             logger.warning(f"Order was {trade.orderStatus.status} but partially filled: {trade}")
@@ -3964,7 +4275,9 @@ def main():
     elif not args.run_until:
         # wait until market open
         # waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
-        waitUntil = cdliquid.start - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
+        mkt_start, mkt_end = get_market_hours()
+        # waitUntil = cdliquid.start - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
+        waitUntil = mkt_start - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
         if datetime.datetime.now(local_tz) < waitUntil:
             logger.info(f"Waiting until {waitUntil.astimezone()}")
             util.waitUntil(waitUntil)
@@ -3976,10 +4289,11 @@ def main():
             util.waitUntil(waitUntil2)
 
     if not args.run_until:
-        logger.info("no --run_until specified, running until market close")
-        untilTime = cdliquid.end + datetime.timedelta(minutes=1) # end of market day
-        if untilTime < datetime.datetime.now(local_tz):
-            untilTime = cdl_full.end + datetime.timedelta(minutes=1) # end of full trading day
+        # logger.info("no --run_until specified, running until market close")
+        # untilTime = cdliquid.end + datetime.timedelta(minutes=1) # end of market day
+        untilTime = mkt_end + datetime.timedelta(minutes=1) # end of market day
+        # if untilTime < datetime.datetime.now(local_tz):
+        #     untilTime = cdl_full.end + datetime.timedelta(minutes=1) # end of full trading day
     logger.info(f"Running until {untilTime.astimezone()}")
     # logger.info(f"Running until {untilTime.astimezone().isoformat()}, now is {datetime.datetime.now(local_tz).isoformat()}")
     while datetime.datetime.now(datetime.timezone.utc) < untilTime and agent.get_state() != 99:

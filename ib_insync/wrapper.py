@@ -694,6 +694,7 @@ class Wrapper:
             bars[-1] = bar
             bars._set_last_npdata(bar)
         else:
+            if bar.barCount > 2: self._logger.warning(f'historicalDataUpdate: duplicate bar {bar}') # normal for barcount 0-1
             return
         self.ib.barUpdateEvent.emit(bars, hasNewBar)
         bars.updateEvent.emit(bars, hasNewBar)
@@ -875,7 +876,7 @@ class Wrapper:
         ticker = self.reqId2Ticker.get(reqId)
         self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__()}')
         if not ticker:
-            self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId}')
+            self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
         if price != ticker.last:
             ticker.prevLast = ticker.last
@@ -896,7 +897,7 @@ class Wrapper:
         ticker = self.reqId2Ticker.get(reqId)
         self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__()}')
         if not ticker:
-            self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId}')
+            self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
         if bidPrice != ticker.bid:
             ticker.prevBid = ticker.bid
@@ -918,19 +919,22 @@ class Wrapper:
 
     def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
+        # self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         if not ticker:
-            self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId}')
+            self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
+        self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         tick = TickByTickMidPoint(self.lastTime, midPoint)
         ticker.tickByTicks.append(tick)
         self.pendingTickers.add(ticker)
 
     def tickString(self, reqId: int, tickType: int, value: str):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
+        # self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         if not ticker:
+            self._logger.error(f'tickString: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
+        self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         try:
             if tickType == 32:
                 ticker.bidExchange = value
@@ -1000,9 +1004,11 @@ class Wrapper:
 
     def tickGeneric(self, reqId: int, tickType: int, value: float):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickGeneric: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
+        # self._logger.info(f'tickGeneric: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         if not ticker:
+            self._logger.error(f'tickGeneric: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
+        self._logger.info(f'tickGeneric: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         try:
             value = float(value)
         except ValueError:
@@ -1036,6 +1042,7 @@ class Wrapper:
         ticker = self.reqId2Ticker.get(reqId)
         self._logger.info(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__()}')
         if not ticker:
+            self._logger.error(f'tickReqParams: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
         ticker.minTick = minTick
         ticker.bboExchange = bboExchange

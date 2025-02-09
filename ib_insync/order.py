@@ -157,6 +157,11 @@ class Order:
     competeAgainstBestOffset: float = UNSET_DOUBLE
     midOffsetAtWhole: float = UNSET_DOUBLE
     midOffsetAtHalf: float = UNSET_DOUBLE
+    customerAccount: str = ""
+    professionalCustomer: bool = False
+    bondAccruedInterest: str = ""
+    externalUserId: str = ""
+    manualOrderIndicator: int = UNSET_INTEGER
 
     def __repr__(self):
         attrs = dataclassNonDefaults(self)
