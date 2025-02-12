@@ -1741,6 +1741,8 @@ class Agent:
         # # self.recentlow = (-1, self.histbars[-1]) # initialize to last bar data from prev day
 
         # logger.info(f"SimpleLongStrategy1Init: histbars len={len(self.histbars)}")
+        t = self.ib.tickers()[0]
+        self.todayopen = t.open_
         self.strategyinitstatus = 0
         return 0
 
