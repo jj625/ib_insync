@@ -111,6 +111,15 @@ from scipy.stats import skew, kurtosis, mode
 import time
 import functools
 
+def _repr_bar(bar: BarData) -> str:
+    if isinstance(bar.date, datetime.datetime):
+        time_str = (r'%Y-%m-%d ' if bar.date.date() != datetime.date.today() else '') + ("%H:%M" if bar.date.second == 0 else "%H:%M:%S")
+        d = bar.date.strftime(time_str)
+    else:
+        d = bar.date
+    return f"[{d} o={bar.open_:.2f} h={bar.high:.2f} l={bar.low:.2f} c={bar.close:.2f} v={int(bar.volume)} a={bar.average:.3f} bc={bar.barCount:n}]"
+BarData.__repr__ = _repr_bar
+
 # Works with regular functions, instance methods, class methods, static methods, and coroutines.
 # Correctly identifies and displays the class name for methods.
 # Distinguishes between functions and coroutines in the output.
@@ -150,38 +159,43 @@ def measure_time(func):
     else:
         return sync_wrapper
 
-async def onBarUpdate1m(bars: BarDataList, hasNewBar: bool):
+def onBarUpdate(bars: BarDataList, hasNewBar: bool):
     currentBar = bars[-1] # bar that is being built, never full
-    currentFullBar = bars[-2] # the most recent fully formed bar
+    currentFullBar = bars[-2:][0] # the most recent fully formed bar
+    # logger.info(f"{hasNewBar} {currentBar} {currentFullBar}")
     if hasNewBar:
-        logger.info(f"{currentBar.date:%H:%M:%S} {currentBar.average:.2f}")
-        # prev_avg, cur_avg, peak, valley = pkvl1.process_price(currentFullBar.average, currentFullBar.date)
-        # if peak:
-        #     logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        # if valley:
-        #     logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
-
-        prev_avg, cur_avg, peak, valley = pkvl2.process_price(currentFullBar.average, currentFullBar.date)
+        logger.info(f"{currentBar.date:%H:%M:%S} {currentBar.average:.3f}") # {currentFullBar.date:%H:%M:%S} {currentFullBar.average:.3f}
+        prev_avg, cur_avg, peak, valley = pkvl1.process_price(currentBar.average, currentBar.date)
         if peak:
-            logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+            logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
         if valley:
-            logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+            logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
-async def onHistDataEnd1m(start: str, end: str, bars: BarDataList):
+        prev_avg, cur_avg, peak, valley = pkvl2.process_price(currentBar.average, currentBar.date)
+        if peak:
+            logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        if valley:
+            logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+
+def onHistDataEnd(start: str, end: str, bars: BarDataList):
     logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
     for bar in bars:
         logger.info(f"{bar.date:%H:%M:%S} {bar.average:.2f}")
-        # prev_avg, cur_avg, peak, valley = pkvl1.process_price(bar.average, bar.date)
-        # if peak:
-        #     logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        # if valley:
-        #     logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+        prev_avg, cur_avg, peak, valley = pkvl1.process_price(bar.average, bar.date)
+        if peak:
+            logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        if valley:
+            logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
         prev_avg, cur_avg, peak, valley = pkvl2.process_price(bar.average, bar.date)
         if peak:
-            logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+            logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
         if valley:
-            logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+            logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+
+# function to convert timestamp to minute
+def timestamp_to_minute(timestamp):
+    return timestamp.hour * 60 + timestamp.minute
 
 
 class LoggerFilter(logging.Filter):
@@ -248,7 +262,7 @@ class PriceDetector:
     def get_valleys(self):
         return self.valleys
 
-class IntradayPeakValleyDetector:
+class IntradayPeakValleyDetectorBase:
     def __init__(self, window_size=3, lag=2): # window_size=3, lag=2 yields the same behavior as PriceDetector()
         self.window_size = window_size
         self.lag = lag
@@ -258,6 +272,28 @@ class IntradayPeakValleyDetector:
         self.current_time = []
 
     def process_price(self, price, timestamp):
+        raise NotImplementedError
+
+    def get_peaks(self):
+        return self.peaks
+
+    def get_valleys(self):
+        return self.valleys
+    
+    def get_results(self):
+        return {
+            'peaks': self.peaks,
+            'valleys': self.valleys
+        }
+
+    def get_peaks_ts(self):
+        return [(p, timestamp_to_minute(ts)) for p, ts in self.peaks]
+
+    def get_valleys_ts(self):
+        return [(v, timestamp_to_minute(ts)) for v, ts in self.valleys]
+
+class IntradayPeakValleyDetector1(IntradayPeakValleyDetectorBase):
+    def process_price(self, price, timestamp): # original method
         self.current_time.append(timestamp)
         prev_price = self.prices[-1] if self.prices else None
         self.prices.append(price)
@@ -281,29 +317,44 @@ class IntradayPeakValleyDetector:
             self.current_time.pop(0)
 
         return prev_price, price, peak, valley
+ 
+class IntradayPeakValleyDetector2(IntradayPeakValleyDetectorBase):
+    def __init__(self, window_size=3, lag=2, depth=1.): # window_size=3, lag=2 yields the same behavior as PriceDetector()
+        super().__init__(window_size, lag)
+        self.depth = depth
 
-    def get_peaks(self):
-        return self.peaks
-    
-    def get_peaks_ts(self):
-        return [(p, IntradayPeakValleyDetector.timestamp_to_minute(ts)) for p, ts in self.peaks]
+    def process_price(self, price, timestamp): # new method
+        self.current_time.append(timestamp)
+        prev_price = self.prices[-1] if self.prices else None
+        self.prices.append(price) # keep full price history since beginning, irrespective of window size
+        peak = valley = None
 
-    def get_valleys(self):
-        return self.valleys
-    
-    def get_valleys_ts(self):
-        return [(v, IntradayPeakValleyDetector.timestamp_to_minute(ts)) for v, ts in self.valleys]
+        # define "valley" as the lowest price in the window and "peak" as the highest price in the closed interval "window"
+        # as we slide the window along the price history
+        # if an end point is the lowest or highest, respectively, in the window, it should not be considered a valley or peak
+        # in addition, if there is a local "valley" but not the lowest price in the interval, and the depth of the valley is
+        # more than "depth" parameter from the surrounding prices, then it is considered a "valley"
+        # the "lag" parameter is used to determine the position of the peak or valley in the window.
+        # the fewest number of observations to the right of the sought feature is "lag". feature could in any position to the left
+        # of "lag" in the window. record the price and timestamp of the peak or valley found in a set.
+        if len(self.prices) >= self.window_size:
+            window = self.prices[-self.window_size:]
+            i = self.window_size - self.lag
+            time_i = self.current_time[-self.window_size + i]
+            peak = valley = None
 
-    def get_results(self):
-        return {
-            'peaks': self.peaks,
-            'valleys': self.valleys
-        }
+            if window[i] == max(window): # and window[i] > max(window[:i]) + depth:
+                peak = (window[i], self.current_time[-self.window_size + i])
+                self.peaks.append(peak)
+            elif window[i] == min(window) or (max(window) - window[i] >= self.depth and window[i] == min(window)):
+                # logger.info(f"window: {window}, i: {i}, window[i]: {window[i]}, max: {max(window)}, min: {min(window)}")
+                valley = (window[i], self.current_time[-self.window_size + i])
+                self.valleys.append(valley)
 
-    # function to convert timestamp to minute
-    @staticmethod
-    def timestamp_to_minute(timestamp):
-        return timestamp.hour * 60 + timestamp.minute
+            self.prices.pop(0)
+            self.current_time.pop(0)
+
+        return prev_price, price, peak, valley
 
 class OnlineAnomalyDetector:
     def __init__(self, window_size=100, threshold=7):
@@ -399,7 +450,7 @@ def main():
     )
 
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
+    argparser.add_argument('symbols', nargs='*', type=str, default=['NVDA'], help='Just run for this symbol(s)') # nargs='+' means one or more
     # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
     # argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
     argparser.add_argument('--clientid', type=int, help='IBKR API Client ID. Default is random between 1k and 10k.')
@@ -408,7 +459,11 @@ def main():
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--dryrun', action='store_true', help='Dry run, don\'t actually download data')
     argparser.add_argument('--enddate', type=datetime.datetime.fromisoformat, help='End date')
-    # argparser.add_argument('--live_trading', action='store_true', help='Live trading')
+    argparser.add_argument('--barsize', type=str, default='15 secs', help='Bar size')
+    argparser.add_argument('--windowsize', type=int, default=5, help='Window size for peak-valley detection')
+    argparser.add_argument('--lag', type=int, default=2, help='Lag for peak-valley detection')
+    argparser.add_argument('--usecache', action='store_true', help='Use cached data')
+
     args = argparser.parse_args()
     print(args)
 
@@ -426,16 +481,49 @@ def main():
         r'|updateAccountValue|position|updatePortfolio|commissionReport|historicalData|Info 2104|Info 2106|Info 2158)'
     ))
 
+    global pkvl1, pkvl2
+    # pkvl1 = PriceDetector()
+    pkvl1 = IntradayPeakValleyDetector1(window_size=args.windowsize, lag=args.lag)
+    pkvl2 = IntradayPeakValleyDetector2(window_size=args.windowsize, lag=args.lag)
+
+    dtnow = datetime.datetime.now()
+    cachefilename = f'data/{args.symbols[0]}_{args.barsize.replace(' ', '_')}_data_{dtnow:%y%m%d}.pkl'
+    logger.info(f"Cache file: {cachefilename}")
+
+    global bars1m
+
+    if args.usecache and os.path.exists(cachefilename):
+        logger.info("Using cached data...")
+        with open(cachefilename, 'rb') as f:
+            data = pickle.load(f)
+            logger.info(f"Loaded {len(data)} symbols")
+            ekHistDataInitEnd = eventkit.Event('barsInitEnd')
+            ekHistDataInitEnd += onHistDataEnd
+            ekHistData = eventkit.Event('bars')
+            ekHistData += onBarUpdate
+            bars1m = BarDataList()
+            for sym, bars in data.items():
+                logger.info(f"Processing {sym}...")
+                for bar in bars:
+                    bars1m.append(bar)
+                    ekHistData.emit(bars1m, True)
+                    # prev_avg, cur_avg, peak, valley = pkvl2.process_price(bar.average, bar.date, method=2)
+                    # if peak:
+                    #     logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+                    # if valley:
+                    #     logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+        logger.info("Done processing cached data.")
+        return
+    
+    elif args.usecache and not os.path.exists(cachefilename):
+        logger.info(f"Cache file {cachefilename} not found.")
+        return
+
     # Connect to IB Gateway
     ib = IB()
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
     # ib.errorEvent += onError
 
-    global pkvl1, pkvl2
-    pkvl1 = PriceDetector()
-    pkvl2 = IntradayPeakValleyDetector(window_size=5, lag=2)
-
-    dtnow = datetime.datetime.now()
     syms = args.symbols or ['NVDA']
     useRTH = True # from 4:00am
     endDateTime = '' # datetime.datetime.now() + datetime.timedelta(days=-1)
@@ -453,20 +541,18 @@ def main():
         if args.dryrun:
             continue
 
-        global bars1m
-
         bars1m = ib.reqHistoricalDataExt(
                 contract_,
                 endDateTime=endDateTime,
                 durationStr='1 D',
-                barSizeSetting='15 secs',
+                barSizeSetting=args.barsize,
                 whatToShow='TRADES',
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
                 formatDate=1,
-                _historicalDataEndHook=onHistDataEnd1m,
+                _historicalDataEndHook=onHistDataEnd,
                 )
-        bars1m.updateEvent += onBarUpdate1m
+        bars1m.updateEvent += onBarUpdate
         logger.info(f"{len(bars1m)} bars1m downloaded")
     
     if datetime.datetime.now().time() < datetime.time(16, 0, 0):
@@ -475,6 +561,12 @@ def main():
     else:
         logger.info("Waiting 1 minute...")
         ib.sleep(1 * 60)
+
+    # write to cache so we can use it next time
+    with open(cachefilename, 'wb') as f:
+        data = {sym: bars1m for sym in syms}
+        pickle.dump(data, f)
+        logger.info(f"Saved {len(data)} symbols to cache")
 
     logger.info(f"Script done.")
 
