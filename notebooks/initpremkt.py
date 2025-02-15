@@ -22,7 +22,7 @@ if parent_dir not in sys.path:
     # print(f"{parent_dir} added to sys.path")
 
 import ib_insync
-from ib_insync import Stock, IB, util
+from ib_insync import Stock, IB, util, ContractDetails
 
 class LoggerFilter(logging.Filter):
     def __init__(self, logger_name, pattern=r'.*'):
@@ -100,15 +100,21 @@ def main():
     # endDateTime = pd.to_datetime('2024-11-20 21:00:00-05:00')
     for sym in syms:
         contract_ = Stock(sym, 'SMART', 'USD')
-        temp = ib.reqContractDetails(contract_)
+        temp: ContractDetails = ib.reqContractDetails(contract_)
         if len(temp) == 0:
             logger.error(f"Contract details not found for {sym}")
             continue
+        elif len(temp) > 1:
+            logger.info(f"Multiple contract details found for {contract_}")
+            continue
+            # contract_ = temp[0].contract
         else:
             logger.info(f"Contract details {temp[0].contract}")
             contract_ = temp[0].contract
         if args.dryrun:
             continue
+        head = ib.reqHeadTimeStamp(contract_, whatToShow='TRADES', useRTH=True)
+        logger.info(f"Head timestamp: {head}")
         logger.info(f"Requesting daily historical bars for {sym}... ending {endDateTime}")
         histbars = ib.reqHistoricalData( # this method is blocking
             contract_,
@@ -132,16 +138,18 @@ def main():
             file_exist = filename.exists()
             if file_exist:
                 existing_histdf = pd.read_csv(filename, parse_dates=['date'])
-                if pd.to_datetime(histdf.date.iloc[-1]) in existing_histdf.date.values:
+                if True:
+                # if pd.to_datetime(histdf.date.iloc[-1]) in existing_histdf.date.values:
                     logger.info(f"Updating {filename}")
                     # histdf = histdf[~histdf['date'].isin(existing_histdf['date'])]
                     existing_histdf = existing_histdf.set_index('date')
                     histdf = histdf.set_index('date')
                     combined_df = existing_histdf.combine_first(histdf).reset_index().drop_duplicates(keep='last')
+                    logger.info(f"existing_histdf: {existing_histdf.shape}, histdf: {histdf.shape}, combined_df: {combined_df.shape}")
                     combined_df.to_csv(filename, index=False)
-                else:
-                    logger.info(f"Appending to {str(filename)}")
-                    histdf.to_csv(filename, mode='a', header=not file_exist, index=False)
+                # else:
+                #     logger.info(f"Appending to {str(filename)}")
+                #     histdf.to_csv(filename, mode='a', header=not file_exist, index=False)
             else:
                 logger.info(f"Writing to {str(filename)}")
                 histdf.to_csv(filename, index=False)
