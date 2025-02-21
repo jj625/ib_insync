@@ -165,6 +165,23 @@ def onBarUpdate(bars: BarDataList, hasNewBar: bool):
     # logger.info(f"{hasNewBar} {currentBar} {currentFullBar}")
     if hasNewBar:
         logger.info(f"{currentBar.date:%H:%M:%S} {currentBar.average:.3f}") # {currentFullBar.date:%H:%M:%S} {currentFullBar.average:.3f}
+
+        prev_avg, cur_avg, peak, valley = pkvl0.process_price(currentBar.average, currentBar.date)
+        if peak:
+            logger.info(f"0 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        if valley:
+            logger.info(f"0 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+
+        prev_avg, cur_avg, peak, valley = pkvl0b.process_price(currentBar.average, currentBar.date)
+        if peak:
+            logger.info(f"0b peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+            p = pkvl0b.get_peaks()
+            logger.info(f"0b p({len(p)}): {_repr_pkvl(p)}")
+        if valley:
+            logger.info(f"0b valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+            v = pkvl0b.get_valleys()
+            logger.info(f"0b v({len(v)}): {_repr_pkvl(v)}")
+
         prev_avg, cur_avg, peak, valley = pkvl1.process_price(currentBar.average, currentBar.date)
         if peak:
             logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
@@ -177,10 +194,31 @@ def onBarUpdate(bars: BarDataList, hasNewBar: bool):
         if valley:
             logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
+def _repr_pkvl(lst: list):
+    res = []
+    for pkvl in lst:
+        res.append(f"{pkvl[0]:.2f} {pkvl[1]:%H:%M:%S}")
+    return '[' + ', '.join(res) + ']'
+
 def onHistDataEnd(start: str, end: str, bars: BarDataList):
     logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
     for bar in bars:
         logger.info(f"{bar.date:%H:%M:%S} {bar.average:.2f}")
+
+        prev_avg, cur_avg, peak, valley = pkvl0.process_price(bar.average, bar.date)
+        if peak:
+            logger.info(f"0 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        if valley:
+            logger.info(f"0 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+
+        prev_avg, cur_avg, peak, valley = pkvl0b.process_price(bar.average, bar.date)
+        if peak:
+            logger.info(f"0b peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+            logger.info(f"0b p: {_repr_pkvl(pkvl0b.get_peaks())}")
+        if valley:
+            logger.info(f"0b valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+            logger.info(f"0b v: {_repr_pkvl(pkvl0b.get_valleys())}")
+
         prev_avg, cur_avg, peak, valley = pkvl1.process_price(bar.average, bar.date)
         if peak:
             logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
@@ -215,6 +253,7 @@ class PriceDetector:
     def __init__(self):
         self.prev_price = None
         self.current_price = None
+        self.minutes = deque(maxlen=2)
         self.peak = None
         self.valley = None
         self.peaks = []
@@ -223,7 +262,8 @@ class PriceDetector:
     def process_price(self, price, minute):
         self.prev_price = self.current_price
         self.current_price = price
-        
+        self.minutes.append(minute)
+
         if self.prev_price is not None:
             if self.current_price > self.prev_price:
                 # self._handle_price_increase(minute)
@@ -261,6 +301,32 @@ class PriceDetector:
 
     def get_valleys(self):
         return self.valleys
+
+class PD2(PriceDetector):
+    def process_price(self, price, minute):
+        prev_price, current_price, peak, valley = super().process_price(price, minute)
+
+        if peak and not self.peaks:
+            self.peaks.append(peak)
+        elif peak and self.peaks and peak[0] >= self.peaks[-1][0]: # if higher peaks
+            if len(self.minutes) > 1 and self.peaks[-1][1] == self.minutes[-2]:
+                self.peaks.pop()
+            self.peaks.append(peak)
+        elif peak:
+            self.peaks.append(peak)
+        self.peak = None
+        
+        if valley and not self.valleys:
+            self.valleys.append(valley)
+        elif valley and self.valleys and valley[0] <= self.valleys[-1][0]: # if successively lower valleys
+            if len(self.minutes) > 1 and self.valleys[-1][1] == self.minutes[-2]:
+                self.valleys.pop()
+            self.valleys.append(valley)
+        elif valley:
+            self.valleys.append(valley)
+        self.valley = None
+    
+        return prev_price, current_price, peak, valley
 
 class IntradayPeakValleyDetectorBase:
     def __init__(self, window_size=3, lag=2): # window_size=3, lag=2 yields the same behavior as PriceDetector()
@@ -317,7 +383,33 @@ class IntradayPeakValleyDetector1(IntradayPeakValleyDetectorBase):
             self.current_time.pop(0)
 
         return prev_price, price, peak, valley
- 
+
+class IntradayPeakValleyDetector1b(IntradayPeakValleyDetectorBase):
+    def process_price(self, price, timestamp): # original method
+        self.current_time.append(timestamp)
+        prev_price = self.prices[-1] if self.prices else None
+        self.prices.append(price)
+        peak = valley = None
+
+        if len(self.prices) >= self.window_size:
+            # mid = self.window_size // 2
+            mid = self.window_size - self.lag
+            window = self.prices[-self.window_size:]
+            mid_time = self.current_time[-self.window_size + mid]
+            peak = valley = None
+
+            if all(window[mid] > p for p in window[:mid]) and all(window[mid] > p for p in window[mid+1:]):
+                peak = (window[mid], mid_time)
+                self.peaks.append((window[mid], mid_time))
+            elif all(window[mid] < p for p in window[:mid]) and all(window[mid] < p for p in window[mid+1:]):
+                valley = (window[mid], mid_time)
+                self.valleys.append((window[mid], mid_time))
+
+            self.prices.pop(0)
+            self.current_time.pop(0)
+
+        return prev_price, price, peak, valley
+
 class IntradayPeakValleyDetector2(IntradayPeakValleyDetectorBase):
     def __init__(self, window_size=3, lag=2, depth=1.): # window_size=3, lag=2 yields the same behavior as PriceDetector()
         super().__init__(window_size, lag)
@@ -481,8 +573,10 @@ def main():
         r'|updateAccountValue|position|updatePortfolio|commissionReport|historicalData|Info 2104|Info 2106|Info 2158)'
     ))
 
-    global pkvl1, pkvl2
-    # pkvl1 = PriceDetector()
+    global pkvl0, pkvl1, pkvl2
+    global pkvl0b
+    pkvl0 = PriceDetector()
+    pkvl0b = PD2()
     pkvl1 = IntradayPeakValleyDetector1(window_size=args.windowsize, lag=args.lag)
     pkvl2 = IntradayPeakValleyDetector2(window_size=args.windowsize, lag=args.lag)
 
