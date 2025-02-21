@@ -11,9 +11,11 @@ logger = None # global
 import numpy as np
 import re
 import pathlib
-import json
+import inspect
 # import tqdm
 # import scipy.stats as stats
+
+import gizmo
 
 # to import local code
 # https://stackoverflow.com/questions/61058798/python-relative-import-in-jupyter-notebook
@@ -27,6 +29,7 @@ if parent_dir not in sys.path:
     # print(f"{parent_dir} added to sys.path")
 
 import ib_insync
+print(inspect.getfile(ib_insync))
 from ib_insync import Stock, Future, IB, util, ContractDetails, Contract, BarDataList, BarData
 
 class LoggerFilter(logging.Filter):
@@ -42,19 +45,6 @@ class LoggerFilter(logging.Filter):
             record.levelno >= logging.INFO
         )
 
-def load_spec_file(scriptdir: str = os.path.dirname(os.path.realpath(__file__))
-    , filename: str = 'spec.json') -> dict:
-    # spec file
-    
-    specfile = os.path.join(scriptdir, filename)
-    if not os.path.exists(specfile):
-        logger.error(f"Spec file not found: {specfile}")
-        sys.exit(1)
-    with open(specfile, 'r') as f:
-        spec = json.load(f)
-    logger.info(f"spec file loaded: {specfile}")
-    return spec
-
 def last_business_dt() -> datetime.datetime:
     """Return the last business date"""
     today = datetime.datetime.now().date()
@@ -64,6 +54,9 @@ def last_business_dt() -> datetime.datetime:
         return today + datetime.timedelta(days=-1)
 
 class PitLogger():
+    """
+    Log pit (point-in-time) data to a file
+    """
     def __init__(self, ib: IB, contract: Contract, durationStr, barSizeSetting, logfilename):
         self.ib = ib
 
@@ -100,38 +93,7 @@ class PitLogger():
         self.bars = self.future.result()
         self.bars.updateEvent += self.onBarUpdate
         # self.future.add_done_callback(self.onBarUpdate)
-
-# def download_bars(contract_: Contract, ib: IB, durationStr, barSizeSetting, endDateTime: datetime.datetime, **kwargs):
-#     sym = contract_.symbol
-#     logger.info(f"Requesting '{durationStr}' '{barSizeSetting}' historical bars for {sym}...")
-#     histbars: BarDataList = ib.reqHistoricalData( # this method is blocking
-#         contract_,
-#         endDateTime='', # endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
-#         durationStr=durationStr,
-#         barSizeSetting=barSizeSetting,
-#         whatToShow='TRADES',
-#         useRTH=False,
-#         formatDate=1,
-#     )
-#     if histbars is None or len(histbars) == 0:
-#         logger.error(f"Failed to get historical bars for {sym}")
-#     else:
-#         # histdf = util.df(histbars)
-#         # if 'open_' in histdf.columns: # rename open_ to open
-#         #     histdf.rename(columns={'open_':'open'}, inplace=True)
-#         # if 'timestamp' in histdf.columns: # drop it
-#         #     histdf.drop(columns=['timestamp'], inplace=True)
-#         barSizeSetting_ = barSizeSetting.replace(' ','')[:2]
-#         filename = pathlib.Path(f'./data/{sym}_pit_{barSizeSetting_}_{endDateTime:%Y%m%d}.csv').resolve()
-#         # logger.info(f"Writing to {str(filename)}")
-#         # histdf.to_csv(filename, index=False)
-#     return histbars
-
 def main():
-    # Set up logging
-    global logger
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
@@ -166,6 +128,27 @@ def main():
         syms = args.symbols or ['SPY']
     else:
         syms = args.symbols
+
+    # args check
+    contract_type = args.contract_type
+    exchange = args.exchange or ''
+    expiry = args.expiry or ''
+
+    if args.contract_type == 'FUT':
+        all_good = True
+        if not args.expiry:
+            logger.error(f"Future contract must specify '--expiry'")
+            all_good = False
+        if not args.exchange:
+            logger.error(f"Future contract must specify '--exchange'")
+            all_good = False
+        if not all_good:
+            return -1
+    elif args.contract_type == 'STK':
+        pass
+    elif args.contract_type == 'FUND':
+        pass
+
     # dayoffset: int = 0
 
     # if args.date:
@@ -179,9 +162,15 @@ def main():
     # endDateTime = datetime.datetime.now() + datetime.timedelta(days=0)
     # endDateTime = pd.to_datetime('2024-11-20 21:00:00-05:00')
     for sym in syms:
-        # contract_ = Stock(sym, 'SMART', 'USD')
-        contract_ = Future('GC', '202504', 'COMEX')
-        temp: ContractDetails = ib.reqContractDetails(contract_)
+        match contract_type:
+            case 'FUT':
+                contract_ = Future(sym, expiry, exchange)
+                # contract_ = Future('GC', '202504', 'COMEX')
+            case 'STK':
+                if exchange == '':
+                    exchange = 'SMART'
+                contract_ = Stock(sym, exchange, 'USD')
+        temp: list[ContractDetails] = ib.reqContractDetails(contract_)
         if len(temp) == 0:
             logger.error(f"Contract details not found for {sym}")
             continue
@@ -190,68 +179,53 @@ def main():
             continue
             # contract_ = temp[0].contract
         else:
-            logger.info(f"Contract details {temp[0].contract}")
-            contract_ = temp[0].contract
+            cdl: ContractDetails = temp[0]
+            contract_ = cdl.contract
+            logger.info(f"Contract details {cdl}")
 
         dtnow = datetime.datetime.now(tz_NY)
         pl1m = PitLogger(ib, contract_, '1 D', '1 min', f'./data/{sym}_pit_1m_{dtnow:%Y%m%d_%H%M}.csv')
         pl1m.run()
         pl15s = PitLogger(ib, contract_, '1 D', '15 secs', f'./data/{sym}_pit_15s_{dtnow:%Y%m%d_%H%M}.csv')
         pl15s.run()
-
-        ib.sleep(60)
-
-        # head = ib.reqHeadTimeStamp(contract_, whatToShow='TRADES', useRTH=True)
-        # logger.info(f"Head timestamp: {head}")
-        # logger.info(f"Requesting daily historical bars for {sym}... ending {endDateTime}")
-        # histbars = ib.reqHistoricalData( # this method is blocking
-        #     contract_,
-        #     endDateTime=endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
-        #     durationStr='1 D',
-        #     barSizeSetting='1 day',
-        #     whatToShow='TRADES',
-        #     useRTH=True,
-        #     formatDate=1,
-        # )
-        # if histbars is None or len(histbars) == 0:
-        #     logger.error(f"Failed to get historical bars for {sym}")
-        # else:
-        #     histdf = util.df(histbars)
-        #     if 'open_' in histdf.columns: # rename open_ to open
-        #         histdf.rename(columns={'open_':'open'}, inplace=True)
-        #     if 'timestamp' in histdf.columns: # drop it
-        #         histdf.drop(columns=['timestamp'], inplace=True)
-        #     histdf['volume'] = histdf['volume'].astype(int)
-        #     filename = pathlib.Path(f'./data/{sym}_1d.csv').resolve()
-        #     file_exist = filename.exists()
-        #     if file_exist:
-        #         existing_histdf = pd.read_csv(filename, parse_dates=['date'])
-        #         if True:
-        #         # if pd.to_datetime(histdf.date.iloc[-1]) in existing_histdf.date.values:
-        #             logger.info(f"Updating {filename}")
-        #             # histdf = histdf[~histdf['date'].isin(existing_histdf['date'])]
-        #             existing_histdf = existing_histdf.set_index('date')
-        #             histdf = histdf.set_index('date')
-        #             combined_df = existing_histdf.combine_first(histdf).reset_index().drop_duplicates(keep='last')
-        #             logger.info(f"existing_histdf: {existing_histdf.shape}, histdf: {histdf.shape}, combined_df: {combined_df.shape}")
-        #             if not combined_df.equals(existing_histdf.reset_index()):
-        #                 logger.info("Data has been updated.")
-        #                 combined_df.to_csv(filename, index=False)
-        #             else:
-        #                 logger.info("No changes detected in the data.")
-        #         # else:
-        #         #     logger.info(f"Appending to {str(filename)}")
-        #         #     histdf.to_csv(filename, mode='a', header=not file_exist, index=False)
-        #     else:
-        #         logger.info(f"Writing to {str(filename)}")
-        #         histdf.to_csv(filename, index=False)
-        #         # histdf.to_csv(f'./data/{sym}_1d.csv', mode='a', header=not file_exist, index=False)
-
-        # bars1m = download_bars(contract_, ib, '1 D', '1 min', endDateTime)
-        # bars15s = download_bars(contract_, ib, '1 D', '15 secs', endDateTime)
+        pl5m = PitLogger(ib, contract_, '1 D', '5 mins', f'./data/{sym}_pit_5m_{dtnow:%Y%m%d_%H%M}.csv')
+        pl5m.run()
+        pl30m = PitLogger(ib, contract_, '1 D', '30 mins', f'./data/{sym}_pit_30m_{dtnow:%Y%m%d_%H%M}.csv')
+        pl30m.run()
+        # pl1d = PitLogger(ib, contract_, '1 D', '1 day', f'./data/{sym}_pit_1d_{dtnow:%Y%m%d_%H%M}.csv')
+        # pl1d.run()
+        untilTime = cdl.tradingSessions()[0].end+datetime.timedelta(minutes=1)
+        logger.info(f"running until {untilTime}")
+        ib.waitUntil(untilTime)
 
     logger.info("Done!")
     return # end of main
 
 if __name__ == '__main__':
-    main()
+    gizmo.prevent_sleep()
+
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting main loop")
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Caught KeyboardInterrupt, exiting...")
+    except Exception as e:
+        logger.exception(f"Caught exception {e}", exc_info=True, stack_info=True)
+    finally:
+        # if ib is not None:
+        #     logger.info(f"{ib}")
+        #     ib.disconnect()
+        #     logger.info("IB disconnected")
+        if logger is not None:
+            for handler in logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
+                    logger.removeHandler(handler)
+                    logger.info(f"{handler} closed")
+        
+        logger.info("End of main loop")
+        gizmo.restore_sleep()
