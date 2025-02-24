@@ -10,12 +10,14 @@ import logging.config
 import inspect
 import asyncio
 import datetime
+import zoneinfo
 import numbers
 from collections import deque
 from itertools import islice
 from typing import Iterable
 from numpy.typing import NDArray
 import numpy as np
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -264,3 +266,67 @@ def plus(num: numbers.Real) -> numbers.Real:
 def neg(num: numbers.Real) -> numbers.Real:
     """Return the negative part of the number"""
     return min(0, num)
+
+def parse_hours(hours_str: str, timeZoneId: str) -> list[dict]:
+    """
+    hours_str: string of the form '20220101:0900-20220101:1600;20220102:CLOSED'
+      found in ContractDetails.tradingHours
+    timeZoneId: string of the form 'America/New_York'
+    """
+    hours_list = []
+    tz = zoneinfo.ZoneInfo(timeZoneId)
+    for period in hours_str.split(';'):
+        if period == '': continue
+        t = period.split(':')
+        z = period.split('-')
+        # print(f"t {t}, z {z}")
+        if len(t) == 2 and len(z) == 1:
+            if t[1] == 'CLOSED':
+                # date_start = date_end = t[0]
+                date_start = date_end = datetime.datetime.strptime(t[0], r'%Y%m%d').date()
+                hour_start = hour_end = None
+                hours_list.append({
+                    'period_str': period,
+                    'date_start': date_start,
+                    'start_trading_hour': None,
+                    'date_end': date_end,
+                    'end_trading_hour': None,
+                    'is_closed': True,
+                    'is_error': False
+                })
+            else:
+                hours_list.append({'period_str': period, 'is_error': True})
+                # print("format unknown: {period}")
+        elif len(t) == 3 and len(z) == 2:
+            date_start, hour_start = z[0].split(':')
+            date_end, hour_end = z[1].split(':')
+            date_start = datetime.datetime.strptime(date_start, r'%Y%m%d').date()
+            hour_start = datetime.datetime.strptime(hour_start, r'%H%M').time()
+            date_end = datetime.datetime.strptime(date_end, r'%Y%m%d').date()
+            hour_end = datetime.datetime.strptime(hour_end, r'%H%M').time()
+            hours_list.append({
+                'period_str': period,
+                'date_start': date_start,
+                'start_trading_hour': datetime.datetime.combine(date_start, hour_start, tz),
+                'date_end': date_end,
+                'end_trading_hour': datetime.datetime.combine(date_end, hour_end, tz),
+                'is_closed': False,
+                'is_error': False
+            })
+        else:
+            hours_list.append({'period_str': period, 'is_error': True})
+            # print("format unknown: {period}")
+    return hours_list
+
+class LoggerFilter(logging.Filter):
+    def __init__(self, logger_name, pattern=r'.*'):
+        super().__init__()
+        self.logger_name = logger_name
+        self.pattern = re.compile(pattern)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not (record.name == self.logger_name and
+            self.pattern.search(msg) and 
+            record.levelno >= logging.INFO
+        )
