@@ -32,18 +32,7 @@ import ib_insync
 print(inspect.getfile(ib_insync))
 from ib_insync import Stock, Future, IB, util, ContractDetails, Contract, BarDataList, BarData
 
-class LoggerFilter(logging.Filter):
-    def __init__(self, logger_name, pattern=r'.*'):
-        super().__init__()
-        self.logger_name = logger_name
-        self.pattern = re.compile(pattern)
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return not (record.name == self.logger_name and
-            self.pattern.search(msg) and 
-            record.levelno >= logging.INFO
-        )
+from gizmo import LoggerFilter
 
 def last_business_dt() -> datetime.datetime:
     """Return the last business date"""
@@ -81,6 +70,7 @@ class PitLogger():
         # self.bars.updateEvent += self.onBarUpdate
 
     async def onBarUpdate(self, bars, hasNewBar):
+        # only log the live updates
         last_bar: BarData = bars[-1]
         self.logfile.write(f"{last_bar.date},{last_bar.open},{last_bar.high},{last_bar.low},{last_bar.close}"
             f",{last_bar.average},{last_bar.volume:n},{last_bar.barCount:n},{hasNewBar},{last_bar.timestamp}\n")
