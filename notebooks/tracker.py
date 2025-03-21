@@ -21,7 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 np_pct = {'float_kind': lambda x: f"{x:.2%}"} # pass to np.array2string as formatter
 import scipy.optimize
-np.set_printoptions(linewidth=150, precision=2, suppress=True)
+np.set_printoptions(linewidth=150, precision=6, suppress=True)
 import scipy
 from scipy.ndimage import gaussian_filter1d, minimum_filter1d, maximum_filter1d
 import math
@@ -29,6 +29,16 @@ import logging
 import datetime
 import zoneinfo
 tz_ny = local_tz = zoneinfo.ZoneInfo('US/Eastern')  # Adjust for your local timezone, America/New_York
+import traceback
+
+import gizmo
+from gizmo import slice_deque, extract_field_as_array, plus, format_value, format_dict, load_spec_file \
+    , parse_hours, measure_time
+
+# MKTOPEN, MKTCLOSE are RTH
+# TRADINGOPEN, TRADINGCLOSE are full trading hours
+
+TRADINGOPEN = TRADINGCLOSE = None
 
 # NYMKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30), tzinfo=tz_ny)
 MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30), tzinfo=tz_ny)
@@ -39,6 +49,14 @@ NPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
 MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0), tzinfo=tz_ny)
 # PDMKTCLOSE = pd.to_datetime(MKTCLOSE)
 NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+
+def set_full_trading_hours(start, end):
+    global TRADINGOPEN, TRADINGCLOSE
+    TRADINGOPEN = start.astimezone()
+    TRADINGCLOSE = end.astimezone()
+    logger.info(f"Full trading hours set to {TRADINGOPEN} - {TRADINGCLOSE}")
+    util.TRADINGOPEN = TRADINGOPEN
+    util.TRADINGCLOSE = TRADINGCLOSE
 
 def set_market_hours(start, end):
     # global NYMKTOPEN, MKTOPEN, PDMKTOPEN, NPMKTOPEN, NYMKTCLOSE, MKTCLOSE, PDMKTCLOSE, NPMKTCLOSE
@@ -58,26 +76,24 @@ def set_market_hours(start, end):
     # util.NYMKTOPEN = NYMKTOPEN
     util.MKTOPEN = MKTOPEN # for compatibility
     # util.NYNPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
-    util.NPMKTOPEN = np.datetime64(MKTOPEN.replace(tzinfo=None), 's')
+    util.NPMKTOPEN = np.datetime64(util.MKTOPEN.replace(tzinfo=None), 's')
     # util.NYMKTCLOSE = NYMKTCLOSE
     # util.MKTOPEN = NYMKTOPEN
     util.MKTCLOSE = MKTCLOSE
     # util.NYNPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
-    util.NPMKTCLOSE = np.datetime64(MKTCLOSE.replace(tzinfo=None), 's')
+    util.NPMKTCLOSE = np.datetime64(util.MKTCLOSE.replace(tzinfo=None), 's')
 
 def get_market_hours():
     return MKTOPEN, MKTCLOSE
 
 import dateutil
 import argparse
-import json
 from collections import defaultdict, deque
 from itertools import islice, pairwise
 from more_itertools import windowed
 from dataclasses import dataclass, field
 from typing import List, Optional
 import typing
-from typing import Iterable
 import numbers
 # import pdb
 import telegram
@@ -152,7 +168,7 @@ from filterpy.common import Q_discrete_white_noise, Q_continuous_white_noise, Sa
 def make_ca_filter(dt, std_R):
     cafilter = KalmanFilter(dim_x=3, dim_z=1)
     # cafilter.x = np.array([0., 0., 0.])
-    cafilter.P *= 3
+    # cafilter.P *= 3
     cafilter.R *= std_R*std_R
     cafilter.Q = Q_discrete_white_noise(dim=3, dt=dt, var=0.02)
     cafilter.F = np.array([[1, dt, 0.5*dt*dt],
@@ -160,6 +176,17 @@ def make_ca_filter(dt, std_R):
                            [0, 0,          1]])
     cafilter.H = np.array([[1., 0, 0]])
     return cafilter
+
+def make_cv_filter(dt, std_R):
+    cvfilter = KalmanFilter(dim_x=2, dim_z=1)
+    # cvfilter.x = np.array([0., 0.])
+    # cvfilter.P *= 3
+    cvfilter.R *= std_R*std_R
+    cvfilter.Q = Q_discrete_white_noise(dim=2, dt=dt, var=0.02)
+    cvfilter.F = np.array([[1, dt],
+                           [0, 1]])
+    cvfilter.H = np.array([[1., 0]])
+    return cvfilter
 
 # # asyncio
 # # asyncio.run() cannot be nested
@@ -383,67 +410,19 @@ def send_telegram_message(chat_id: str, text: str):
 #     executor = ThreadPoolExecutor()
 #     executor.submit(run_async_task, chat_id, text)
 
-def almost_zero_vector(v: NDArray, tol: float = 0.0001) -> tuple[bool, float]:
-    norm = np.linalg.norm(v)
-    return (np.all(np.abs(v) < tol), norm)
-
-def extract_field_as_list(group: Iterable, field_name: str) -> list:
-    return [getattr(item, field_name) for item in group]
-
-def extract_field_as_array(group: Iterable, field_name: str) -> NDArray:
-    return np.asarray(extract_field_as_list(group, field_name))
-
-def slice_deque(dq: deque, start=None, end=None) -> list:
-    length = len(dq)
-    if length == 0:
-        return []
-    
-    if start is None:
-        start = 0
-    elif start < 0:
-        start += length
-    
-    if end is None:
-        end = length
-    elif end < 0:
-        end += length
-    
-    start = max(0, min(start, length))
-    end = max(0, min(end, length))
-    
-    return list(islice(dq, start, end))
-
-def custom_formatter(value):
-    if isinstance(value, (bool, int, float, str, bytes)):
-        return str(value)
-    if isinstance(value, datetime.datetime):
-        value_local = value.astimezone()  # Convert to local time
-        if value_local.date() == datetime.datetime.now(local_tz).date():
-            return value_local.strftime('%H:%M:%S')
-        else:
-            return value_local.strftime(r'%Y-%m-%d %H:%M:%S %Z')
-    elif isinstance(value, list):
-        return '[' + ", ".join([custom_formatter(v) for v in value]) + ']'
-    elif isinstance(value, dict):
-        return {k: custom_formatter(v) for k, v in value.items()}
-    # elif util.isnamedtupleinstance(value):
-    #     return {f: custom_formatter(getattr(value, f)) for f in value._fields}
-    # elif util.is_dataclass(value):
-    #     return {value.__class__.__qualname__: custom_formatter(util.dataclassNonDefaults(value))}
-    else:
-        # logger.warning(f"Unknown type: {type(value)}")
-        return str(value)
-
-def format_dict(d: dict) -> str:
-    return '{' + ", ".join(f"{k}: {custom_formatter(v)}" for k, v in d.items()) + '}'
-
 def _repr_vol_tup(vol_tup: tuple) -> str:
     return f"({vol_tup[0]:.3%} {vol_tup[1]:.3%} {vol_tup[2]:.3%})"
 def _repr_vol_tup_lst(vol_tup_lst: list) -> str:
     return '[' + ', '.join([_repr_vol_tup(vol_tup) for vol_tup in vol_tup_lst]) + ']' # if vol_tup_lst else '[]'
 
 def _repr_bar(bar: BarData) -> str:
-    return f"[{bar.date:%H:%M} o={bar.open_:.2f} h={bar.high:.2f} l={bar.low:.2f} c={bar.close:.2f} v={int(bar.volume):_} a={bar.average:.2f} bc={bar.barCount:n}]"
+    if isinstance(bar.date, datetime.datetime):
+        # dt_str = r'%Y-%m-%d ' if bar.date.date() != datetime.datetime.now().date() else ''
+        time_str = "%H:%M" if bar.date.second == 0 else "%H:%M:%S"
+        d = bar.date.strftime(time_str)
+    else:
+        d = bar.date
+    return f"[{d} o={bar.open_:.2f} h={bar.high:.2f} l={bar.low:.2f} c={bar.close:.2f} v={int(bar.volume):n} a={bar.average:.2f} bc={bar.barCount:n}]"
 def _repr_barlist(bars: BarDataList) -> str:
     return ', '.join([_repr_bar(bar) for bar in bars])
 def _repr_hilopcttup(hilotup: tuple) -> str:
@@ -458,26 +437,6 @@ def _repr_hilopctlst(hilopctlst: list) -> str:
             return '[' + ', '.join([_repr_hilopctbd(pct) for pct in hilopctlst]) + ']'
         else:
             return '[' + ', '.join([str(x) for x in hilopctlst]) + ']'
-
-def is_integer(value: numbers.Real) -> bool:
-    return value == int(value)
-
-def format_value(value: numbers.Real, intexpected: bool = False) -> str:
-    """
-    Format a float value to 2 decimal places if it has a decimal part, otherwise to 0 decimal places
-    intexpected: if True means we're expecting an integer value
-    """
-    if not isinstance(value, int) and intexpected and not is_integer(value):
-        logger.warning(f"Expected integer value, got {value}")
-    return f"{value:.2f}" if value % 1 != 0 else f"{value:.0f}"
-
-def plus(num: numbers.Real) -> numbers.Real:
-    """Return the positive part of the number"""
-    return max(0, num)
-
-def neg(num: numbers.Real) -> numbers.Real:
-    """Return the negative part of the number"""
-    return min(0, num)
 
 def last_business_dt() -> datetime.date:
     """Return the last business date"""
@@ -683,51 +642,6 @@ def trade_commision(trade: ib_insync.order.Trade) -> float:
 def trade_realized_pnl(trade: ib_insync.order.Trade) -> float:
     return sum(fill.commissionReport.realizedPNL for fill in trade.fills)
 
-def parse_hours(hours_str: str, timeZoneId: str) -> list[dict]:
-    hours_list = []
-    tz = zoneinfo.ZoneInfo(timeZoneId)
-    for period in hours_str.split(';'):
-        t = period.split(':')
-        z = period.split('-')
-        # print(f"t {t}, z {z}")
-        if len(t) == 2 and len(z) == 1:
-            if t[1] == 'CLOSED':
-                # date_start = date_end = t[0]
-                date_start = date_end = datetime.datetime.strptime(t[0], r'%Y%m%d').date()
-                hour_start = hour_end = None
-                hours_list.append({
-                    'period_str': period,
-                    'date_start': date_start,
-                    'start_trading_hour': None,
-                    'date_end': date_end,
-                    'end_trading_hour': None,
-                    'is_closed': True,
-                    'is_error': False
-                })
-            else:
-                hours_list.append({'period_str': period, 'is_error': True})
-                # print("format unknown: {period}")
-        elif len(t) == 3 and len(z) == 2:
-            date_start, hour_start = z[0].split(':')
-            date_end, hour_end = z[1].split(':')
-            date_start = datetime.datetime.strptime(date_start, r'%Y%m%d').date()
-            hour_start = datetime.datetime.strptime(hour_start, r'%H%M').time()
-            date_end = datetime.datetime.strptime(date_end, r'%Y%m%d').date()
-            hour_end = datetime.datetime.strptime(hour_end, r'%H%M').time()
-            hours_list.append({
-                'period_str': period,
-                'date_start': date_start,
-                'start_trading_hour': datetime.datetime.combine(date_start, hour_start, tz),
-                'date_end': date_end,
-                'end_trading_hour': datetime.datetime.combine(date_end, hour_end, tz),
-                'is_closed': False,
-                'is_error': False
-            })
-        else:
-            hours_list.append({'period_str': period, 'is_error': True})
-            # print("format unknown: {period}")
-    return hours_list
-
 # https://dynamiproject.wordpress.com/wp-content/uploads/2016/01/measuring_historic_volatility.pdf
 
 np_log_2 = np.log(2)
@@ -747,7 +661,7 @@ def yang_zhang_volatility(open_, high, low, close, n):
 
 # Annualize volatilities (assuming 252 trading days and 1440 minutes per day)
 # annualization_factor = np.sqrt(252 * 1440)
-# annualization_factor_252 = np.sqrt(252)
+annualization_factor_252 = np.sqrt(252)
 annualization_factor_252_390 = np.sqrt(252 * 390) # 1y = 252d * 390m
 annualization_factor_390 = np.sqrt(390) # 1d = 390m
 annualization_factor_5_390 = np.sqrt(5 * 390) # 1w = 5d * 390m
@@ -883,6 +797,136 @@ dt_oneminute = 1./60. # in hours
 #     kf.update(z)
 #     print("State estimate:", kf.x)
 
+from peakvaly import PriceDetector, PD2, _repr_pkvl
+
+class IntradayPeakValleyDetector:
+    def __init__(self, window_size=3, lag=2): # window_size=3, lag=2 yields the same behavior as PriceDetector()
+        self.window_size = window_size
+        self.lag = lag
+        self.prices = []
+        self.peaks = []
+        self.valleys = []
+        self.current_time = []
+
+    def process_price(self, price, timestamp):
+        self.current_time.append(timestamp)
+        self.prices.append(price)
+
+        if len(self.prices) >= self.window_size:
+            # mid = self.window_size // 2
+            mid = self.window_size - self.lag
+            window = self.prices[-self.window_size:]
+            mid_time = self.current_time[-self.window_size + mid]
+
+            if all(window[mid] > p for p in window[:mid]) and all(window[mid] > p for p in window[mid+1:]):
+                self.peaks.append((window[mid], mid_time))
+            elif all(window[mid] < p for p in window[:mid]) and all(window[mid] < p for p in window[mid+1:]):
+                self.valleys.append((window[mid], mid_time))
+
+            self.prices.pop(0)
+            self.current_time.pop(0)
+
+    def get_peaks(self):
+        return self.peaks
+    
+    def get_peaks_ts(self):
+        return [(p, IntradayPeakValleyDetector.timestamp_to_minute(ts)) for p, ts in self.peaks]
+
+    def get_valleys(self):
+        return self.valleys
+    
+    def get_valleys_ts(self):
+        return [(v, IntradayPeakValleyDetector.timestamp_to_minute(ts)) for v, ts in self.valleys]
+
+    def get_results(self):
+        return {
+            'peaks': self.peaks,
+            'valleys': self.valleys
+        }
+
+    # function to convert timestamp to minute
+    @staticmethod
+    def timestamp_to_minute(timestamp):
+        return timestamp.hour * 60 + timestamp.minute
+
+class OnlineAnomalyDetector:
+    def __init__(self, name, window_size=100, threshold=7):
+        self.name = name
+        self.logger = logging.getLogger(__name__ + '.' + name)
+        self.window_size = window_size
+        self.threshold = threshold
+        self.data_window = deque(maxlen=window_size)
+        self.anomaly_count = deque(maxlen=window_size) # parallel to data_window
+        # self.mean = np.zeros(4) # assume zero mean
+        self.var = np.zeros(4) # sum of squares
+        self.n = 0 # number of samples included in sum of squares
+
+    def update_stats(self, diff: NDArray):
+        self.n += 1
+        if self.n == 1:
+            # self.mean = diff
+            self.var = np.zeros(4)
+        else:
+            # old_mean = self.mean.copy()
+            # self.mean += (diff - old_mean) / self.n
+            # self.var += (diff - old_mean) * (diff - self.mean)
+            self.var += diff * diff
+
+    def undo_update_stats(self, diff: NDArray):
+        """
+        Undo the update of stats for the previous data point because it was an anomaly
+        """
+        self.n -= 1
+        if self.n == 0:
+            self.var = np.zeros(4)
+        else:
+            self.var -= diff * diff
+
+    def detect_anomaly(self, current_data, /, update_stats=True):
+        if len(self.data_window) < 2:
+            self.data_window.append(current_data)
+            return False, []
+
+        self.prev_data = prev_data = self.data_window[-1]
+        diff = np.array(current_data) - np.array(prev_data)
+
+        self.update_stats(diff)
+
+        if self.n > 1:
+            masked_var = np.ma.masked_values(self.var, 0.) # ignore zero variance
+            std_dev = np.sqrt(masked_var / (self.n - 1))
+            # print(f"std_dev: {std_dev.data}, abs diff: {np.abs(diff)}")
+            # z_scores = np.abs(diff - self.mean) / std_dev
+            z_scores = np.abs(diff) / std_dev
+
+            anomalies = np.where(z_scores > self.threshold)[0]
+            is_anomaly = len(anomalies) > 0
+            if is_anomaly:
+                self.undo_update_stats(diff)
+                # print(f"Anomaly detected: {current_data}")
+                # print(f"Mean: {self.mean}, Std Dev: {std_dev}")
+                self.logger.info(f"Diff: {diff}, std_dev: {std_dev.data}, z_scores: {z_scores.data}")
+                # print(f"Anomalies: {anomalies}")
+
+            self.data_window.append(current_data)
+            return is_anomaly, anomalies
+        else:
+            self.data_window.append(current_data)
+            return False, []
+    
+    def get_prev_data(self):
+        return self.prev_data
+
+    def process_data_point(self, data_point, /, index: Optional[pd.Timestamp|datetime.datetime]=None, update_stats=True):
+        is_anomaly, anomalous_features = self.detect_anomaly(data_point, update_stats)
+        if is_anomaly and (index is None or index.time() >= datetime.time(9, 30)):
+            feature_names = ['Open', 'High', 'Low', 'Close']
+            anomalous_features = [feature_names[i] for i in anomalous_features]
+            self.logger.info(f"Anomaly detected in: {', '.join(anomalous_features)}")
+            self.logger.info(f"Data point: {data_point}" + (f" (index: {index})" if index is not None else ""))
+            self.logger.info(f"Previous data point: {self.prev_data}")
+        return is_anomaly
+
 def singleton(cls):
     instances = {}
     def wrapper(*args, **kwargs):
@@ -913,8 +957,12 @@ class Agent:
     symbol: str
     tradingaccount: str
     avgcost_prevclose: bool
+    mkt_support: list[BarData] = field(default_factory=list)
+    mkt_resistance: list[BarData] = field(default_factory=list)
+    # setavgcost: float # set useAvgCost to this value
     ibBarUpdateTime: datetime.datetime = datetime.datetime.now(local_tz)
     # resampler
+    hasNewBar15s: bool = False
     hasNewBar1m: bool = False
     hasNewBar5m: bool = False
     hasNewBar10m: bool = False
@@ -1040,20 +1088,46 @@ class Agent:
     def reset(self):
         pass
 
+    def get_RTH(self):
+        _idx = self.ibTradingSessionIdx
+        contractDetails = self.ibcontractDetails
+        cdliquid = contractDetails[0].liquidSessions()[_idx]
+        return cdliquid
+
+    def get_TradingSession(self):
+        _idx = self.ibTradingSessionIdx
+        contractDetails = self.ibcontractDetails
+        cdl_full = contractDetails[0].tradingSessions()[_idx]
+        return cdl_full
+
+    def isOutsideRTH(self):
+        _idx = self.ibTradingSessionIdx
+        contractDetails = self.ibcontractDetails
+        cdliquid = contractDetails[0].liquidSessions()[_idx]
+        cdl_full = contractDetails[0].tradingSessions()[_idx]
+        dtnow = datetime.datetime.now(local_tz)
+        return dtnow.time() < cdliquid.start.time() or dtnow.time() > cdliquid.end.time()
+
     def request_historical_data(self, contract_1: ib_insync.contract.Contract, cdl: ib_insync.contract.ContractDetails) -> asyncio.Future:
         # contract_1 = self.ibcontract
         # ib.qualifyContracts(contract_1) # already qualified in premkt init
-        start_mkt, end_mkt = get_market_hours()
-        trdSession = ib_insync.contract.TradingSession(start_mkt, end_mkt)
-        cdliquid = cdl.liquidSessions()[0]
-        cdl_full = cdl.tradingSessions()[0]
-        if cdl_full.start.astimezone().time() == datetime.time(18, 0): # 6:00 PM
-            rthfactor_pad = 7
-        else:
-            rthfactor_pad = 0
+        # start_mkt, end_mkt = get_market_hours()
+        # trdSession = ib_insync.contract.TradingSession(start_mkt, end_mkt)
+        idx = self.ibTradingSessionIdx
+        cdliquid = cdl.liquidSessions()[idx] # underlying data needs to know when is RTH
+        cdl_full = cdl.tradingSessions()[idx] # determine storage size
+        # if cdl_full.start.astimezone().time() == datetime.time(18, 0): # 6:00 PM
+        #     rthfactor_pad = 7
+        # else:
+        #     rthfactor_pad = 0
         if self.use5s:
             self.ib.barUpdateEvent += self.onBarUpdate_ib
             # self.ib.pendingTickersEvent += onPendingTickers
+            useRTH = False
+            # # report these global variables
+            # for k, v in globals().items():
+            #     if k in ['NPMKTOPEN', 'NPMKTCLOSE', 'MKTOPEN', 'MKTCLOSE']:
+            #         logger.info(f"{k}={v}")
             def initialize_bars(bars, barSizeSetting):
                 # bars.reqId = agent.bars5s.reqId
                 bars.contract = contract_1
@@ -1061,11 +1135,11 @@ class Agent:
                 bars.durationStr = '1 D'
                 bars.barSizeSetting = barSizeSetting
                 bars.whatToShow = 'TRADES'
-                bars.useRTH = False
+                bars.useRTH = useRTH
                 # bars.formatDate = agent.bars5s.formatDate
                 bars.keepUpToDate = True
-                bars._init_npdata('', '', rthfactor_pad=rthfactor_pad)
-
+                # bars._init_npdata('', '', rthfactor_pad=rthfactor_pad)
+                bars._init_npdata('', '', _tradingHours=cdl_full, _rth=cdliquid) # allocate storage for full day
             # must init before initial_resample_hook
             # initialize_bars(self.bars10s, '10 secs')
             # initialize_bars(self.bars15s, '15 secs')
@@ -1078,18 +1152,27 @@ class Agent:
             initialize_bars(self.bars30m, '30 mins')
 
             # self.bars5s 
-            useRTH = False
+            # useRTH = False
+            dtnow = datetime.datetime.now(local_tz)
+            seconds_to_fullstart = (dtnow - cdl_full.start).total_seconds()
+            if seconds_to_fullstart > -50*60 and seconds_to_fullstart < 0: # 50 minutes
+                durationStr = '600 S'
+            else:
+                durationStr = '1 D'
+            if dtnow < cdl_full.start - datetime.timedelta(seconds=1):
+                logger.info(f"Waiting for market to open {cdl_full.start}")
+                util.waitUntil(cdl_full.start - datetime.timedelta(seconds=5))
             future = asyncio.ensure_future(self.ib.reqHistoricalDataExtAsync(
                 contract_1,
                 endDateTime='',
-                durationStr='1 D',
+                durationStr=durationStr,
                 barSizeSetting='15 secs',
                 whatToShow='TRADES', # https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_what_to_show
                 useRTH=useRTH, # start from ~4:00 AM
                 formatDate=1,
                 keepUpToDate=True,
                 _historicalDataEndHook=self.initial_resample_hook,
-                _tradingHours=trdSession if useRTH else cdl_full
+                _tradingHours=cdl_full, _rth=cdliquid
                 )
             )
             # self.bars = BarDataList()
@@ -1150,7 +1233,10 @@ class Agent:
             await self.resample_from_5s_core(b, False)
             if n % N == 0:
                 await asyncio.sleep(0) # yield control to event loop
-        logger.info(f"len(self.bars)={len(self.bars)} {self.bars._npidx} {self.bars._npidx_rth_start} {self.bars._npidx_rth_end}")
+        logger.info(f"len(self.bars)={len(self.bars)} _npidx={self.bars._npidx} _npidx_rth_start={self.bars._npidx_rth_start} _npidx_rth_end={self.bars._npidx_rth_end}" f" date={self.bars[0].date}..{self.bars[-1].date}")
+        logger.info(f"len(self.bars5m)={len(self.bars5m)} _npidx={self.bars5m._npidx} _npidx_rth_start={self.bars5m._npidx_rth_start} _npidx_rth_end={self.bars5m._npidx_rth_end}"  f" date={self.bars5m[0].date}..{self.bars5m[-1].date}")
+        logger.info(f"len(self.bars10m)={len(self.bars10m)} _npidx={self.bars10m._npidx} _npidx_rth_start={self.bars10m._npidx_rth_start} _npidx_rth_end={self.bars10m._npidx_rth_end}"  f" date={self.bars10m[0].date}..{self.bars10m[-1].date}")
+        logger.info(f"len(self.bars15m)={len(self.bars15m)} _npidx={self.bars15m._npidx} _npidx_rth_start={self.bars15m._npidx_rth_start} _npidx_rth_end={self.bars15m._npidx_rth_end}"  f" date={self.bars15m[0].date}..{self.bars15m[-1].date}")
         # logger.info(f"len(self.bars10s)={len(self.bars10s)}")
         # logger.info(f"{self.bars10s._npidx} {self.bars10s._npidx_rth_start} {self.bars10s._npidx_rth_end}")
         # logger.info(f"{pd.DataFrame({'date': self.bars10s.npdate, 'open': self.bars10s.npopen,
@@ -1167,7 +1253,31 @@ class Agent:
         # util.df(self.bars15s).rename(columns={'open_': 'open'}).drop(columns=['timestamp']).to_csv('bars15s.csv', index=False)
         # util.df(self.bars30s).rename(columns={'open_': 'open'}).drop(columns=['timestamp']).to_csv('bars30s.csv', index=False)
         # exit(0)
+        N = 500
+        logger.info(f"rth={self.get_RTH()}")
+        rth = self.get_RTH()
+        for n, b in enumerate(self.bars15s, start=1):
+            if b.date < rth.start: continue
+            self.pkvl15s.process_price(b.average, b.date)
+            if n % N == 0: await asyncio.sleep(0)
+        logger.info(f"peaks15s({len(p:=self.pkvl15s.get_peaks())}): {_repr_pkvl(p)}")
+        logger.info(f"vlys15s({len(v:=self.pkvl15s.get_valleys())}): {_repr_pkvl(v)}")
+        
+        for n, b in enumerate(self.bars, start=1):
+            if b.date < rth.start: continue
+            self.pkvl1m.process_price(b.average, b.date)
+        logger.info(f"peaks1m({len(p:=self.pkvl1m.get_peaks())}): {_repr_pkvl(p)}")
+        logger.info(f"vlys1m({len(v:=self.pkvl1m.get_valleys())}): {_repr_pkvl(v)}")
 
+        for n, b in enumerate(self.bars5m, start=1):
+            if b.date < rth.start: 
+                continue
+            else:
+                self.pkvl5m.process_price(b.average, b.date)
+        logger.info(f"peaks15m({len(p:=self.pkvl5m.get_peaks())}): {_repr_pkvl(p)}")
+        logger.info(f"vlys15m({len(v:=self.pkvl5m.get_valleys())}): {_repr_pkvl(v)}")
+
+    # @measure_time
     async def resample_from_5s(self, inBars: BarDataList, inBarHasNewBar: bool):
         """
         Resample 5s bars to 1m, 2m, 5m, 10m, and 15m bars.
@@ -1213,12 +1323,12 @@ class Agent:
         # await self.resample_from_5s_core(inBars[-1], inBarHasNewBar)
         await self.resample_from_5s_core(new_b, inBarHasNewBar)
         # hasNewBar1m = inBars[-1].date.second == 0
-        self.hasNewBar1m = new_b.date.second == 0
+        # self.hasNewBar1m = new_b.date.second == 0
         # self.hasNewBar2m = self.hasNewBar1m and new_b.date.minute % 2 == 0
-        self.hasNewBar5m = self.hasNewBar1m and new_b.date.minute % 5 == 0
-        self.hasNewBar10m = self.hasNewBar1m and new_b.date.minute % 10 == 0
-        self.hasNewBar15m = self.hasNewBar1m and new_b.date.minute % 15 == 0
-        self.hasNewBar30m = self.hasNewBar1m and new_b.date.minute % 30 == 0
+        # self.hasNewBar5m = self.hasNewBar1m and new_b.date.minute % 5 == 0
+        # self.hasNewBar10m = self.hasNewBar1m and new_b.date.minute % 10 == 0
+        # self.hasNewBar15m = self.hasNewBar1m and new_b.date.minute % 15 == 0
+        # self.hasNewBar30m = self.hasNewBar1m and new_b.date.minute % 30 == 0
         await self.onBarUpdate(self.bars, self.hasNewBar1m) # every 5 secs
 
     async def resample_from_5s_core(self, inBar: BarData, inBarHasNewBar: bool):
@@ -1252,15 +1362,15 @@ class Agent:
         #     logger.warning(f"zero volume: {b}")
         atTopMinute = b.date.second % 60 == 0
         hasNewBar10s = b.date.second % 10 == 0
-        hasNewBar15s = b.date.second % 15 == 0
+        self.hasNewBar15s = hasNewBar15s = b.date.second % 15 == 0
         hasNewBar30s = b.date.second % 30 == 0
-        hasNewBar1m = b.date.second == 0
+        self.hasNewBar1m = hasNewBar1m = b.date.second == 0
         hasNewBar2m = hasNewBar1m and b.date.minute % 2 == 0
         hasNewBar3m = hasNewBar1m and b.date.minute % 3 == 0
-        hasNewBar5m = hasNewBar1m and b.date.minute % 5 == 0
-        hasNewBar10m = hasNewBar1m and b.date.minute % 10 == 0
-        hasNewBar15m = hasNewBar1m and b.date.minute % 15 == 0
-        hasNewBar30m = hasNewBar1m and b.date.minute % 30 == 0
+        self.hasNewBar5m = hasNewBar5m = hasNewBar1m and b.date.minute % 5 == 0
+        self.hasNewBar10m = hasNewBar10m = hasNewBar1m and b.date.minute % 10 == 0
+        self.hasNewBar15m = hasNewBar15m = hasNewBar1m and b.date.minute % 15 == 0
+        self.hasNewBar30m = hasNewBar30m = hasNewBar1m and b.date.minute % 30 == 0
 
         handle_new_bar(self.bars, b, hasNewBar1m)
         # if not hasattr(self, 'bars10s_log_count'):
@@ -1421,21 +1531,27 @@ class Agent:
         self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1)
         qcon1 = contractDetails[0].contract
         qcon = ib.qualifyContracts(contract_1) # won't need this after we have contractDetails
-        assert qcon1 == qcon[0]
+        # assert qcon1 == qcon[0]
+        # qcon = contractDetails
         if len(qcon) != 1:
             logger.error(f"Contract must be unique, expected 1 contract, got {qcon}")
             return -1
         else:
-            logger.info(f"Contract: {qcon[0]}")
+            contract_ = qcon[0] # contractDetails[0].contract, fully qualified
+            logger.info(f"Contract: {contract_}")
+
+            # if contract_ != contract_1:
+            #     logger.info(f"contract_1: {contract_1}")
             self.futAvgCostMult = 1.0
             self.contract_multiplier = 1.0
             if self.contractType == 'FUT':
-                self.contract_multiplier = mult_ = float(qcon[0].multiplier)
+                self.contract_multiplier = mult_ = float(contract_.multiplier)
                 # future contract avgcost is inflated by the multiplier
                 self.futAvgCostMult = 1./mult_
-                expiration_date = datetime.datetime.strptime(contractDetails[0].realExpirationDate, r'%Y%m%d')
-                days_to_expiration = (expiration_date - datetime.datetime.now()).days
-                logger.info(f"Future contract expires in {days_to_expiration} days")
+                logger.info(f"Future contract multiplier: {mult_}")
+                expiration_date = datetime.datetime.strptime(contractDetails[0].realExpirationDate, r'%Y%m%d').date()
+                days_to_expiration = (expiration_date - datetime.datetime.now().date()).days
+                logger.info(f"Future contract expires in {days_to_expiration} days {contract_.lastTradeDate}")
         # self.ibcontractDetails = contractDetails = ib.reqContractDetails(contract_1) # moved up
         self.ibTradingSessionIdx = 0
         if len(contractDetails) != 1:
@@ -1446,6 +1562,7 @@ class Agent:
             logger.error(f"Missing trading hours data in contractDetails: {contractDetails[0]}")
             return -1
         dtnow = datetime.datetime.now(local_tz)
+        # logger.info(f"contractDetails: {contractDetails}")
         tradingHours_ld = parse_hours(contractDetails[0].tradingHours, contractDetails[0].timeZoneId)
         liquidHours_ld = parse_hours(contractDetails[0].liquidHours, contractDetails[0].timeZoneId)
         if tradingHours_ld is None or liquidHours_ld is None:
@@ -1457,20 +1574,29 @@ class Agent:
         elif tradingHours_ld[0]['is_closed'] and tradingHours_ld[0]['date_start'] == dtnow.date():
             logger.error(f"Market is closed: {tradingHours_ld[0]['period_str']}")
             return -1
-        cdliquid = contractDetails[0].liquidSessions()[0]
+        self.ibTradingSessionIdx = _idx = 0
+        cdliquid = contractDetails[0].liquidSessions()[_idx]
+        cdl_full = contractDetails[0].tradingSessions()[_idx]
+        logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
         logger.info(f"liquid trading hours: {cdliquid.start.astimezone()} to {cdliquid.end.astimezone()}")
         start_mkt, end_mkt = get_market_hours()
-        if (start_mkt != cdliquid.start or end_mkt != cdliquid.end) and dtnow < cdliquid.end:
+        if (start_mkt != cdliquid.start or end_mkt != cdliquid.end) and dtnow < cdliquid.end and -60 <= (dtnow - cdliquid.start).total_seconds()/60.:
             # logger.info(f"Market hours have changed from {start_mkt.astimezone()} to {cdliquid.start.astimezone()} and from {end_mkt.astimezone()} to {cdliquid.end.astimezone()}")
             set_market_hours(cdliquid.start, cdliquid.end)
-        cdl_full = contractDetails[0].tradingSessions()[0]
-        logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
-        if cdliquid.end < dtnow and dtnow <= cdl_full.end: # contractDetails[0].liquidSessions()[1].start:
+        # cdl_full = contractDetails[0].tradingSessions()[0]
+        # logger.info(f"full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
+        elif (start_mkt == cdliquid.start and end_mkt == cdliquid.end) and dtnow <= cdliquid.end + datetime.timedelta(minutes=3):
+            logger.info(f"Current market hours: {start_mkt.astimezone()} to {end_mkt.astimezone()}")
+        elif cdliquid.end < dtnow and dtnow <= cdl_full.end: # contractDetails[0].liquidSessions()[1].start:
             logger.info(f"Liquid trading session has ended, switching to full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
             set_market_hours(cdl_full.start, cdl_full.end)
+        elif cdl_full.start < dtnow and dtnow <= cdl_full.end:
+            logger.info(f"Switching to full trading hours: {cdl_full.start.astimezone()} to {cdl_full.end.astimezone()}")
+            set_market_hours(cdl_full.start, cdl_full.end)
         elif cdl_full.end < dtnow:
-            cdliquid_1 = contractDetails[0].liquidSessions()[1]
-            cdl_full_1 = contractDetails[0].tradingSessions()[1]
+            self.ibTradingSessionIdx = _idx = 1
+            cdliquid_1 = contractDetails[0].liquidSessions()[_idx]
+            cdl_full_1 = contractDetails[0].tradingSessions()[_idx]
             if cdl_full_1.start < dtnow and dtnow <= cdl_full_1.end:
                 logger.info(f"Trading hours have ended for today")
                 logger.info(f"Switching to next full trading hours: {cdl_full_1.start.astimezone()} to {cdl_full_1.end.astimezone()}")
@@ -1485,16 +1611,26 @@ class Agent:
                 logger.error(f"Trading hours have ended for today and the next one starts at {cdl_full_1.start.astimezone()}")
                 return -1
 
+
+        # peak and valley detection
+        # set up before calling reqHistoricalData
+        if self.use5s:
+            self.pkvl15s = PD2()
+            self.pkvl5m = PD2()
+        self.pkvl1m = PD2()
+        self.pkvl2 = IntradayPeakValleyDetector()
+        self.anmly = OnlineAnomalyDetector('1m', threshold=5.)
+
         # request historical data
         start_mkt, end_mkt = get_market_hours()
-        future = self.request_historical_data(contract_1, contractDetails[0]) # onBarUpdate could fire before this method returns
+        future = self.request_historical_data(contract_, contractDetails[0]) # onBarUpdate could fire before this method returns
 
         # request market data
         self.ib.reqMarketDataType(1)
         if self.contractType == 'STK':
-            genericTickList = '104,59' # 59=dividend, 104=30d historical vol
+            genericTickList = '104,59,165' # 59=dividend, 104=30d historical vol, 165=adtv
         elif self.contractType == 'FUT':
-            genericTickList = '104' # 104=30d historical vol
+            genericTickList = '104,165' # 104=30d historical vol
         t = self.ib.reqMktData(contract_1, genericTickList, False, False, None)
         self.ticker: Ticker = t
         self.ib.sleep(0.5)
@@ -1517,7 +1653,7 @@ class Agent:
         if math.isnan(t.bid) or math.isnan(t.ask) or math.isnan(t.last) or math.isnan(t.close) or math.isnan(t.open_):
             bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} close {t.close} open {t.open_}"
         else:
-            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {t.volume:n}"
+            bidasklast = f"bid {t.bid} ask {t.ask} last {t.last} chg {(t.ask+t.bid)/2.0/t.close-1.0:+.2%} open {t.open_} close {t.close} volume {int(t.volume):n}"
         logger.info(f"{t.contract.localSymbol}: {t.time.astimezone():%H:%M:%S} {bidasklast}")
 
         if self.contractType == 'STK':
@@ -1535,12 +1671,24 @@ class Agent:
         for _ in range(10):
             if t.histVolatility and t.histVolatility > 0:
                 logger.info(f"30d historical volatility: {t.histVolatility:.2%}")
+                self.ibHistVolatility = t.histVolatility
                 break
             logger.info(f"waiting for histVolatility to be populated")
             self.ib.sleep(1)
         else: # no break
-            logger.warning(f"histVolatility is not populating")
-
+            logger.error(f"histVolatility is not populating")
+            return -1
+        for _ in range(3):
+            if t.avVolume and t.avVolume > 0:
+                logger.info(f"30d average volume: {int(t.avVolume):n}")
+                self.ibAvVolume = t.avVolume
+                break
+            logger.info(f"waiting for avVolume to be populated")
+            self.ib.sleep(3)
+        else:
+            logger.error(f"avVolume is not populating")
+            self.ibAvVolume = 1.0
+            # return -1
         if t.close > 0:
             self.prevclose = t.close
         elif dailyclose_df.empty or prevclose_fromfile == 0.0:
@@ -1563,15 +1711,29 @@ class Agent:
         # and use the previous close as avgCost.
         # only adjust if it's a carry over position from previous day. new trades aren't affected.
         if self.stkpos and self.stkpos.position > 0:
-            if self.avgcost_prevclose:
+            # get all trades so far
+            trades = [t for t in ib.trades() if t.contract.symbol == self.symbol and t.orderStatus.status != 'Cancelled']
+
+            logger.info(f"Unadjusted IB avgcost {self.stkpos.avgCost}")
+            self.useAvgCost = self.stkpos.avgCost * self.futAvgCostMult # from IB must be adjusted
+            if hasattr(self, 'setavgcost') and not trades:
+                self.useAvgCost = self.setavgcost
+                logger.info(f"Override IB avgcost {self.stkpos.avgCost} with {self.useAvgCost}")
+            elif self.avgcost_prevclose and not trades:
                 self.useAvgCost = self.prevclose
-                logger.info(f"IB avgCost {self.stkpos.avgCost} is not used, using prevclose {self.useAvgCost} as avgcost")
+                logger.info(f"Unadjusted IB avgCost {self.stkpos.avgCost} is not used, using prevclose {self.useAvgCost} as avgcost")
                 # self.stkpos.avgCost = self.useAvgCost
                 # logger.info(f"Override avgcost {self.stkpos.avgCost} with {self.useAvgCost}")
-            elif not self.avgcost_prevclose or self.ib.trades():
-                if self.ib.trades():
-                    logger.info(f"IB avgCost {self.stkpos.avgCost * self.futAvgCostMult}") #  is not adjusted
-                self.useAvgCost = self.stkpos.avgCost
+            # elif not self.avgcost_prevclose or trades:
+            else:
+                # just announce it
+                # if trades:
+                #     pass
+                #     # logger.info(f"IB avgCost {self.stkpos.avgCost * self.futAvgCostMult}") #  is not adjusted
+                # else:
+                #     # not traded today
+                #     self.useAvgCost = self.stkpos.avgCost * self.futAvgCostMult
+                logger.info(f"Adjusted IB avgCost {self.useAvgCost}")
         else:
             self.useAvgCost = 0.0
 
@@ -1583,11 +1745,14 @@ class Agent:
         # self.ib.pendingTickersEvent -= onPendingTickers
 
         if self.use5s:
-            self.bars5s = future.result() # self.bars will populate indirectly from resampler
+            self.bar15s = self.bars5s = future.result() # self.bars will populate indirectly from resampler
+            logger.info(f"len(bars5s)={len(self.bars5s)}")
+            logger.info(f"len(bars15s)={len(self.bar15s)}")
         else:
             self.bars = future.result()
 
-        # if len(self.bars) > 0:
+        if len(self.bars) > 0:
+            pass
         #     dtnow = datetime.datetime.now(local_tz)
         #     if dtnow.weekday() >= 5:  # Saturday or Sunday
         #         logging.warning(f"{dtnow.strftime('%A')} is not trading today")
@@ -1595,8 +1760,9 @@ class Agent:
         #         if self.bars[0].date.date() != dtnow.date():
         #             logging.warning(f"Expect first bar {self.bars[0]} to be today")
         #         # assert self.bars[0].date.date() == dtnow.date(), f"Expect first bar {self.bars[0]} to be today"
-        # else:
-        #     assert False, "Expect at least one bar"
+        else:
+            logger.error("Expect at least one bar")
+            return -1
         self.barsstartidx = len(self.bars) - 1
         self.beginprice = self.bars[self.barsstartidx].close
         isResampled = f'(resampled)' if self.use5s else ''
@@ -1634,47 +1800,60 @@ class Agent:
         # kf = KalmanFilter(A, B, H, Q, R, P, x0)
 
         initial_price = get_market_price() or self.prevclose
-
+        loginitialprice = np.log(initial_price/self.prevclose)
+        measurement_noise = .006**2
+        process_noise = .006**2
         self.kf_ca = make_ca_filter(dt_one, std_R=1)
         self.kf_ca_saver = Saver(self.kf_ca)
-        self.kf_ca.x = np.array([initial_price, 0, 0]).T
-        self.kf_ca.P *= 0.05 * initial_price
-        self.kf_ca.R *= 0.01 * initial_price
-        self.kf_ca.Q = Q_continuous_white_noise(dim=3, dt=dt_one, spectral_density=1.)
-        # self.kf_cv = make_cv_filter(dt, std_R=1)
+        self.kf_ca.x = np.array([loginitialprice, 0, 0]).T
+        self.kf_ca.P *= (0.02**2)
+        self.kf_ca.R *= measurement_noise
+        # self.kf_ca.Q = Q_continuous_white_noise(dim=3, dt=dt_one, spectral_density=1.)
+        self.kf_ca.Q = Q_discrete_white_noise(dim=3, dt=dt_one, var=1) * process_noise
+        self.kf_ca.Q[2, 2] = process_noise
+        logger.info(f"{self.kf_ca}")
+        
+        self.kf_cv = make_cv_filter(dt_one, std_R=1)
+        self.kf_cv_saver = Saver(self.kf_cv)
+        self.kf_cv.x = np.array([loginitialprice, 0]) #.T
+        self.kf_cv.P *= (0.01**2)
+        self.kf_cv.R *= measurement_noise
+        # self.kf_cv.Q = Q_continuous_white_noise(dim=2, dt=dt_one, spectral_density=1.)
+        self.kf_cv.Q = Q_discrete_white_noise(dim=2, dt=dt_one, var=1) * process_noise
+        self.kf_cv.Q[1, 1] = process_noise
+        logger.info(f"{self.kf_cv}")
+        # def fx_nonlinear(x, dt):
+        #     """
+        #     P_1 = P_0 * exp(return * dt), return = x[1], P_0 = x[0]
+        #     """
+        #     # assert x.shape == (2, 1)
+        #     price, r = x[0], x[1]
+        #     # exp_term = np.exp(x[1] * dt)
+        #     # xout = np.asarray([[x[0] * exp_term], [x[1]]])
+        #     new_price = price * np.exp(r * dt)
+        #     xout = np.asarray([new_price, r])
+        #     # assert xout.shape == (2, 1)
+        #     return xout
 
-        def fx_nonlinear(x, dt):
-            """
-            P_1 = P_0 * exp(return * dt), return = x[1], P_0 = x[0]
-            """
-            # assert x.shape == (2, 1)
-            price, r = x[0], x[1]
-            # exp_term = np.exp(x[1] * dt)
-            # xout = np.asarray([[x[0] * exp_term], [x[1]]])
-            new_price = price * np.exp(r * dt)
-            xout = np.asarray([new_price, r])
-            # assert xout.shape == (2, 1)
-            return xout
+        # def hx_cv(x):
+        #     """
+        #     transforms state space to measurement space
+        #     state variables: [log price, instantaneous continuously-compounded return]
+        #     measurement variables: [price]
+        #     """
+        #     # assert x.shape == (2, 1)
+        #     # xout = np.exp([x[:1]]) # log price to price
+        #     xout = np.asarray([x[0]])
+        #     # assert xout.shape == (1, 1)
+        #     return xout
 
-        def hx_cv(x):
-            """
-            transforms state space to measurement space
-            state variables: [log price, instantaneous continuously-compounded return]
-            measurement variables: [price]
-            """
-            # assert x.shape == (2, 1)
-            # xout = np.exp([x[:1]]) # log price to price
-            xout = np.asarray([x[0]])
-            # assert xout.shape == (1, 1)
-            return xout
-
-        sigmas_merwe = MerweScaledSigmaPoints(n=2, alpha=0.5, beta=2., kappa=1.)
-        sigmas_julier = JulierSigmaPoints(n=2, kappa=1)
-        self.ukf_cv = UnscentedKalmanFilter(dim_x=2, dim_z=1, dt=dt_oneminute, hx=hx_cv, fx=fx_nonlinear, points=sigmas_merwe)
-        self.ukf_cv.x = np.array([initial_price, 0])
-        # assert self.ukf_cv.x.shape == (2, 1)
-        self.ukf_cv.P *= 0.05 * initial_price # 5% of initial price
-        self.ukf_cv.R *= 0.01 * initial_price # measurement noise
+        # sigmas_merwe = MerweScaledSigmaPoints(n=2, alpha=0.5, beta=2., kappa=1.)
+        # sigmas_julier = JulierSigmaPoints(n=2, kappa=1)
+        # self.ukf_cv = UnscentedKalmanFilter(dim_x=2, dim_z=1, dt=dt_oneminute, hx=hx_cv, fx=fx_nonlinear, points=sigmas_merwe)
+        # self.ukf_cv.x = np.array([initial_price, 0])
+        # # assert self.ukf_cv.x.shape == (2, 1)
+        # self.ukf_cv.P *= 0.05 * initial_price # 5% of initial price
+        # self.ukf_cv.R *= 0.01 * initial_price # measurement noise
         # self.ukf_cv.Q = Q_continuous_white_noise(dim=2, dt=0.05, spectral_density=1.)
         return 0
 
@@ -1703,19 +1882,32 @@ class Agent:
                 f", stopLossPct={self.stopLossPct[0:6]}, dnPctMilestone={self.dnPctMilestone[0:6]}")
         
         if self.stkpos and self.stkpos.position != 0:
-            if self.high_since_buy_bar1m == []:
+            # if self.high_since_buy_bar1m == []:
+            if True:
                 if self.bars:
-                    if self.lastBuyTime and self.bars[0].date <= self.lastBuyTime and self.lastBuyTime <= self.bars[-1].date:
-                        # in self.bars, filter for the bars after lastBuyTime, then find the max
-                        barsSinceBuy = [b for b in self.bars if b.date >= self.lastBuyTime]
-                        if barsSinceBuy:
-                            self.high_since_buy_bar1m.append(max(barsSinceBuy, key=lambda bar: bar.average))
-                            logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
-                    else:
-                        # lastBuyTime is not in self.bars, so we need to get the max from the entire self.bars
-                        self.high_since_buy_bar1m.append(max(self.bars, key=lambda bar: bar.average))
+                    # initialize to current bar, past bars are not relevant/not actionable now
+                    self.high_since_buy_bar1m.append(copy.copy(self.bars[-1]))
+                    logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m[-1]}")
+                    # if self.lastBuyTime and self.bars[0].date <= self.lastBuyTime and self.lastBuyTime <= self.bars[-1].date:
+                    #     # in self.bars, filter for the bars after lastBuyTime, then find the max
+                    #     barsSinceBuy = [b for b in self.bars if b.date >= self.lastBuyTime]
+                    #     if barsSinceBuy:
+                    #         self.high_since_buy_bar1m.append(max(barsSinceBuy, key=lambda bar: bar.average))
+                    #         logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
+                    # else:
+                    #     # lastBuyTime is not in self.bars, so we need to get the max from the entire self.bars
+                    #     bars_since_open = [b for b in self.bars if b.date >= MKTOPEN]
+                    #     if bars_since_open:
+                    #         self.high_since_buy_bar1m.append(max(bars_since_open, key=lambda bar: bar.average))
+                    #         logger.info(f"high_since_buy_bar1m initialized to: {self.high_since_buy_bar1m}")
+                    #     else:
+                    #         logger.info(f"bars_since_open is empty")
                 else:
-                    logger.warning(f"has position, bars is not set and high_since_buy_bar1m is empty")
+                    logger.error(f"bars is not set, has position and high_since_buy_bar1m is empty")
+            # else:
+            #     logger.info(f"high_since_buy_bar1m already initialized: {self.high_since_buy_bar1m}")
+        else:
+            logger.info(f"no position, high_since_buy_bar1m is not initialized")
         # stockpos = [p for p in ib.positions() if p.contract.symbol in [self.symbol] and p.contract.secType == 'STK']
         # assert len(stockpos) == 1, 'Stock position not found'
         # self.avgCost = stockpos[0].avgCost
@@ -1747,7 +1939,14 @@ class Agent:
         return 0
 
     def __str__(self):
-        return f"Symbol: {self.symbol}, trading size {self.numshares}, maxloss {self.maxloss}, account {self.tradingaccount}, stock position: {self.stkpos}"
+        trade_notional_ = self.prevclose * self.contract_multiplier * self.numshares
+        maxlossPct_ = self.maxloss / trade_notional_
+        _contract_attr = ""
+        if self.contractType == 'FUT':
+            _contract_attr = f", contractType: {self.contractType}, expiry: {self.expiry}, exchange: {self.exchange}"
+        return (f"Symbol: {self.symbol}, trading size {self.numshares} (notional {trade_notional_:.2f}), maxloss {self.maxloss} ({maxlossPct_:.2%}), account {self.tradingaccount}, position: {self.stkpos}"
+            f"{_contract_attr}"
+        )
     #, Avg Cost: {self.avg_cost}, Last Price: {self.last_price}, Realized PnL: {self.realized_pnl}, Unrealized PnL: {self.unrealized_pnl}, Daily PnL: {self.daily_pnl}"
 
     def set_state(self, state: int) -> 'Agent':
@@ -1845,32 +2044,90 @@ class Agent:
         #     logger.info(f"bar update is late by {dtdiff.total_seconds():.3f} seconds")
         if self.use5s and hasNewBar:
             if len(bars)*4 != len(self.bars5s):
-                logger.error(f"resampled bars out of sync: len(bars)={len(bars)}*4 != len(bars5s)={len(self.bars5s)}")
+                logger.warning(f"resampled bars out of sync: len(bars)={len(bars)}*4 != len(bars5s)={len(self.bars5s)}")
         logger.info(f"hasNewBar={hasNewBar}, {_repr_barlist(reversed(bars[-3:]))}")
         # logger.info(f"MKTOPEN {MKTOPEN.astimezone()}, MKTCLOSE {MKTCLOSE.astimezone()}")
         # util.barplot(bars)
         currentBar = bars[-1] # bar that is being built, never full
         currentFullBar = bars[-2] # the most recent fully formed bar
         if hasNewBar:
+            logavgprice = np.log(currentFullBar.average/self.prevclose)
             self.kf_ca.predict()
-            self.kf_ca.update(currentFullBar.average)
+            self.kf_ca.update(logavgprice)
             self.kf_ca_saver.save()
             s = self.kf_ca_saver # shortcut
-            logger.info("kf_ca")
-            logger.info(f"x={s.x[-2:]}")
-            logger.info(f"P={s.P[-2:]}")
-            logger.info(f"K={s.K[-2:]}")
-            logger.info(f"y={s.y[-2:]}")
+            kf_ca = self.kf_ca
+            logger.info(f"kf_ca: {currentFullBar.average:.2f} ")
+            logger.info(f'kf_ca: ' # f'date={pd.to_datetime(dates[frame]):%H:%M}, ' # %Y%m%d 
+                f'price={logavgprice:.2%} {np.exp(logavgprice)*self.prevclose:.2f}, x0={kf_ca.x[0]:.2%} ({np.exp(kf_ca.x[0])*self.prevclose:.2f}), y0={kf_ca.y[0]:.2%}, K0={kf_ca.K[0][0]:.0%}, √P0={np.sqrt(kf_ca.P[0, 0]):.2%}, '
+                f'x1={kf_ca.x[1]:.2%}, K1={kf_ca.K[1][0]:.0%}, '
+                f'√P1={np.sqrt(kf_ca.P[1, 1]):.2%}, P[0,1]={kf_ca.P[0, 1]:.6f}'
+                f', x2={kf_ca.x[2]:.2%}, K2={kf_ca.K[2][0]:.0%}, ' # [2] acceleration
+                f'√P2={np.sqrt(kf_ca.P[2, 2]):.2%}, P[0,2]={kf_ca.P[0, 2]:.6f}, P[1,2]={kf_ca.P[1, 2]:.6f}' # [2] acceleration
+            )        
+            # logger.info(f"x={s.x[-2:]}")
+            # logger.info(f"P={s.P[-2:]}")
+            # logger.info(f"K={s.K[-2:]}")
+            # logger.info(f"y={s.y[-2:]}")
 
-            self.ukf_cv.predict()
-            self.ukf_cv.update(np.asarray([currentFullBar.average]))
-            logger.info("ukf_cv")
-            logger.info(f"x={self.ukf_cv.x[-2:]}")
-            logger.info(f"P={self.ukf_cv.P[-2:]}")
-            logger.info(f"K={self.ukf_cv.K[-2:]}")
-            logger.info(f"y={self.ukf_cv.y[-2:]}")
+            self.kf_cv.predict()
+            self.kf_cv.update(logavgprice)
+            self.kf_cv_saver.save()
+            s = self.kf_cv_saver # shortcut
+            # logger.info("kf_cv")
+            # logger.info(f"x={s.x[-2:]}")
+            # logger.info(f"P={s.P[-2:]}")
+            # logger.info(f"K={s.K[-2:]}")
+            # logger.info(f"y={s.y[-2:]}")
+            kf_cv = self.kf_cv
+            logger.info(f'kf_cv: ' # f'date={pd.to_datetime(dates[frame]):%H:%M}, ' # %Y%m%d 
+                f'price={logavgprice:.2%} {np.exp(logavgprice)*self.prevclose:.2f}, x0={kf_cv.x[0]:.2%} ({np.exp(kf_cv.x[0])*self.prevclose:.2f}), y0={kf_cv.y[0]:.2%}, K0={kf_cv.K[0][0]:.0%}, √P0={np.sqrt(kf_cv.P[0, 0]):.2%}, '
+                f'x1={kf_cv.x[1]:.2%}, K1={kf_cv.K[1][0]:.0%}, '
+                f'√P1={np.sqrt(kf_cv.P[1, 1]):.2%}, P[0,1]={kf_cv.P[0, 1]:.6f}'
+            )        
 
+            # self.ukf_cv.predict()
+            # self.ukf_cv.update(np.asarray([currentFullBar.average]))
+            # logger.info("ukf_cv")
+            # logger.info(f"x={self.ukf_cv.x[-2:]}")
+            # logger.info(f"P={self.ukf_cv.P[-2:]}")
+            # logger.info(f"K={self.ukf_cv.K[-2:]}")
+            # logger.info(f"y={self.ukf_cv.y[-2:]}")
+
+            prev_avg, cur_avg, peak, valley = self.pkvl1m.process_price(currentFullBar.average, currentFullBar.date)
+            if peak:
+                p = self.pkvl1m.get_peaks()
+                # logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+                logger.info(f"peaks1m({len(p)}): {_repr_pkvl(p[-3:])}")
+            if valley:
+                v = self.pkvl1m.get_valleys()
+                # logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+                logger.info(f"vlys1m({len(v)}): {_repr_pkvl(v[-3:])}")
+            # self.pkvl2.process_price(currentFullBar.average, currentFullBar.date)
+            self.anmly.process_data_point((currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close), currentFullBar.date, update_stats=True)
+        else:
+            self.anmly.process_data_point((currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close), currentFullBar.date, update_stats=False)
         if self.use5s:
+            if self.hasNewBar15s:
+                b = self.bars5s
+                logger.info(f"hasNewBar15s: {self.hasNewBar15s}, len(bars5s)={len(b)}")
+                prev_avg, cur_avg, peak, valley = self.pkvl15s.process_price(b[-1].average, b[-1].date)
+                if peak:
+                    p = self.pkvl15s.get_peaks()
+                    logger.info(f"peaks15s({len(p)}): {_repr_pkvl(p[-3:])}")
+                if valley:
+                    v = self.pkvl15s.get_valleys()
+                    logger.info(f"vlys15s({len(v)}): {_repr_pkvl(v[-3:])}")
+            if self.hasNewBar5m:
+                b = self.bars5m
+                prev_avg, cur_avg, peak, valley = self.pkvl5m.process_price(b[-1].average, b[-1].date)
+                if peak:
+                    p = self.pkvl5m.get_peaks()
+                    logger.info(f"peaks15m({len(p)}): {_repr_pkvl(p[-3:])}")
+                if valley:
+                    v = self.pkvl5m.get_valleys()
+                    logger.info(f"vlys15m({len(v)}): {_repr_pkvl(v[-3:])}")
+            
             cBar3m = self.bars3m[-1]
             cBar5m = self.bars5m[-1]
             cBar10m = self.bars10m[-1]
@@ -2081,7 +2338,9 @@ class Agent:
 
             logger.info(f"day hi (a,h,l,c): {dayhigh_avg:.2f} {dayhigh_high:.2f} {dayhigh_low:.2f} {dayhigh_close:.2f}")
             logger.info(f"day lo (a,h,l,c): {daylow_avg:.2f} {daylow_high:.2f} {daylow_low:.2f} {daylow_close:.2f}")
-            logger.info(f"log day hi/lo (a,h,l,c): {dayloghl_avg:.2%} {dayloghl_high:.2%} {dayloghl_low:.2%} {dayloghl_close:.2%} ({dayhl_avg-1.:.2%} {dayhl_high-1.:.2%} {dayhl_low-1.:.2%} {dayhl_close-1.:.2%})")
+            x_ = annualization_factor_252/self.ibHistVolatility
+            logger.info(f"log day hi/lo (a,h,l,c): {dayloghl_avg:.2%} {dayloghl_high:.2%} {dayloghl_low:.2%} {dayloghl_close:.2%}" 
+                f" (z: {(dayhl_avg-1.)*x_:.1f} {(dayhl_high-1.)*x_:.1f} {(dayhl_low-1.)*x_:.1f} {(dayhl_close-1.)*x_:.1f})")
             logger.info(f"cur%: {curratio_avg:.1%} {curratio_high:.1%} {curratio_low:.1%} {curratio_close:.1%}")
             absolute_low_thres = 0.0004
             self.absolute_low = (curratio_avg < absolute_low_thres and curratio_high < absolute_low_thres and curratio_low < absolute_low_thres and curratio_close < absolute_low_thres) \
@@ -2247,12 +2506,13 @@ class Agent:
             else:
                 self.volatility_per_min[-1] = vol_tup
         # rate of change
-        roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
+        # roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
         if len(bars) > 2:
+            # roc = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, 11)]
             roc2 = [(bars[-1].average / bars[-j].average - 1.0)/(j-1) for j in range(2, min(11, len(bars)))]
-            if not np.isclose(roc, roc2, atol=1e-6).all():
-                logger.warning(f"roc != roc2: {roc} != {roc2}")
-            logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc])}")
+            # if not np.isclose(roc, roc2, atol=1e-6).all():
+            #     logger.warning(f"roc != roc2: {roc} != {roc2}")
+            logger.info(f"roc {', '.join([f"{x:.3%}" for x in roc2])}")
         # high minus low
         hml_ = currentBar.high - currentBar.low
         hmlpct_ = hml_ / self.prevclose
@@ -2533,7 +2793,7 @@ class Agent:
 
         def lastPctReturn():
             # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
-            avgCost_ = self.useAvgCost * self.futAvgCostMult
+            avgCost_ = self.useAvgCost
             return (lastPrice_ / avgCost_) - 1.0 # life-to-date return
 
         def two_bars_green_with_one_close_near_high():
@@ -2583,7 +2843,7 @@ class Agent:
                 logger.info(f"tbg={tbg} tbg1y={tbg1y} cnh ({cnhratio_actual2:.3},{cnhratio_actual3:.3})={cnh}")
                 logger.info(f"bars[-2]={_repr_bar(self.bars[-2])} bars[-3]={_repr_bar(self.bars[-3])}")
             if hml2 <= self.ibcontractDetails[0].minTick or hml3 <= self.ibcontractDetails[0].minTick:
-                logging.warning(f"hml too small, result invalid: hml2={hml2} hml3={hml3} minTick={self.ibcontractDetails[0].minTick}")
+                logging.warning(f"hml too small, result invalid: hml2={hml2:.2f} hml3={hml3:.2f} minTick={self.ibcontractDetails[0].minTick}")
                 return False
             if currentBar.date < MKTOPEN:
                 logging.warning(f"{currentBar.date.astimezone()} is before rth")
@@ -2874,16 +3134,25 @@ class Agent:
                         mktPrice = round(t.marketPrice() / mintick) * mintick
                         self.order = LimitOrder('BUY', self.numshares, mktPrice, discretionaryAmt=round(0.0002 * self.milestone_multiplier * t.ask, 2))
                         self.order.account = self.tradingaccount
+                        if self.isOutsideRTH():
+                            self.order.transmit = False
+                            # self.order.outsideRth = True
 
                 elif not isFollowThrough and self.gf1: # original condition, AND gf1 (19-Dec-2024)
                     # ok using market order
                     logger.info(f"isFollowThrough: {isFollowThrough}, gf1: {self.gf1}, buying...")
                     self.order = MarketOrder('BUY', self.numshares)
                     self.order.account = self.tradingaccount
+                    if self.isOutsideRTH():
+                        self.order.transmit = False
+                        # self.order.outsideRth = True
                 elif (not self.absolute_low and self.absolute_low_last5m):
                     logger.info(f"absolute_low {self.absolute_low}, absolute_low_last5m {self.absolute_low_last5m}, buying...")
                     self.order = MarketOrder('BUY', self.numshares)
                     self.order.account = self.tradingaccount
+                    if self.isOutsideRTH():
+                        self.order.transmit = False
+                        # self.order.outsideRth = True
                 else:
                     logger.info(f"orig_cond: {orig_cond}, isFollowThrough: {isFollowThrough}, gf1: {self.gf1}, no action")
                     return
@@ -2955,7 +3224,9 @@ class Agent:
         if abs(tdiff) > 1.0:
             logger.warning(f"Tick time is {tdiff:.2f} seconds" + (f" ahead" if tdiff > 0 else " behind") + f" current time")
         basprd = t.ask - t.bid
-        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} b/a spread {basprd:.2f} ({basprd/lastPrice_:.3%}) high {t.high} low {t.low} volume {t.volume:n}")
+        avVolume_ = t.avVolume if not np.isnan(t.avVolume) else None
+        volumepct_str_ = f" ({t.volume/avVolume_:.2%})" if avVolume_ else ""
+        logger.info(f"{t.contract.localSymbol} bid {t.bid} ask {t.ask} last {t.last} chg {chg:+.2%} b/a spread {basprd:.2f} ({basprd/lastPrice_:.3%}) high {t.high} low {t.low} volume {int(t.volume):n}{volumepct_str_}")
         # lastPrice_ = get_market_price() # move to the top
 
         # volatility
@@ -3004,7 +3275,7 @@ class Agent:
         sp_: List[PortfolioItem] = [p for p in ib.portfolio(self.tradingaccount) if p.contract.symbol in [self.symbol]]
         if len(sp_) > 0:
             for p in sp_:
-                logger.info(f"portfolio: {p.position:n} {p.contract.symbol}, IB avgcost {p.averageCost * self.futAvgCostMult:.2f}, use avgcost {self.useAvgCost * self.futAvgCostMult}, mktprc {p.marketPrice:.2f} mv {p.marketValue:.2f}, dailypnl {p.unrealizedPNL+p.realizedPNL:.2f} ({(p.unrealizedPNL+p.realizedPNL)/self.prevclose/p.position:+.2%}), unrlzd {p.unrealizedPNL:.2f} rlzd {p.realizedPNL:.2f}")
+                logger.info(f"portfolio: {p.position:n} {p.contract.symbol}, adjusted IB avgcost {p.averageCost * self.futAvgCostMult:.2f}, use avgcost {self.useAvgCost}, mktprc {p.marketPrice:.2f} mv {p.marketValue:.2f}, dailypnl {p.unrealizedPNL+p.realizedPNL:.2f} ({(p.unrealizedPNL+p.realizedPNL)/self.prevclose/p.position*self.futAvgCostMult:+.2%}), unrlzd {p.unrealizedPNL:.2f} rlzd {p.realizedPNL:.2f}")
         else:
             logger.info(f"portfolio: no position")
         if self.get_state() in [0, 2]:
@@ -3102,9 +3373,10 @@ class Agent:
         newIdx_ = 0
         # lastPrice_ = get_market_price()
         # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
-        avgCost_ = self.useAvgCost * self.futAvgCostMult
+        avgCost_ = self.useAvgCost # * self.futAvgCostMult * self.contract_multiplier
         while newIdx_ < len(self.upPctMilestone) and lastPrice_ > avgCost_ * (1 + self.upPctMilestone[newIdx_]):
             newIdx_ += 1
+        # logger.info(f"lastPctReturn()={lastPctReturn():.2%}, newIdx_={newIdx_}")
         assert lastPctReturn() <= self.upPctMilestone[newIdx_], "last price should be at or below current milestone"
         if newIdx_ > 0:
             newIdx_ -= 1  # Adjust because the loop exits after crossing the last milestone
@@ -3169,7 +3441,7 @@ class Agent:
         ltdpnl_hwm_pct = ltdpnl_hwm / avgCost_
         daypnl_hwm_pct = daypnl_hwm / self.prevclose
         logger.info(f"px_hwm {hwm:.2f}, px_highest_since_buy {highest_since_buy:.2f}")
-        logger.info(f"drawdown {drawdown:.2f} {drawdown_pct:.2%}, ltdpnl_hwm {ltdpnl_hwm:.2f} {ltdpnl_hwm_pct:.2%}, daypnl hwm {daypnl_hwm:.2f} {daypnl_hwm_pct:.2%}")
+        logger.info(f"drawdown {drawdown:.2f} {drawdown_pct:.2%}, ltdpnl hi {ltdpnl_hwm:.2f} {ltdpnl_hwm_pct:.2%}, daypnl hi {daypnl_hwm:.2f} {daypnl_hwm_pct:.2%}")
         # # report if we are in drawdown
         # if drawdown_pct < 0:
         #     logger.info(f"Drawdown: {drawdown_pct:.2%}")
@@ -3296,7 +3568,7 @@ class Agent:
             logger.error(f"lastPrice is zero or negative: {lastPrice}, can't proceed")
             return
         # avgCost_ = self.stkpos.avgCost * self.futAvgCostMult
-        avgCost_ = self.useAvgCost * self.futAvgCostMult
+        avgCost_ = self.useAvgCost # * self.futAvgCostMult * self.contract_multiplier
         maxlossPct_ = maxloss_ / avgCost_ / self.stkpos.position / self.contract_multiplier
         currentPnl = (lastPrice - avgCost_) * self.stkpos.position * self.contract_multiplier
         currentPnlPct = lastPrice / avgCost_ - 1.
@@ -3313,6 +3585,9 @@ class Agent:
                 bid_price = round(bid_price / mintick) * mintick
                 self.order = LimitOrder('SELL', self.stkpos.position, bid_price, discretionaryAmt=round(0.0004 * self.milestone_multiplier * bid_price, 2))
                 self.order.account = self.tradingaccount
+                if self.isOutsideRTH():
+                    self.order.transmit = False
+                    self.order.outsideRth = True
                 # contract_ = Stock(self.stkpos.contract.symbol, 'SMART', self.stkpos.contract.currency)
                 contract_ = self.ibcontract
                 logger.warning(f"Selling {contract_} as {self.order} ...")
@@ -3458,7 +3733,7 @@ async def onPositionUpdate(newpos: ib_insync.objects.Position):
     all_execs = [fill.execution for fill in all_fills]
 
     # ibtrades has all trades for the symbol since app started plus subsequent internal trades but no external trades
-    ibtrades = [t for t in ib.trades() if t.contract.symbol == agent.symbol]
+    ibtrades = [t for t in ib.trades() if t.contract.symbol == agent.symbol and t.orderStatus.status != 'Cancelled']
     ibfills = [t.fills for t in ibtrades]
     ibexecs = [fill.execution for sublist in ibfills for fill in sublist]
 
@@ -3471,7 +3746,7 @@ async def onPositionUpdate(newpos: ib_insync.objects.Position):
         ext_execs_last = sorted(ext_execs_lst, key=lambda x: x[1], reverse=True)[0]
         # make sure the timestamp is recent enough, within 1 minute
         if (datetime.datetime.now(local_tz) - ext_execs_last[1]).total_seconds() < 30:
-            logger.info(f"external trade: {_execution_repr(ext_execs_last)}")
+            logger.info(f"external trade: execId={ext_execs_last[0]}, time={ext_execs_last[1]}, side={ext_execs_last[2]}")
         else:
             ext_execs_last = None
 
@@ -3508,6 +3783,7 @@ async def onPositionUpdate(newpos: ib_insync.objects.Position):
                 agent.trade = None
                 agent.orderId = agent.tradePermId = -1
             if agent.idxMilestone >= 0:
+                _tmp = agent.idxMilestone
                 agent.reset_milestone() # reset milestone
                 logmsg += f" resetting strategy1 milestone to -1"
                 
@@ -3525,7 +3801,15 @@ async def onPositionUpdate(newpos: ib_insync.objects.Position):
         # agent.state = 1
         prevstkpos = agent.stkpos
         agent.stkpos = newpos
-        agent.useAvgCost = newpos.avgCost
+        agent.useAvgCost = newpos.avgCost * agent.futAvgCostMult
+        if newpos.position == 0:
+            agent.high_since_buy_bar1m.clear() # reset
+            logger.info(f"resetting high_since_buy_bar1m={agent.high_since_buy_bar1m}")
+        elif newpos.position != 0 and not agent.high_since_buy_bar1m:
+            agent.high_since_buy_bar1m.append(agent.bars[-1])
+            logger.info(f"setting high_since_buy_bar1m={agent.high_since_buy_bar1m[-1]}")
+        elif newpos.position != 0 and agent.high_since_buy_bar1m:
+            logger.info(f"high_since_buy_bar1m={agent.high_since_buy_bar1m[-1]}")
         logger.info(f"updating agent's with stock position: {agent.stkpos} (id={id(newpos)}), prev={prevstkpos}" + (f" (id={id(prevstkpos)})" if prevstkpos else ""))
         # should we change state?
         # let's just warn about possible state change for now
@@ -3554,8 +3838,9 @@ async def onPositionUpdate(newpos: ib_insync.objects.Position):
             agent.set_state(0)
             # agent.state = 0
             if agent.idxMilestone >= 0:
+                _tmp = agent.idxMilestone
                 agent.reset_milestone()
-                logger.info(f"resetting strategy1 milestone {agent.idxMilestone} to -1")
+                logger.info(f"resetting strategy1 milestone {_tmp} to {agent.idxMilestone}")
         elif not (prevstkpos is None) and (prevstkpos.position == newpos.position) and (prevstkpos.avgCost == newpos.avgCost):
             # why are we getting the same position update?
             logger.warning(f"position and avgCost are the same, why update, prev={prevstkpos} new={newpos}, agent state: {agent.state}")
@@ -3650,7 +3935,7 @@ def onOrderStatus(trade: ib_insync.order.Trade):
         pass # it's okay
         return
     elif agent.trade is None:
-        logger.error(f"agent's trade is None, shouldn't happen: {trade}")
+        logger.error(f"shouldn't happen, agent doesn't have a handle to this trade: {trade}")
         return
     if agent.trade.order.orderId != trade.order.orderId:
         logger.error(f"order id mismatch: agent's {agent.trade.order.orderId} != {trade.order.orderId}")
@@ -3827,124 +4112,6 @@ async def telegram_init(bot):
         logger.info(f"Telegram user: {await u}")
         # asyncio.Task.set_result(await u)
 
-def load_spec_file(scriptdir: str = os.path.dirname(os.path.realpath(__file__))
-    , filename: str = 'spec.json') -> dict:
-    # spec file
-    
-    specfile = os.path.join(scriptdir, filename)
-    if not os.path.exists(specfile):
-        logger.error(f"Spec file not found: {specfile}")
-        sys.exit(1)
-    with open(specfile, 'r') as f:
-        spec = json.load(f)
-    logger.info(f"spec file loaded: {specfile}")
-    return spec
-
-import ctypes
-import uuid
-from ctypes import wintypes
-
-# Constants from the Windows API
-ES_CONTINUOUS = 0x80000000
-ES_SYSTEM_REQUIRED = 0x00000001
-ES_DISPLAY_REQUIRED = 0x00000002
-
-def prevent_sleep() -> None:
-    # Prevent Windows from sleeping
-    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
-
-def restore_sleep() -> None:
-    # Restore the default behavior
-    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
-
-# https://stackoverflow.com/questions/72847468/ctypes-how-to-parser-buffer-content
-
-class GUID(ctypes.Structure):
-    _fields_ = [
-        ("Data1", ctypes.c_uint32),
-        ("Data2", ctypes.c_uint16),
-        ("Data3", ctypes.c_uint16),
-        ("Data4", ctypes.c_uint8 * 8)
-    ]
-
-# class GUID(ctypes.Structure):
-#     _fields_ = [
-#         ("Data1", wintypes.ULONG),
-#         ("Data2", wintypes.USHORT),
-#         ("Data3", wintypes.USHORT),
-#         ("Data4", wintypes.BYTE * 8)
-#     ]
-
-    # def __str__(self):
-    #     return f"{{{self.Data1:08X}-{self.Data2:04X}-{self.Data3:04X}-{''.join(f'{x:02X}' for x in self.Data4)}}}"
-    # def __repr__(self):
-    #     return f"GUID('{self}')"
-
-    def __str__(self):
-        return (f"{{{self.Data1:08x}-{self.Data2:04x}-{self.Data3:04x}-"
-                f"{bytes(self.Data4[:2]).hex()}-{bytes(self.Data4[2:]).hex()}}}")
-
-    # GUID_ptr = ctypes.POINTER['GUID']
-    @staticmethod
-    def to_string(guid_ptr) -> str:
-        return str(guid_ptr.contents)
-
-    def __init__(self, guid = None):
-        if guid is not None:
-            data = uuid.UUID(guid)
-            self.Data1 = data.time_low
-            self.Data2 = data.time_mid
-            self.Data3 = data.time_hi_version
-            self.Data4[0] = data.clock_seq_hi_variant
-            self.Data4[1] = data.clock_seq_low
-            self.Data4[2:] = data.node.to_bytes(6, "big")
-
-    def __bytes__(self):
-        return bytes(self.Data1.to_bytes(4, "little")
-                    + self.Data2.to_bytes(2, "little")
-                    + self.Data3.to_bytes(2, "little")
-                    + self.Data4)
-
-def GetPowerSetting() -> str:
-    # https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powergetactivescheme
-    # Define necessary constants and types
-    PowerGetActiveScheme = ctypes.windll.powrprof.PowerGetActiveScheme
-    # [out] A pointer that receives a pointer to a GUID structure. Use the LocalFree function to free this memory.
-    PowerGetActiveScheme.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.POINTER(GUID))]
-    PowerGetActiveScheme.restype = wintypes.DWORD
-
-    # Initialize variables
-    active_scheme_guid_ptr = ctypes.POINTER(GUID)() # Create a pointer to a GUID
-
-    # Call the function
-    result = PowerGetActiveScheme(None, ctypes.byref(active_scheme_guid_ptr))
-    if result == 0:  # ERROR_SUCCESS
-        return GUID.to_string(active_scheme_guid_ptr)
-    else:
-        raise ctypes.WinError(result)
-    # end of GetPowerSetting
-
-def get_friendly_name(scheme_guid: GUID) -> str:
-    PowerReadFriendlyName = ctypes.windll.powrprof.PowerReadFriendlyName
-    PowerReadFriendlyName.argtypes = [ctypes.c_void_p, ctypes.POINTER(GUID), ctypes.POINTER(GUID), ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_wchar), ctypes.POINTER(ctypes.c_uint32)]
-    PowerReadFriendlyName.restype = ctypes.c_uint32
-
-    buffer_size = ctypes.c_uint32(0)
-    PowerReadFriendlyName(None, ctypes.byref(scheme_guid), None, None, None, ctypes.byref(buffer_size))
-    # print(buffer_size.value)
-    # buffer = (ctypes.c_ubyte * buffer_size.value)()
-    buffer = ctypes.create_unicode_buffer(buffer_size.value)
-    result = PowerReadFriendlyName(None, ctypes.byref(scheme_guid), None, None, buffer, ctypes.byref(buffer_size))
-
-    if result == 0:  # ERROR_SUCCESS
-        return buffer.value
-    else:
-        raise ctypes.WinError(result)  
-    # end of get_friendly_name
-
-# friendly_name = get_friendly_name(active_scheme_guid_ptr.contents)
-# print(f"Active Power Scheme Friendly Name: {friendly_name}")
-
 def main():
 #if __name__ == "__main__":
     # print(get_asyncio_running_loop('__main__: ')) # expect 'no running event loop'
@@ -3954,12 +4121,14 @@ def main():
     argparser.add_argument('symbol', type=str, help='Ticker symbol to trade')
     argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
     argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
+    argparser.add_argument('--scalesize', type=float, default=1.0, help='Scale trading size by this factor')
     argparser.add_argument('--clientid', type=int, help='IBKR API Client ID')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--run_until', type=str, help='Run until this time (HH:MM)')
     argparser.add_argument('--live_trading', action='store_true', help='Live trading')
+    argparser.add_argument('--outsideRTH', action='store_true', help='Enable trading outside RTH')
     argparser.add_argument('--account', type=str, default='paper', help='Account number to use')
     argparser.add_argument('--use5s', action='store_true', help='Use 5s bars')
     argparser.add_argument('--contract_type', type=str, default='STK', help='Contract type (FUT, STK, CASH)')
@@ -3967,6 +4136,7 @@ def main():
     argparser.add_argument('--exchange', type=str, help='Contract exchange')
     argparser.add_argument('--strategy', type=int, default=1, help='Strategy number')
     argparser.add_argument('--avgcost_prevclose', action='store_true', help='Use previous closing level as average cost')
+    argparser.add_argument('--setavgcost', type=float, help='set average cost to this value')
     args = argparser.parse_args()
 
     # must come before any logging calls
@@ -3987,7 +4157,7 @@ def main():
     logfilesuffix = f'{datetime.datetime.now(local_tz):%y%m%d_%H%M}_{computername}{account_txt}_{program_name}'
     datafilesuffixdt = f'{args.symbol}_{datetime.datetime.now(local_tz):%y%m%d}_{computername}{account_txt}'
     logfilename = os.path.join(scriptdir, 'logs', f'{args.symbol}_{logfilesuffix}.log')
-    file_handler = logging.FileHandler(logfilename)
+    file_handler = logging.FileHandler(logfilename, encoding='utf-8')
     # file_handler.setLevel(args.loglevel)
     file_handler.setFormatter(formatter)
 
@@ -4043,14 +4213,14 @@ def main():
 
     # util.logToConsole(logging.DEBUG) # show network traffic
 
-    # get IB client id from cmd line or spec file
-    speckey = args.symbol
-    if args.symbol not in spec['root'] and args.numshares and args.maxloss:
-        speckey = 'default'
-        logger.error(f"Symbol {args.symbol} not found in spec file, using default")
-    elif args.symbol not in spec['root']:
-        logger.error(f"Symbol {args.symbol} not found in spec file, must provide numshares and maxloss")
-        sys.exit(1)
+    # # get IB client id from cmd line or spec file
+    # speckey = args.symbol
+    # if args.symbol not in spec['root'] and args.numshares and args.maxloss:
+    #     speckey = 'default'
+    #     logger.error(f"Symbol {args.symbol} not found in spec file, using default")
+    # elif args.symbol not in spec['root']:
+    #     logger.error(f"Symbol {args.symbol} not found in spec file, must provide numshares and maxloss")
+    #     sys.exit(1)
     
     if args.account != 'paper' and args.account in spec and args.symbol in spec[args.account]:
         # account, symbol are in spec file
@@ -4062,17 +4232,17 @@ def main():
     if args.symbol in spec['root']:
         spec_p = spec['root'][args.symbol] # shortcut to root.symbol.*
         # get the contract type
-        contract_type = spec_p.get('contract_type', '')
+        contract_type = spec_p.get('contract_type', 'STK') # default to STK
         if contract_type in {'FUT'}:
             expiry = spec_p.get('expiry', '')
             exchange = spec_p.get('exchange', '')
             if not expiry or not exchange:
                 logger.error(f"Contract type {contract_type} must specify expiry and exchange")
                 sys.exit(1)
-        elif contract_type in {'STK'}:
+        elif contract_type in {'STK',''}: # if no contract_type, assume STK
             pass
         else:
-            logger.error(f"Contract type {contract_type} not valid")
+            logger.error(f"Contract type '{contract_type}' not valid")
             sys.exit(1)
     else:
         spec_p = {}
@@ -4160,22 +4330,35 @@ def main():
 
     global agent
     milemult = spec_p.get('milestone_multiplier', 1)
+    numshares_1 = args.numshares if args.numshares else numshares_a if numshares_a !=0 else spec_p['numshares']
+    if args.scalesize * numshares_1 < 1:
+        logger.error(f"Number of shares too small: {args.scalesize * numshares_1}")
+        sys.exit(1)
+    # ensure args.scalesize * numshares_1 is an integer
+    if args.scalesize * numshares_1 % 1 != 0:
+        logger.error(f"Number of shares must be an integer: {args.scalesize * numshares_1}")
+        sys.exit(1)
     agent = Agent(symbol=args.symbol, liveTrading=args.live_trading
                   , contractType=contract_type, expiry=expiry, exchange=exchange
                   , tradingaccount=account
-                  , maxloss=args.maxloss if args.maxloss else maxloss_a if maxloss_a != 0.0 else spec_p['maxloss']
-                  , numshares=args.numshares if args.numshares else numshares_a if numshares_a !=0 else spec_p['numshares']
-                  , upPctMilestone=np.asarray(spec['root'][speckey]['upPctMilestone']) * milemult
+                  , maxloss=args.scalesize * (args.maxloss if args.maxloss else maxloss_a if maxloss_a != 0.0 else spec_p['maxloss'])
+                  , numshares=args.scalesize * (args.numshares if args.numshares else numshares_a if numshares_a !=0 else spec_p['numshares'])
+                #   , upPctMilestone=np.asarray(spec['root'][speckey]['upPctMilestone']) * milemult
+                  , upPctMilestone=np.asarray(spec_p.get('upPctMilestone', spec_d['upPctMilestone'])) * milemult
                   , dnPctMilestone=np.asarray(spec_p.get('dnPctMilestone', spec_d['dnPctMilestone'])) * milemult
-                  , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * milemult
+                #   , stopLossPct=np.asarray(spec['root'][speckey]['stopLossPct']) * milemult
+                  , stopLossPct=np.asarray(spec_p.get('stopLossPct', spec_d['stopLossPct'])) * milemult
                   , mile0_max_retracement_pct=spec_p.get('mile0_max_retracement_pct', spec_d['mile0_max_retracement_pct']) # * milemult
                   , mile0_max_retracement_absolute_min_pct=spec_p.get('mile0_max_retracement_absolute_min_pct', spec_d['mile0_max_retracement_absolute_min_pct']) * milemult
                   , use5s=True if args.use5s else False
                   , avgcost_prevclose=True if args.avgcost_prevclose else False
+                  # , setavgcost=args.setavgcost if args.setavgcost else None
                   , strategynum=args.strategy
                   , args=args
                   , ib=ib
     )
+    if args.setavgcost:
+        agent.setavgcost = args.setavgcost # dynamic attribute
     if len(sp_) > 0:
         agent.stkpos = sp_[0]
         agent.state = 1
@@ -4220,7 +4403,7 @@ def main():
     if data:
         agent.resume_session(data)
 
-    logger.info(f"Agent State: {agent}")
+    # logger.info(f"Agent State: {agent}")
 
     account = ib.managedAccounts()[0]
     # print(ib.managedAccounts())
@@ -4272,9 +4455,11 @@ def main():
     cdliquid: ib_insync.contract.ContractDetails = agent.ibcontractDetails[0].liquidSessions()[idx]
     cdl_full: ib_insync.contract.ContractDetails = agent.ibcontractDetails[0].tradingSessions()[idx]
 
-    if dtnow.weekday() >= 5:  # Saturday or Sunday
-        pass
-    elif not args.run_until:
+    logger.info(f"Agent State: {agent}")
+
+    # if dtnow.weekday() >= 5:  # Saturday or Sunday
+    #     pass
+    if not args.run_until:
         # wait until market open
         # waitUntil = dateutil.parser.parse('09:30:00') - datetime.timedelta(seconds=70) # leave some buffer if initializations take time
         mkt_start, mkt_end = get_market_hours()
@@ -4316,7 +4501,7 @@ def main():
                 #     ib.cancelOrder(t.order)
                 # wait for trades to cancel
                 while (ot := [t for t in ib.reqAllOpenOrders() if t.contract.symbol == agent.symbol]):
-                    logger.warning(f"Waiting for trades to cancel: {ot}")
+                    logger.warning(f"Waiting for outstanding trades: {ot}")
                     ib.sleep(np.random.uniform(low=2.0, high=20.0))
             else:
                 logger.info(f"ib.reqAllOpenOrders: no outstanding orders")
@@ -4388,22 +4573,25 @@ def main():
         logger.debug(f"x,y: {x}, {y}")
 
         # PCHIP fit
-        price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
-        price_func_deriv = price_func.derivative()
-        price_slopes = price_func_deriv(x)
-        logger.debug(f"PCHIP 1m price slopes: {price_slopes}")
+        if len(x) >= 2:
+            price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
+            price_func_deriv = price_func.derivative()
+            price_slopes = price_func_deriv(x)
+            logger.debug(f"PCHIP 1m price slopes: {price_slopes}")
 
         # 5m resampled
-        y = [b for b in df5m['close'].iloc[s]]
-        y_high = [b for b in df5m['high'].iloc[s]]
-        y_low = [b for b in df5m['low'].iloc[s]]
-        y_open = [b for b in df5m['open'].iloc[s]]
+        y = [b for b in df5m['close'].iloc[s].dropna()]
+        y_high = [b for b in df5m['high'].iloc[s].dropna()]
+        y_low = [b for b in df5m['low'].iloc[s].dropna()]
+        y_open = [b for b in df5m['open'].iloc[s].dropna()]
         x = np.arange(len(y))
-        logger.debug(f"x,y: {x}, {y}")
-        price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
-        price_func_deriv = price_func.derivative()
-        price_slopes = price_func_deriv(x)
-        logger.debug(f"PCHIP 5m price slopes: {price_slopes}")
+        if len(x) >= 2:
+            logger.info(f"df5m: {x}, {y}")
+            # logger.debug(f"x,y: {x}, {y}")
+            price_func = scipy.interpolate.PchipInterpolator(x, y, extrapolate=False)
+            price_func_deriv = price_func.derivative()
+            price_slopes = price_func_deriv(x)
+            logger.debug(f"PCHIP 5m price slopes: {price_slopes}")
         # np.log(df5m['close'] / df5m['close'].shift(1))
 
         # # Chebyshev polynomial fit
@@ -4510,7 +4698,7 @@ class ControlCTrap:
 
 if __name__ == "__main__":
     # prevent system from sleeping
-    prevent_sleep()
+    gizmo.prevent_sleep()
 
     #logging.basicConfig(level=logging.INFO)
     logging.basicConfig(level=logging.INFO
@@ -4548,7 +4736,7 @@ if __name__ == "__main__":
                     logger.info(f"{handler} closed")
         
         logger.info("End of main loop")
-        restore_sleep()
+        gizmo.restore_sleep()
 
 # if __name__ == "__main__":
 #     main()
