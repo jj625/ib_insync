@@ -187,7 +187,107 @@
         "currency": "USD",
         "milestone_multiplier": 1.0
     }
-},
+  "U16436651": {
+      "SPY": {
+        "clientid": 509,
+        "numshares": 20,
+        "maxloss": -100
+      },
+      "AAPL": {
+        "clientid": 209,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "AMD": {
+        "clientid": 218,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "GOOG": {
+        "clientid": 214,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "GOOGL": {
+        "clientid": 215,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "MSFT": {
+        "clientid": 230,
+        "numshares": 100,
+        "maxloss": -350
+      },  
+      "AVGO": {
+        "clientid": 216,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "IWM": {
+        "clientid": 231,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "QQQ": {
+        "clientid": 233,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "DIA": {
+        "clientid": 234,
+        "numshares": 100,
+        "maxloss": -350
+      },
+      "MES": {
+        "clientid": 701,
+        "maxloss": -150,
+        "numshares": 1,
+        "name": "MES",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "MES",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    },
+    "MNQ": {
+        "clientid": 704,
+        "maxloss": -300,
+        "numshares": 1,
+        "name": "MNQ",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "MNQ",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.5
+    },
+    "MBT": {
+        "clientid": 702,
+        "maxloss": -600,
+        "numshares": 3,
+        "name": "MBT",
+        "contract_type": "FUT",
+        "expiry": "202503",
+        "symbol": "MBT",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 2.0
+    },
+    "MGC": {
+        "clientid": 604,
+        "maxloss": -600,
+        "numshares": 2,
+        "name": "MGC",
+        "contract_type": "FUT",
+        "expiry": "202504",
+        "symbol": "MGC",
+        "exchange": "COMEX",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    }
+ 
+  },
   "root": {
     "AMZN": {
         "clientid": 217,
