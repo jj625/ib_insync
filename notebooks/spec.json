@@ -189,6 +189,16 @@
     }
 },
   "root": {
+    "AMZN": {
+        "clientid": 217,
+        "numshares": 100,
+        "maxloss": -250
+    },
+    "BRK B": {
+        "clientid": 218,
+        "numshares": 100,
+        "maxloss": -250
+    },
     "MSFT": {
       "clientid": 9,
       "maxloss": -200,
