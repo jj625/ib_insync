@@ -14,7 +14,8 @@
       "contract_type": "STK",
       "symbol": "MSFT",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 1.85
     },
     "AAPL": {
       "clientid": 11,
@@ -30,7 +31,8 @@
       "contract_type": "STK",
       "symbol": "AAPL",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 1.8
     },
     "NVDA": {
       "clientid": 17,
@@ -46,7 +48,8 @@
       "contract_type": "STK",
       "symbol": "NVDA",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 3.0
     },
     "AMD": {
       "clientid": 18,
@@ -62,7 +65,8 @@
       "contract_type": "STK",
       "symbol": "AMD",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 3.3
     },
     "GOOG": {
       "clientid": 14,
@@ -78,7 +82,9 @@
       "contract_type": "STK",
       "symbol": "GOOG",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 2.2
+    },
     },
     "META": {
       "clientid": 27,
@@ -94,7 +100,8 @@
       "contract_type": "STK",
       "symbol": "META",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 2.65
     },
     "TLT": {
       "clientid": 21,
@@ -110,7 +117,8 @@
       "contract_type": "STK",
       "symbol": "TLT",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 1.2
     },
     "TSLA": {
       "clientid": 22,
@@ -132,7 +140,8 @@
       "contract_type": "STK",
       "symbol": "TSLA",
       "exchange": "NASDAQ",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 5.5
     },
     "LQD": {
       "clientid": 25,
@@ -148,7 +157,8 @@
       "contract_type": "STK",
       "symbol": "LQD",
       "exchange": "ARCA",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 0.65
     },
     "QQQ": {
       "clientid": 26,
@@ -164,7 +174,8 @@
       "contract_type": "STK",
       "symbol": "QQQ",
       "exchange": "ARCA",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 1.4
     },
     "SPY": {
       "clientid": 28,
@@ -180,6 +191,8 @@
       "contract_type": "STK",
       "symbol": "SPY",
       "exchange": "ARCA",
+      "currency": "USD",
+      "milestone_multiplier": 1.0
         "contract_type": "STK",
     },
     "IWM": {
@@ -212,7 +225,8 @@
       "contract_type": "STK",
       "symbol": "PLTR",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 5.0
     },
     "MSTR": {
       "clientid": 34,
@@ -228,7 +242,8 @@
       "contract_type": "STK",
       "symbol": "MSTR",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 12.0
     },
     "COIN": {
       "clientid": 35,
@@ -244,7 +259,8 @@
       "contract_type": "STK",
       "symbol": "COIN",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 10.0
     },
     "IBIT": {
       "clientid": 36,
@@ -260,7 +276,8 @@
       "contract_type": "STK",
       "symbol": "IBIT",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 4.4
     },
     "GBTC": {
       "clientid": 37,
@@ -276,7 +293,8 @@
       "contract_type": "STK",
       "symbol": "GBTC",
       "exchange": "SMART",
-      "currency": "USD"
+      "currency": "USD",
+      "milestone_multiplier": 3.4
     },
     "default": {
       "upPctMilestone": [0, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05,
