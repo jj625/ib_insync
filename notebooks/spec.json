@@ -187,6 +187,105 @@
         "currency": "USD",
         "milestone_multiplier": 1.0
     }
+},
+  "U4372012": {
+    "AAPL": {
+      "clientid": 209,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "AMD": {
+      "clientid": 218,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "GOOG": {
+      "clientid": 214,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "GOOGL": {
+      "clientid": 215,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "MSFT": {
+        "clientid": 230,
+        "numshares": 100,
+        "maxloss": -350
+    },  
+    "AVGO": {
+      "clientid": 216,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "IWM": {
+      "clientid": 231,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "SPY": {
+      "clientid": 232,
+      "numshares": 50,
+      "maxloss": -350
+    },
+    "QQQ": {
+      "clientid": 233,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "DIA": {
+      "clientid": 234,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "SPOT": {
+      "clientid": 219,
+      "numshares": 50,
+      "maxloss": -200
+    },
+    "VOO": {
+      "clientid": 229,
+      "numshares": 50,
+      "maxloss": -350
+    },
+    "MES": {
+        "clientid": 701,
+        "maxloss": -150,
+        "numshares": 1,
+        "name": "MES",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "MES",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    },
+    "MBT": {
+        "clientid": 702,
+        "maxloss": -200,
+        "numshares": 1,
+        "name": "MBT",
+        "contract_type": "FUT",
+        "expiry": "202503",
+        "symbol": "MBT",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 2.0
+    },
+    "BRR": {
+        "clientid": 703,
+        "maxloss": -2000,
+        "numshares": 1,
+        "name": "BRR",
+        "contract_type": "FUT",
+        "expiry": "202503",
+        "symbol": "BRR",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 2.0
+    }
+  },
   "U16436651": {
       "SPY": {
         "clientid": 509,
