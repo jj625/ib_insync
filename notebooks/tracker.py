@@ -1233,6 +1233,8 @@ class Agent:
             await self.resample_from_5s_core(b, False)
             if n % N == 0:
                 await asyncio.sleep(0) # yield control to event loop
+        logger.info(f"len(bars)={len(bars)} _npidx={bars._npidx} _npidx_rth_start={bars._npidx_rth_start} _npidx_rth_end={bars._npidx_rth_end}" f" date={bars[0].date}..{bars[-1].date}")
+
         logger.info(f"len(self.bars)={len(self.bars)} _npidx={self.bars._npidx} _npidx_rth_start={self.bars._npidx_rth_start} _npidx_rth_end={self.bars._npidx_rth_end}" f" date={self.bars[0].date}..{self.bars[-1].date}")
         logger.info(f"len(self.bars5m)={len(self.bars5m)} _npidx={self.bars5m._npidx} _npidx_rth_start={self.bars5m._npidx_rth_start} _npidx_rth_end={self.bars5m._npidx_rth_end}"  f" date={self.bars5m[0].date}..{self.bars5m[-1].date}")
         logger.info(f"len(self.bars10m)={len(self.bars10m)} _npidx={self.bars10m._npidx} _npidx_rth_start={self.bars10m._npidx_rth_start} _npidx_rth_end={self.bars10m._npidx_rth_end}"  f" date={self.bars10m[0].date}..{self.bars10m[-1].date}")
@@ -1256,14 +1258,14 @@ class Agent:
         N = 500
         logger.info(f"rth={self.get_RTH()}")
         rth = self.get_RTH()
-        for n, b in enumerate(self.bars15s, start=1):
+        for n, b in enumerate(bars, start=1): # bars (local) is the base bars, which is currently set to 15s
             if b.date < rth.start: continue
             self.pkvl15s.process_price(b.average, b.date)
             if n % N == 0: await asyncio.sleep(0)
         logger.info(f"peaks15s({len(p:=self.pkvl15s.get_peaks())}): {_repr_pkvl(p)}")
         logger.info(f"vlys15s({len(v:=self.pkvl15s.get_valleys())}): {_repr_pkvl(v)}")
         
-        for n, b in enumerate(self.bars, start=1):
+        for n, b in enumerate(self.bars, start=1): # self.bars is resampled from 5s to 1m, or if not resampling, then 1m bars
             if b.date < rth.start: continue
             self.pkvl1m.process_price(b.average, b.date)
         logger.info(f"peaks1m({len(p:=self.pkvl1m.get_peaks())}): {_repr_pkvl(p)}")
@@ -1274,8 +1276,8 @@ class Agent:
                 continue
             else:
                 self.pkvl5m.process_price(b.average, b.date)
-        logger.info(f"peaks15m({len(p:=self.pkvl5m.get_peaks())}): {_repr_pkvl(p)}")
-        logger.info(f"vlys15m({len(v:=self.pkvl5m.get_valleys())}): {_repr_pkvl(v)}")
+        logger.info(f"peaks5m({len(p:=self.pkvl5m.get_peaks())}): {_repr_pkvl(p)}")
+        logger.info(f"vlys5m({len(v:=self.pkvl5m.get_valleys())}): {_repr_pkvl(v)}")
 
     # @measure_time
     async def resample_from_5s(self, inBars: BarDataList, inBarHasNewBar: bool):
@@ -2098,11 +2100,11 @@ class Agent:
             if peak:
                 p = self.pkvl1m.get_peaks()
                 # logger.info(f"peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-                logger.info(f"peaks1m({len(p)}): {_repr_pkvl(p[-3:])}")
+                logger.info(f"peaks1m({len(p)}): {_repr_pkvl(p[-5:])}")
             if valley:
                 v = self.pkvl1m.get_valleys()
                 # logger.info(f"valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
-                logger.info(f"vlys1m({len(v)}): {_repr_pkvl(v[-3:])}")
+                logger.info(f"vlys1m({len(v)}): {_repr_pkvl(v[-5:])}")
             # self.pkvl2.process_price(currentFullBar.average, currentFullBar.date)
             self.anmly.process_data_point((currentFullBar.open_, currentFullBar.high, currentFullBar.low, currentFullBar.close), currentFullBar.date, update_stats=True)
         else:
@@ -2110,23 +2112,25 @@ class Agent:
         if self.use5s:
             if self.hasNewBar15s:
                 b = self.bars5s
+                currentBar15s = b[-1] # bar that is being built, never full
+                currentFullBar15s = b[-2] # the most recent fully formed bar
                 logger.info(f"hasNewBar15s: {self.hasNewBar15s}, len(bars5s)={len(b)}")
-                prev_avg, cur_avg, peak, valley = self.pkvl15s.process_price(b[-1].average, b[-1].date)
+                prev_avg, cur_avg, peak, valley = self.pkvl15s.process_price(currentFullBar15s.average, currentFullBar15s.date)
                 if peak:
                     p = self.pkvl15s.get_peaks()
-                    logger.info(f"peaks15s({len(p)}): {_repr_pkvl(p[-3:])}")
+                    logger.info(f"peaks15s({len(p)}): {_repr_pkvl(p[-8:])}")
                 if valley:
                     v = self.pkvl15s.get_valleys()
-                    logger.info(f"vlys15s({len(v)}): {_repr_pkvl(v[-3:])}")
+                    logger.info(f"vlys15s({len(v)}): {_repr_pkvl(v[-8:])}")
             if self.hasNewBar5m:
                 b = self.bars5m
                 prev_avg, cur_avg, peak, valley = self.pkvl5m.process_price(b[-1].average, b[-1].date)
                 if peak:
                     p = self.pkvl5m.get_peaks()
-                    logger.info(f"peaks15m({len(p)}): {_repr_pkvl(p[-3:])}")
+                    logger.info(f"peaks5m({len(p)}): {_repr_pkvl(p[-3:])}")
                 if valley:
                     v = self.pkvl5m.get_valleys()
-                    logger.info(f"vlys15m({len(v)}): {_repr_pkvl(v[-3:])}")
+                    logger.info(f"vlys5m({len(v)}): {_repr_pkvl(v[-3:])}")
             
             cBar3m = self.bars3m[-1]
             cBar5m = self.bars5m[-1]
