@@ -1,4 +1,193 @@
 {
+  "U2575725": {
+    "XLC": {
+      "clientid": 801,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLY": {
+      "clientid": 802,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLP": {
+      "clientid": 803,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLE": {
+      "clientid": 804,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLU": {
+      "clientid": 805,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLF": {
+      "clientid": 806,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLV": {
+      "clientid": 807,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLI": {
+      "clientid": 808,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLB": {
+      "clientid": 809,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLRE": {
+      "clientid": 810,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "XLK": {
+      "clientid": 811,
+      "numshares": 100,
+      "maxloss": -300
+    },
+    "AAPL": {
+      "clientid": 209,
+      "numshares": 200,
+      "maxloss": -500
+    },
+    "AMD": {
+      "clientid": 218,
+      "numshares": 300,
+      "maxloss": -750
+    },
+    "GOOG": {
+      "clientid": 214,
+      "numshares": 200,
+      "maxloss": -350
+    },
+    "GOOGL": {
+      "clientid": 215,
+      "numshares": 200,
+      "maxloss": -350
+    },
+    "MSFT": {
+        "clientid": 230,
+        "numshares": 100,
+        "maxloss": -350
+    },
+    "AVGO": {
+      "clientid": 216,
+      "numshares": 200,
+      "maxloss": -800
+    },
+    "IWM": {
+      "clientid": 231,
+      "numshares": 300,
+      "maxloss": -650
+    },
+    "SPY": {
+      "clientid": 232,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "QQQ": {
+      "clientid": 233,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "DIA": {
+      "clientid": 234,
+      "numshares": 100,
+      "maxloss": -350
+    },
+    "SPOT": {
+        "clientid": 219,
+        "numshares": 100,
+        "maxloss": -400
+    },
+    "VOO": {
+        "clientid": 229,
+        "numshares": 100,
+        "maxloss": -350
+    },
+    "MES": {
+        "clientid": 701,
+        "maxloss": -150,
+        "numshares": 1,
+        "name": "MES",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "MES",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    },
+    "MNQ": {
+        "clientid": 704,
+        "maxloss": -300,
+        "numshares": 1,
+        "name": "MNQ",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "MNQ",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.5
+    },
+    "ES": {
+        "clientid": 701,
+        "maxloss": -1000,
+        "numshares": 1,
+        "name": "ES",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "ES",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    },
+    "NQ": {
+        "clientid": 704,
+        "maxloss": -2000,
+        "numshares": 1,
+        "name": "NQ",
+        "contract_type": "FUT",
+        "expiry": "202506",
+        "symbol": "NQ",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 1.5
+    },
+    "MBT": {
+        "clientid": 702,
+        "maxloss": -600,
+        "numshares": 3,
+        "name": "MBT",
+        "contract_type": "FUT",
+        "expiry": "202503",
+        "symbol": "MBT",
+        "exchange": "CME",
+        "currency": "USD",
+        "milestone_multiplier": 2.0
+    },
+    "MGC": {
+        "clientid": 604,
+        "maxloss": -600,
+        "numshares": 2,
+        "name": "MGC",
+        "contract_type": "FUT",
+        "expiry": "202504",
+        "symbol": "MGC",
+        "exchange": "COMEX",
+        "currency": "USD",
+        "milestone_multiplier": 1.0
+    }
+},
   "root": {
     "MSFT": {
       "clientid": 9,
