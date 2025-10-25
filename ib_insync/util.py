@@ -230,15 +230,14 @@ def barplot(bars, title='', upColor='blue', downColor='red', fig_ax=None):
     ax.autoscale_view()
     return fig, ax
 
-import pandas as pd
-from matplotlib.lines import Line2D
-import matplotlib.pyplot as plt
-
 def barplot_ohlc(bars, title='', upColor='green', downColor='red', fig_ax=None):
     """
     Create OHLC plot for the given bars. The bars can be given as
     a DataFrame or as a list of bar objects.
     """
+    import pandas as pd
+    from matplotlib.lines import Line2D
+    import matplotlib.pyplot as plt
 
     if isinstance(bars, pd.DataFrame):
         ohlcTups = [
