@@ -542,9 +542,20 @@ def patchAsyncio():
     nest_asyncio.apply()
 
 
+# def getLoop():
+#     """Get the asyncio event loop for the current thread."""
+#     return asyncio.get_event_loop_policy().get_event_loop()
 def getLoop():
-    """Get the asyncio event loop for the current thread."""
-    return asyncio.get_event_loop_policy().get_event_loop()
+    """
+    Get the currently running asyncio event loop.
+    Falls back to the default loop if not in an async context.
+    Ensures compatibility with FastAPI/Uvicorn and standalone scripts.
+    See getloop.md for details.
+    """
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.get_event_loop_policy().get_event_loop()
 
 
 def startLoop():
