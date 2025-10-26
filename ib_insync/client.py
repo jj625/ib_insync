@@ -208,7 +208,7 @@ class Client:
         """
         run(self.connectAsync(host, port, clientId, timeout))
 
-    async def connectAsync(self, host: str, port: int, clientId: int, timeout: float=2.0):
+    async def connectAsync(self, host: str, port: int, clientId: int, timeout: Optional[float]=2.0):
         try:
             self._logger.info(
                 f'Connecting to {host}:{port} with clientId {clientId}...')
