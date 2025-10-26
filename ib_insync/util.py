@@ -442,7 +442,7 @@ def schedule(time: Time_t, callback: Callable, *args) -> asyncio.Handle:
     now = dt.datetime.now(t.tzinfo)
     delay = (t - now).total_seconds()
     loop = getLoop()
-    return loop.call_later(delay, callback, *args)
+    return loop.call_later(max(delay, 0), callback, *args)
 
 def schedule_delayed(delay: float, callback: Callable, *args) -> asyncio.Handle:
     """
@@ -532,7 +532,7 @@ async def waitUntilAsync(t: Time_t) -> bool:
     """Async version of :meth:`waitUntil`."""
     now = dt.datetime.now(t.tzinfo)
     secs = (_fillDate(t) - now).total_seconds()
-    await asyncio.sleep(secs)
+    await asyncio.sleep(max(0, secs))
     return True
 
 
