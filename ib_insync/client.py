@@ -299,7 +299,7 @@ class Client:
                 self._logger.debug('Started to throttle requests')
             loop.call_at(
                 times[0] + self.RequestsInterval,
-                self.sendMsg, None)
+                lambda: self.sendMsg(''))
         else:
             if self._isThrottling:
                 self._isThrottling = False
