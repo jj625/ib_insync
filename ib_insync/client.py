@@ -289,7 +289,8 @@ class Client:
         while msgs and (len(times) < self.MaxRequests or not self.MaxRequests):
             msg = msgs.popleft()
             self.conn.sendMsg(self._prefix(msg.encode()))
-            times.append(t)
+            # times.append(t)
+            times.append(loop.time())  # Capture actual send time
             if self._logger.isEnabledFor(logging.DEBUG):
                 self._logger.debug('>>> %s', msg[:-1].replace('\0', ','))
         if msgs:
