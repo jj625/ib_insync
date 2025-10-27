@@ -555,7 +555,7 @@ def getLoop():
     try:
         return asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.get_event_loop_policy().get_event_loop()
+        return asyncio.get_event_loop_policy().get_event_loop() # really the same as asyncio.get_event_loop()
 
 
 def startLoop():
