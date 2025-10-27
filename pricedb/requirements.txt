@@ -1,0 +1,4 @@
+questionary
+pandas
+sqlalchemy
+-e ../../ib_insync
