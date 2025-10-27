@@ -6,6 +6,7 @@ import sys
 from eventkit import Event
 
 from . import util
+from . import loop
 from .client import Client
 from .contract import (
     Bag, Bond, CFD, ComboLeg, Commodity, ContFuture, Contract,
