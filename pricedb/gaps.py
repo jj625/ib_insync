@@ -1,5 +1,6 @@
 import pandas as pd
-from db import engine
+from db import engine, Session, BackfillPlan
+from sqlalchemy.exc import IntegrityError
 
 def find_missing_segments(ticker: str, freq="5min") -> pd.DatetimeIndex:
     query = f"SELECT time FROM ohlcv WHERE ticker = '{ticker}'"
@@ -20,3 +21,14 @@ def group_missing_into_ranges(missing: pd.DatetimeIndex, freq="5min"):
     df["group"] = df["gap"].cumsum()
     ranges = df.groupby("group")["time"].agg(["min", "max"])
     return list(ranges.itertuples(index=False, name=None))
+
+def write_backfill_plan(ticker: str, ranges: list[tuple]):
+    with Session() as session:
+        for start, end in ranges:
+            plan = BackfillPlan(ticker=ticker, start=start, end=end, status=BackfillStatus.pending)
+            session.merge(plan)  # avoids duplicates
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise

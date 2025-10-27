@@ -50,7 +50,7 @@ class IBKRClient:
 
             df = df.rename(columns={
                 'date': 'time',
-                'open': 'open',
+                'open_': 'open',
                 'high': 'high',
                 'low': 'low',
                 'close': 'close',
@@ -59,5 +59,5 @@ class IBKRClient:
             df_list.append(df)
             current += pd.Timedelta(days=1)
 
-        # await self.disconnect()
+        await self.disconnect()
         return pd.concat(df_list).drop_duplicates().reset_index(drop=True)
