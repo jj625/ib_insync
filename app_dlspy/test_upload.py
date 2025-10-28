@@ -114,36 +114,37 @@ download_date = datetime.now().strftime(r'%Y-%m-%d')
 download_datetime = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 local_filename = f'spy_holdings_{download_date}.xlsx' # no holding date in the name yet
 
-# Download the file
-client = httpx.Client()
+# # Download the file
+# client = httpx.Client()
 
 
-main_page_response = client.get(url)
-logger.info(f'Main page status: {main_page_response.status_code}')
-logger.info(f'Initial cookies received: {len(client.cookies)}')
-client = filter_necessary_cookies(client)
-# attempt download with filtered cookies
-logger.info(f'Attempting download with necessary cookies only...')
+# main_page_response = client.get(url)
+# logger.info(f'Main page status: {main_page_response.status_code}')
+# logger.info(f'Initial cookies received: {len(client.cookies)}')
+# client = filter_necessary_cookies(client)
+# # attempt download with filtered cookies
+# logger.info(f'Attempting download with necessary cookies only...')
 
-response = client.get(url, follow_redirects=True, timeout=5)
-if response.status_code != 200:
-    logger.error(f'Failed to download {url}')
-    exit(1)
-# get the file size and modified time
-file_size: int = len(response.content)
-file_modified: str = response.headers['Last-Modified']
-file_mod_dt = datetime.strptime(file_modified, r'%a, %d %b %Y %H:%M:%S %Z')
-# if the timezone is either UTC or GMT, set the timezone to UTC
-if file_mod_dt.tzinfo is None or file_mod_dt.tzinfo.utcoffset(file_mod_dt) is None:
-    if file_modified.endswith('GMT') or file_modified.endswith('UTC'):
-        file_mod_dt = file_mod_dt.replace(tzinfo=timezone.utc)
-    else:
-        logger.error(f'Failed to parse the timezone from the Last-Modified header: {file_modified}')
-        exit(1)
-logger.info(f'Downloading {url} to {local_filename}, {file_size} bytes, last modified at {file_mod_dt.astimezone()}')
-with open(local_filename, 'wb') as f:
-    f.write(response.content)
+# response = client.get(url, follow_redirects=True, timeout=5)
+# if response.status_code != 200:
+#     logger.error(f'Failed to download {url}')
+#     exit(1)
+# # get the file size and modified time
+# file_size: int = len(response.content)
+# file_modified: str = response.headers['Last-Modified']
+# file_mod_dt = datetime.strptime(file_modified, r'%a, %d %b %Y %H:%M:%S %Z')
+# # if the timezone is either UTC or GMT, set the timezone to UTC
+# if file_mod_dt.tzinfo is None or file_mod_dt.tzinfo.utcoffset(file_mod_dt) is None:
+#     if file_modified.endswith('GMT') or file_modified.endswith('UTC'):
+#         file_mod_dt = file_mod_dt.replace(tzinfo=timezone.utc)
+#     else:
+#         logger.error(f'Failed to parse the timezone from the Last-Modified header: {file_modified}')
+#         exit(1)
+# logger.info(f'Downloading {url} to {local_filename}, {file_size} bytes, last modified at {file_mod_dt.astimezone()}')
+# with open(local_filename, 'wb') as f:
+#     f.write(response.content)
 
+local_filename = 'spy_holdings_2025-10-25_as_of_2025-10-23.xlsx'  # for testing purposes
 # Read the Excel file
 df = pd.read_excel(local_filename, skiprows=4)
 
@@ -181,15 +182,29 @@ if len(df) < 500 or len(df) > 506:
     exit(1)
 # Close the Excel file
 xls.close()
-# Rename the file to include the holding date
-new_filename = f'spy_holdings_{download_date}_as_of_{holding_date}.xlsx'
-if os.path.exists(new_filename):
-    with open(local_filename, 'rb') as f1, open(new_filename, 'rb') as f2:
-        if f1.read() == f2.read():
-            logger.info(f'{new_filename} already exists and is identical to the downloaded file. Exiting.')
-            exit(0)
-os.rename(local_filename, new_filename)
-logger.info(f'Renamed {local_filename} to {new_filename}')
+
+# rename columns to supabase table columns
+expected_columns = {
+    'Name': 'name',
+    'Ticker': 'ticker',
+    'Identifier': 'identifier',
+    'SEDOL': 'sedol',
+    'Weight': 'weight',
+    'Sector': 'sector',
+    'Shares Held': 'shares_held',
+    'Local Currency': 'local_currency',
+}
+df = df.rename(columns=expected_columns)
+logger.info(f'Parsed {len(df)} rows from the holdings table:\n{df.head()}')
+# # Rename the file to include the holding date
+# new_filename = f'spy_holdings_{download_date}_as_of_{holding_date}.xlsx'
+# if os.path.exists(new_filename):
+#     with open(local_filename, 'rb') as f1, open(new_filename, 'rb') as f2:
+#         if f1.read() == f2.read():
+#             logger.info(f'{new_filename} already exists and is identical to the downloaded file. Exiting.')
+#             exit(0)
+# os.rename(local_filename, new_filename)
+# logger.info(f'Renamed {local_filename} to {new_filename}')
 
 # Get Supabase credentials from environment variables
 supabase_url = os.getenv('SUPABASE_URL')
@@ -215,11 +230,11 @@ df['download_datetime'] = download_date
 df['holding_date'] = holding_date
 
 # Drop the rows with missing Ticker, Identifier, or SEDOL
-df_nona = df.dropna(subset=['Ticker', 'Identifier', 'SEDOL'])
+df_nona = df.dropna(subset=['ticker', 'identifier', 'sedol'])
 if len(df) != len(df_nona):
     logger.warning(f'Dropped {len(df) - len(df_nona)} rows with missing Ticker, Identifier, or SEDOL')
     # print the dropped rows
-    logger.warning(df.loc[~df.index.isin(df_nona.index), ['Name', 'Ticker', 'Identifier', 'SEDOL']])
+    logger.warning(df.loc[~df.index.isin(df_nona.index), ['name', 'ticker', 'identifier', 'sedol']])
 
 # Convert DataFrame to list of dictionaries for Supabase insert
 records = df_nona.to_dict('records')
