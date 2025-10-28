@@ -5,14 +5,14 @@ import copy
 import datetime
 import logging
 import time
-from typing import Awaitable, Dict, Iterator, List, Optional, Union
+from typing import Awaitable, Dict, Iterator, List, Optional, Union, Any
 from collections.abc import Callable
 from eventkit import Event
 
 import ib_insync.util as util
 from ib_insync.util import UNSET_DOUBLE, UNSET_INTEGER
 from ib_insync.client import Client
-from ib_insync.contract import Contract, ContractDescription, ContractDetails, Stock
+from ib_insync.contract import Contract, ContractDescription, ContractDetails, Stock, TradingSession, FundAssetType, FundDistributionPolicyIndicator
 from ib_insync.objects import (
     AccountValue, BarDataList, DepthMktDataDescription, Execution,
     ExecutionFilter, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
@@ -332,7 +332,7 @@ class IB:
     timeRangeAsync = staticmethod(util.timeRangeAsync)
     waitUntil = staticmethod(util.waitUntil)
 
-    def _run(self, *awaitables: Awaitable):
+    def _run(self, *awaitables: Awaitable) -> Any:
         return util.run(*awaitables, timeout=self.RequestTimeout)
 
     def waitOnUpdate(self, timeout: float = 0) -> bool:
@@ -428,7 +428,7 @@ class IB:
         Args:
             account: If specified, filter for this account name.
         """
-        return self._run(self.accountSummaryAsync(account))
+        return self._run(self.accountSummaryAsync(account)) or []
 
     def portfolio(self, account: str = '') -> List[PortfolioItem]:
         """
@@ -571,7 +571,7 @@ class IB:
         """
         return self._run(
             self.reqTickersAsync(
-                *contracts, regulatorySnapshot=regulatorySnapshot))
+                *contracts, regulatorySnapshot=regulatorySnapshot)) or []
 
     def qualifyContracts(self, *contracts: Contract) -> List[Contract]:
         """
@@ -585,7 +585,7 @@ class IB:
         Args:
             contracts: Contracts to qualify.
         """
-        return self._run(self.qualifyContractsAsync(*contracts))
+        return self._run(self.qualifyContractsAsync(*contracts)) or []
 
     def bracketOrder(
             self, action: str, quantity: float,
@@ -816,7 +816,7 @@ class IB:
 
         This method is blocking.
         """
-        return self._run(self.reqOpenOrdersAsync())
+        return self._run(self.reqOpenOrdersAsync()) or []
 
     def reqAllOpenOrders(self) -> List[Trade]:
         """
@@ -825,7 +825,7 @@ class IB:
         use the master clientId mechanism instead to see other
         client's orders that are kept in sync.
         """
-        return self._run(self.reqAllOpenOrdersAsync())
+        return self._run(self.reqAllOpenOrdersAsync()) or []
 
     def reqCompletedOrders(self, apiOnly: bool) -> List[Trade]:
         """
@@ -834,7 +834,7 @@ class IB:
         Args:
             apiOnly: Request only API orders (not manually placed TWS orders).
         """
-        return self._run(self.reqCompletedOrdersAsync(apiOnly))
+        return self._run(self.reqCompletedOrdersAsync(apiOnly)) or []
 
     def reqExecutions(
             self, execFilter: Optional[ExecutionFilter] = None) -> List[Fill]:
@@ -849,7 +849,7 @@ class IB:
         Args:
             execFilter: If specified, return executions that match the filter.
         """
-        return self._run(self.reqExecutionsAsync(execFilter))
+        return self._run(self.reqExecutionsAsync(execFilter)) or []
 
     def reqPositions(self) -> List[Position]:
         """
@@ -859,7 +859,7 @@ class IB:
 
         This method is blocking.
         """
-        return self._run(self.reqPositionsAsync())
+        return self._run(self.reqPositionsAsync()) or []
 
     def reqPositionsMulti(self, account: str = '', modelCode: str = ''):
         """
@@ -968,7 +968,7 @@ class IB:
         Args:
             contract: The contract to get details for.
         """
-        return self._run(self.reqContractDetailsAsync(contract))
+        return self._run(self.reqContractDetailsAsync(contract)) or []
 
     def reqMatchingSymbols(self, pattern: str) -> List[ContractDescription]:
         """
@@ -983,7 +983,7 @@ class IB:
                 longer strings a character sequence matching a word in
                 the security name.
         """
-        return self._run(self.reqMatchingSymbolsAsync(pattern))
+        return self._run(self.reqMatchingSymbolsAsync(pattern)) or []
 
     def reqMarketRule(self, marketRuleId: int) -> PriceIncrement:
         """
@@ -1101,7 +1101,7 @@ class IB:
             durationStr: str, barSizeSetting: str, whatToShow: str,
             useRTH: bool, formatDate: int = 1, keepUpToDate: bool = False,
             chartOptions: List[TagValue] = [], timeout: float = 60,
-            _historicalDataEndHook: Callable = None,
+            _historicalDataEndHook: Optional[Callable] = None,
             tradingHours: List[TradingSession] = [],
             # _historicalDataHook: Callable = None
             ) \
@@ -1340,14 +1340,14 @@ class IB:
         Note: The exchanges must be open when using this request, otherwise an
         empty list is returned.
         """
-        return self._run(self.reqSmartComponentsAsync(bboExchange))
+        return self._run(self.reqSmartComponentsAsync(bboExchange)) or []
 
     def reqMktDepthExchanges(self) -> List[DepthMktDataDescription]:
         """
         Get those exchanges that have have multiple market makers
         (and have ticks returned with marketMaker info).
         """
-        return self._run(self.reqMktDepthExchangesAsync())
+        return self._run(self.reqMktDepthExchangesAsync()) or []
 
     def reqMktDepth(
             self, contract: Contract, numRows: int = 5,
@@ -1411,7 +1411,7 @@ class IB:
                 '3 days'.
         """
         return self._run(
-            self.reqHistogramDataAsync(contract, useRTH, period))
+            self.reqHistogramDataAsync(contract, useRTH, period)) or []
 
     def reqFundamentalData(
             self, contract: Contract, reportType: str,
@@ -1609,7 +1609,7 @@ class IB:
 
         This method is blocking.
         """
-        return self._run(self.reqNewsProvidersAsync())
+        return self._run(self.reqNewsProvidersAsync()) or []
 
     def reqNewsArticle(
             self, providerCode: str, articleId: str,
@@ -2105,7 +2105,7 @@ class IB:
             formatDate: int = 1, keepUpToDate: bool = False,
             chartOptions: List[TagValue] = [], timeout: float = 60,
             _historicalDataEndHook: Optional[Callable[[str, str, BarDataList], None]] = None,
-            _tradingHours: TradingSession = None,
+            _tradingHours: Optional[TradingSession] = None, _rth: Optional[TradingSession] = None
             ) \
             -> BarDataList:
         """ 
@@ -2128,6 +2128,8 @@ class IB:
         bars.chartOptions = chartOptions or []
         if _tradingHours:
             bars._tradingHours = _tradingHours
+        if _rth:
+            bars._rth = _rth
         if _historicalDataEndHook:
             bars._historicalDataEndHook += _historicalDataEndHook
         # if _historicalDataHook:
@@ -2334,7 +2336,7 @@ class IB:
             self.cancelWshMetaData()
         self.reqWshMetaData()
         future = self.wrapper.startReq(
-            self.wrapper.wshMetaReqId, container='')
+            self.wrapper.wshMetaReqId)
         await future
         return future.result()
 
@@ -2343,7 +2345,7 @@ class IB:
             self.cancelWshEventData()
         self.reqWshEventData(data)
         future = self.wrapper.startReq(
-            self.wrapper.wshEventReqId, container='')
+            self.wrapper.wshEventReqId, container=None)
         await future
         self.cancelWshEventData()
         return future.result()
@@ -2481,25 +2483,87 @@ def _bardata_repr(self: BarData):
         f", timestamp={self.timestamp.astimezone().strftime('%H:%M:%S,%f')[:-3]}"
         ")")
 
+def contractdetails_repr(self: ContractDetails):
+    fields = []
+    if self.marketName: fields.append(f"marketName={self.marketName}")
+    if self.minTick != 0.0: fields.append(f"minTick={self.minTick}")
+    if self.orderTypes: fields.append(f"orderTypes={self.orderTypes}")
+    if self.validExchanges: fields.append(f"validExchanges={self.validExchanges}")
+    if self.priceMagnifier != 0: fields.append(f"priceMagnifier={self.priceMagnifier}")
+    if self.underConId != 0: fields.append(f"underConId={self.underConId}")
+    if self.longName: fields.append(f"longName={self.longName}")
+    if self.contractMonth: fields.append(f"contractMonth={self.contractMonth}")
+    if self.industry: fields.append(f"industry={self.industry}")
+    if self.category: fields.append(f"category={self.category}")
+    if self.subcategory: fields.append(f"subcategory={self.subcategory}")
+    if self.timeZoneId: fields.append(f"timeZoneId={self.timeZoneId}")
+    if self.tradingHours: fields.append(f"tradingHours={self.tradingHours}")
+    if self.liquidHours: fields.append(f"liquidHours={self.liquidHours}")
+    if self.evRule: fields.append(f"evRule={self.evRule}")
+    if self.evMultiplier != 0: fields.append(f"evMultiplier={self.evMultiplier}")
+    if self.mdSizeMultiplier != 0: fields.append(f"mdSizeMultiplier={self.mdSizeMultiplier}")
+    # if self.aggrGroup != 0: fields.append(f"aggrGroup={self.aggrGroup}")
+    if self.underSymbol: fields.append(f"underSymbol={self.underSymbol}")
+    # if self.underSecurityType: fields.append(f"underSecurityType={self.underSecurityType}")
+    if self.marketRuleIds: fields.append(f"marketRuleIds={self.marketRuleIds}")
+    if self.realExpirationDate: fields.append(f"realExpirationDate={self.realExpirationDate}")
+    if self.lastTradeTime: fields.append(f"lastTradeTime={self.lastTradeTime}")
+    if self.stockType: fields.append(f"stockType={self.stockType}")
+    if self.minSize != 0.0: fields.append(f"minSize={self.minSize}")
+    if self.sizeIncrement != 0.0: fields.append(f"sizeIncrement={self.sizeIncrement}")
+    if self.cusip: fields.append(f"cusip={self.cusip}")
+    if self.ratings: fields.append(f"ratings={self.ratings}")
+    if self.descAppend: fields.append(f"descAppend={self.descAppend}")
+    if self.bondType: fields.append(f"bondType={self.bondType}")
+    if self.couponType: fields.append(f"couponType={self.couponType}")
+    if self.callable: fields.append(f"callable={self.callable}")
+    if self.putable: fields.append(f"putable={self.putable}")
+    if self.coupon != 0.0: fields.append(f"coupon={self.coupon}")
+    if self.convertible: fields.append(f"convertible={self.convertible}")
+    if self.maturity: fields.append(f"maturity={self.maturity}")
+    if self.issueDate: fields.append(f"issueDate={self.issueDate}")
+    if self.nextOptionDate: fields.append(f"nextOptionDate={self.nextOptionDate}")
+    if self.nextOptionType: fields.append(f"nextOptionType={self.nextOptionType}")
+    if self.nextOptionPartial: fields.append(f"nextOptionPartial={self.nextOptionPartial}")
+    if self.notes: fields.append(f"notes={self.notes}")
+    if self.fundName: fields.append(f"fundName={self.fundName}")
+    if self.fundFamily: fields.append(f"fundFamily={self.fundFamily}")
+    if self.fundType: fields.append(f"fundType={self.fundType}")
+    if self.fundFrontLoad: fields.append(f"fundFrontLoad={self.fundFrontLoad}")
+    if self.fundBackLoad: fields.append(f"fundBackLoad={self.fundBackLoad}")
+    if self.fundBackLoadTimeInterval: fields.append(f"fundBackLoadTimeInterval={self.fundBackLoadTimeInterval}")
+    if self.fundManagementFee: fields.append(f"fundManagementFee={self.fundManagementFee}")
+    if self.fundClosed: fields.append(f"fundClosed={self.fundClosed}")
+    if self.fundClosedForNewInvestors: fields.append(f"fundClosedForNewInvestors={self.fundClosedForNewInvestors}")
+    if self.fundClosedForNewMoney: fields.append(f"fundClosedForNewMoney={self.fundClosedForNewMoney}")
+    if self.fundNotifyAmount: fields.append(f"fundNotifyAmount={self.fundNotifyAmount}")
+    if self.fundMinimumInitialPurchase: fields.append(f"fundMinimumInitialPurchase={self.fundMinimumInitialPurchase}")
+    if self.fundSubsequentMinimumPurchase: fields.append(f"fundSubsequentMinimumPurchase={self.fundSubsequentMinimumPurchase}")
+    if self.fundBlueSkyStates: fields.append(f"fundBlueSkyStates={self.fundBlueSkyStates}")
+    if self.fundBlueSkyTerritories: fields.append(f"fundBlueSkyTerritories={self.fundBlueSkyTerritories}")
+    if self.fundDistributionPolicyIndicator != FundDistributionPolicyIndicator.NoneItem: fields.append(f"fundDistributionPolicyIndicator={self.fundDistributionPolicyIndicator}")
+    if self.fundAssetType != FundAssetType.NoneItem: fields.append(f"fundAssetType={self.fundAssetType}")
+    return "ContractDetails(" + ', '.join(fields) + ")"
+
 def install_custom_repr_():
 
-    Stock.__repr__orig = Stock.__repr__
-    Stock.__str__orig = Stock.__str__
-    Contract.__repr__orig = Contract.__repr__
-    Contract.__str__orig = Contract.__str__
-    PortfolioItem.__repr__orig = PortfolioItem.__repr__
-    PortfolioItem.__str__orig = PortfolioItem.__str__
+    setattr(Stock, '__repr__orig', Stock.__repr__)
+    setattr(Stock, '__str__orig', Stock.__str__)
+    setattr(Contract, '__repr__orig', Contract.__repr__)
+    setattr(Contract, '__str__orig', Contract.__str__)
+    setattr(PortfolioItem, '__repr__orig', PortfolioItem.__repr__)
+    setattr(PortfolioItem, '__str__orig', PortfolioItem.__str__)
 
-    Order.__str__orig = Order.__str__
-    MarketOrder.__str__orig = MarketOrder.__str__
-    LimitOrder.__str__orig = LimitOrder.__str__
+    setattr(Order, '__str__orig', Order.__str__)
+    setattr(MarketOrder, '__str__orig', MarketOrder.__str__)
+    setattr(LimitOrder, '__str__orig', LimitOrder.__str__)
 
-    Position.__repr__orig = Position.__repr__
+    setattr(Position, '__repr__orig', Position.__repr__)
 
-    TradeLogEntry.__repr__orig = TradeLogEntry.__repr__
+    setattr(TradeLogEntry, '__repr__orig', TradeLogEntry.__repr__)
     TradeLogEntry.__repr__ = _trade_log_entry_repr
 
-    Execution.__repr__orig = Execution.__repr__
+    setattr(Execution, '__repr__orig', Execution.__repr__)
     Execution.__repr__ = _execution_repr
 
     def commission_repr(self: CommissionReport):
@@ -2511,7 +2575,7 @@ def install_custom_repr_():
             + (f", yield={self.yield_:.3f}" if self.yield_ else '') \
             + (f", yieldRedemptionDate={self.yieldRedemptionDate}" if self.yieldRedemptionDate else '') \
             + ")"
-    CommissionReport.__repr__orig = CommissionReport.__repr__
+    setattr(CommissionReport, '__repr__orig', CommissionReport.__repr__)
     CommissionReport.__repr__ = commission_repr
 
     def accountvalue_repr(self: AccountValue):
@@ -2528,7 +2592,7 @@ def install_custom_repr_():
             f"{', modelCode=' + self.modelCode if self.modelCode else ''}"
             f"{', ' + self.lastUpdateTime.astimezone().strftime('%H:%M:%S') if self.lastUpdateTime else ''}"
             ")")
-    AccountValue.__repr__orig = AccountValue.__repr__
+    setattr(AccountValue, '__repr__orig', AccountValue.__repr__)
     AccountValue.__repr__ = accountvalue_repr
 
     def contract_repr(self: Contract):
@@ -2581,7 +2645,7 @@ def install_custom_repr_():
         #     + ")"
     Contract.__repr__ = contract_repr
 
-    def stock_repr(self: Stock):
+    def stock_repr(self: Contract):
         fields = []
         if self.conId: fields.append(f"conId={self.conId}")
         if self.symbol: fields.append(f"symbol={self.symbol}")
@@ -2655,7 +2719,7 @@ def install_custom_repr_():
         #     + (f", whyHeld={self.whyHeld}" if self.whyHeld else '') \
         #     + (f", mktCapPrice={self.mktCapPrice}" if self.mktCapPrice else '') \
         #     + ")"
-    OrderStatus.__repr__orig = OrderStatus.__repr__
+    setattr(OrderStatus, '__repr__orig', OrderStatus.__repr__)
     OrderStatus.__repr__ = orderstatus_repr
 
     def order_repr(self: Order):
@@ -2881,11 +2945,11 @@ def install_custom_repr_():
         #     + ")"
     LimitOrder.__str__ = limitorder_repr            
 
-    Trade.__repr__orig = Trade.__repr__
+    setattr(Trade, '__repr__', _trade_repr)
     Trade.__repr__ = _trade_repr
 
-    Fill.__repr__orig = Fill.__repr__
+    setattr(Fill, '__repr__orig', Fill.__repr__)
     Fill.__repr__ = _fill_repr
 
-    BarData.__repr__orig = BarData.__repr__
+    setattr(BarData, '__repr__orig', BarData.__repr__)
     BarData.__repr__ = _bardata_repr

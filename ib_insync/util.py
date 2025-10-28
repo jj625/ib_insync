@@ -60,10 +60,10 @@ def df(objs, labels: Optional[List[str]] = None):
         objs = list(objs)
         obj = objs[0]
         if is_dataclass(obj):
-            df = pd.DataFrame.from_records(dataclassAsTuple(o) for o in objs)
+            df = pd.DataFrame.from_records([dataclassAsTuple(o) for o in objs])
             df.columns = [field.name for field in fields(obj)]
         elif isinstance(obj, DynamicObject):
-            df = pd.DataFrame.from_records(o.__dict__ for o in objs)
+            df = pd.DataFrame.from_records([o.__dict__ for o in objs])
         else:
             df = pd.DataFrame.from_records(objs)
         if isinstance(obj, tuple):
@@ -73,7 +73,7 @@ def df(objs, labels: Optional[List[str]] = None):
                 df.columns = _fields
     else:
         df = None
-    if labels:
+    if labels and df is not None:
         exclude = [label for label in df if label not in labels]
         df = df.drop(exclude, axis=1)
     return df
@@ -157,8 +157,10 @@ def tree(obj, datetime_formatter: Optional[Callable[[dt.datetime], str]] = None)
     """
     if isinstance(obj, (bool, int, float, str, bytes)):
         return obj
-    elif isinstance(obj, (dt.date, dt.time)):
+    elif isinstance(obj, dt.datetime):
         return obj.astimezone().isoformat() if hasattr(obj, 'astimezone') else obj.isoformat()
+    elif isinstance(obj, (dt.date, dt.time)):
+        return obj.isoformat()
     elif isinstance(obj, dict):
         return {k: tree(v) for k, v in obj.items()}
     elif isnamedtupleinstance(obj):
@@ -166,7 +168,7 @@ def tree(obj, datetime_formatter: Optional[Callable[[dt.datetime], str]] = None)
     elif isinstance(obj, (list, tuple, set)):
         return [tree(i) for i in obj]
     elif is_dataclass(obj):
-        return {obj.__class__.__qualname__: tree(dataclassNonDefaults(obj))}
+        return {type(obj).__qualname__: tree(dataclassNonDefaults(obj))}
     else:
         return str(obj)
 
@@ -339,6 +341,7 @@ def formatSI(n: float) -> str:
         assert n < 9.99e26
         log = int(math.floor(math.log10(n)))
         i, j = divmod(log, 3)
+        val = ''
         for _try in range(2):
             templ = '%.{}f'.format(2 - j)
             val = templ % (n * 10 ** (-3 * i))
@@ -410,7 +413,11 @@ def run(*awaitables: Awaitable, timeout: Optional[float] = None):
         try:
             result = loop.run_until_complete(task)
         except asyncio.CancelledError as e:
-            raise globalErrorEvent.value() or e
+            ev_err = globalErrorEvent.value()
+            if isinstance(ev_err, BaseException):
+                raise ev_err
+            else:
+                raise e
         finally:
             globalErrorEvent.disconnect(onError)
 

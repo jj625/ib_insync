@@ -190,7 +190,7 @@ class Decoder:
 
         return handler
 
-    def interpret(self, fields):
+    def interpret(self, fields: list[str]):
         """Decode fields and invoke corresponding wrapper method."""
         try:
             msgId = int(fields[0])
@@ -257,16 +257,25 @@ class Decoder:
             float(marketValue), float(averageCost), float(unrealizedPNL),
             float(realizedPNL), accountName)
 
-    def contractDetails(self, fields):
+    def contractDetails(self, fields: list[str]):
         cd = ContractDetails()
         cd.contract = c = Contract()
-        if self.serverVersion < 164:
-            fields.pop(0)
+        if self.serverVersion < 164: # MIN_SERVER_VER_SIZE_RULES=164
+            version = fields.pop(0)
+        else:
+            version = 8
+        reqId = -1
+        # if version >= 3:
+        #     reqId = int(fields.pop(0))
         (
-            _,
+            dummy, # what's this?
             reqId,
             c.symbol,
             c.secType,
+            *fields) = fields
+        if self.serverVersion >= 182: # MIN_SERVER_VER_LAST_TRADE_DATE=182
+            (c.lastTradeDate, *fields) = fields
+        (
             lastTimes,
             c.strike,
             c.right,
@@ -323,6 +332,38 @@ class Decoder:
                 cd.suggestedSizeIncrement,
                 # cd.minCashQtySize,
                 *fields) = fields
+
+        if self.serverVersion >= 179 and c.secType == 'FUND': # MIN_SERVER_VER_FUND_DATA_FIELDS=179
+            (
+                cd.fundName,
+                cd.fundFamily,
+                cd.fundType,
+                cd.fundFrontLoad,
+                cd.fundBackLoad,
+                cd.fundBackLoadTimeInterval,
+                cd.fundManagementFee,
+                cd.fundClosed,
+                cd.fundClosedForNewInvestors,
+                cd.fundClosedForNewMoney,
+                cd.fundNotifyAmount,
+                cd.fundMinimumInitialPurchase,
+                cd.fundMinimumSubsequentPurchase,
+                cd.fundBlueSkyStates,
+                cd.fundBlueSkyTerritories,
+                cd.fundDistributionPolicyIndicator,
+                cd.fundAssetType,
+                *fields) = fields
+            
+        if self.serverVersion >= 186: # MIN_SERVER_VER_FUND_DATA_FIELDS=186
+            (
+                ineligibilityReasonListCountStr,
+                *fields) = fields
+            ineligibilityReasonListCount = int(ineligibilityReasonListCountStr)
+            if ineligibilityReasonListCount > 0:
+                cd.ineligibilityReasonList = []
+                for _ in range(ineligibilityReasonListCount):
+                    ineligibilityReason = fields.pop(0)
+                    cd.ineligibilityReasonList.append(ineligibilityReason)
 
         times = lastTimes.split('-' if '-' in lastTimes else None)
         if len(times) > 0:
@@ -1074,6 +1115,12 @@ class Decoder:
                 o.midOffsetAtWhole,
                 o.midOffsetAtHalf,
                 *fields) = fields
+        if self.serverVersion >= 183: # MIN_SERVER_VER_CUSTOMER_ACCOUNT=183
+            o.customerAccount = fields.pop(0)
+        if self.serverVersion >= 184: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
+            o.professionalCustomer = fields.pop(0)
+        if self.serverVersion >= 185: # MIN_SERVER_VER_BOND_ACCRUED_INTEREST=185
+            o.bondAccruedInterest = fields.pop(0)
 
         self.parse(c)
         self.parse(o)

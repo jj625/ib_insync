@@ -747,14 +747,14 @@ class Client:
     def exerciseOptions(
             self, reqId, contract, exerciseAction: int,
             exerciseQuantity: int, account: str, override: int,
-            manualOrderTime: str, customerAccount: str, professionalCustomer: bool
+            manualOrderTime: str, customerAccount: str, professionalCustomer: Optional[bool]
             ):
         serverVersion = self.serverVersion()
         if serverVersion < 180 and manualOrderTime: # MIN_SERVER_VER_MANUAL_ORDER_TIME_EXERCISE_OPTIONS=180
             raise ValueError('manualOrderTime only available with server version 180+')
         if serverVersion < 183 and customerAccount: # MIN_SERVER_VER_CUSTOMER_ACCOUNT=183
             raise ValueError('customerAccount only available with server version 183+')
-        if serverVersion < 184 and professionalCustomer: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
+        if serverVersion < 184 and professionalCustomer is not None: # MIN_SERVER_VER_PROFESSIONAL_CUSTOMER=184
             raise ValueError('professionalCustomer only available with server version 184+')
         fields = [
             21, 2, reqId,
@@ -774,7 +774,7 @@ class Client:
             fields += [manualOrderTime]
         if serverVersion >= 183:
             fields += [customerAccount]
-        if serverVersion >= 184:
+        if serverVersion >= 184 and professionalCustomer is not None:
             fields += [professionalCustomer]
         self.send(*fields)
 

@@ -118,7 +118,7 @@ class Wrapper:
     clientId: int
     wshMetaReqId: int
     wshEventReqId: int
-    _reqId2Contract: Dict[int, Contract]
+    _reqId2Contract: Dict[Hashable, Optional[Contract]]
     _timeout: float
 
     _futures: Dict[Any, asyncio.Future]
@@ -248,7 +248,7 @@ class Wrapper:
         # self.tickers.pop(id(ticker.contract), None)
         return reqId
 
-    def startSubscription(self, reqId, subscriber, contract=None):
+    def startSubscription(self, reqId: int, subscriber, contract=None):
         """Register a live subscription."""
         self._reqId2Contract[reqId] = contract
         self.reqId2Subscriber[reqId] = subscriber

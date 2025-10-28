@@ -7,7 +7,7 @@ from typing import List, NamedTuple, Optional, Union
 from eventkit import Event
 
 from .contract import Contract, ScanData, TagValue, TradingSession
-from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, NYNPMKTOPEN, NYNPMKTCLOSE, NYMKTOPEN, NYMKTCLOSE
+from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, NPMKTOPEN, NPMKTCLOSE, MKTOPEN, MKTCLOSE
 
 nan = float('nan')
 
@@ -109,6 +109,14 @@ class BarData:
     @property
     def open(self) -> float:
         return self.open_
+    def date_to_npdatetime64(self) -> np.datetime64:
+        if isinstance(self.date, datetime):
+            return np.datetime64(self.date.astimezone(tz=None).replace(tzinfo=None)) # convert to naive datetime
+        else:
+            return np.datetime64(self.date)
+    def _str_date(self) -> str: # convert date to string in the format that we want
+        if isinstance(self.date, datetime):
+            d = self.date.astimezone(tz=None).strftime(f"{r'%Y-%m-%d ' if self.date.date() != datetime.now().date() else ''}" '%H:%M:%S')
     def _repr_(self) -> str:
         if isinstance(self.date, datetime):
             d = self.date.astimezone(tz=None).strftime(f"{r'%Y-%m-%d ' if self.date.date() != datetime.now().date() else ''}" '%H:%M:%S')
@@ -457,15 +465,19 @@ class BarDataList(List[BarData]):
         """
 
         logmsg = [f"'{self.durationStr}' '{self.barSizeSetting}'"]
-        if hasattr(self, 'useRTH'):
+        if hasattr(self, '_tradingHours'):
+            th: TradingSession = self._tradingHours
+            rthfactor = (th.end - th.start).total_seconds() / 3600 # in hours
+            logmsg.append(f"_tradingHours={th}")
+        elif hasattr(self, 'useRTH'):
             logmsg.append(f"useRTH={self.useRTH}")
             rthfactor_pad = kwargs.get('rthfactor_pad', 0)
             if len(self) > 0:
                 logmsg.append(f"len(self)={len(self)} self.date={self[0].date.astimezone(tz=None)}..{self[-1].date.astimezone(tz=None)}")
-                if self[0].date.astimezone(tz=None).time() == time_(18, 0): # MBT, ES 6pm - 5pm
+                if isinstance(self[0].date, (datetime, pd.Timestamp)) and self[0].date.astimezone(tz=None).time() == time_(18, 0): # MBT, ES 6pm - 5pm
                     # logmsg.append(f"assuming 23 hours trading time")
                     rthfactor_pad = 7.0
-            logmsg.append(f"rthfactor_pad={rthfactor_pad}")
+            # logmsg.append(f"rthfactor_pad={rthfactor_pad}")
             if self.useRTH:
                 rthfactor = 6.5 + rthfactor_pad # 6.5 hours per US trading day, 9:30am to 4pm
             else:
@@ -477,7 +489,9 @@ class BarDataList(List[BarData]):
         if hasattr(self, 'durationStr'):
             dur_sec = dur_day = dur_week = dur_month = dur_year = 0
             if self.durationStr.endswith(' S'):
-                dur_sec = int(60 / int(self.durationStr[:-2])) # number of bars in a minute
+                dur_sec = int(self.durationStr[:-2]) # number of seconds
+                # round to nearest days
+                dur_day = math.ceil(dur_sec / 3600 / 24)
             elif self.durationStr.endswith(' D'):
                 dur_day = int(self.durationStr[:-2]) * 1 # 1 trading day
             elif self.durationStr.endswith(' W'):
@@ -553,6 +567,7 @@ class BarDataList(List[BarData]):
                     barCount=row.get('barCount', 0),
                     # timestamp=row.timestamp
                 ))
+        BarDataList._init_npdata.doOnce = True
         if len(self) > 0:
             self._init_npdata('', '')
 
@@ -790,11 +805,29 @@ class BarDataList(List[BarData]):
         """
         # _npbufsize() acceptable kwargs: rthfactor_pad
         # if rtfactor_pad is provided, pass it to _npbufsize(), if not, pass nothing to _npbufsize()
-        self._logger.info(f"{NYMKTOPEN} {NYMKTCLOSE} {NYNPMKTOPEN} {NYNPMKTCLOSE}")
+        # global NPMKTOPEN, NPMKTCLOSE, MKTOPEN, MKTCLOSE
+        # if BarDataList._init_npdata.doOnce:
+        #     BarDataList._init_npdata.doOnce = not BarDataList._init_npdata.doOnce
+        #     for k, v in globals().items():
+        #         if k in ['NPMKTOPEN', 'NPMKTCLOSE', 'MKTOPEN', 'MKTCLOSE']:
+        #             self._logger.info(f"{k}={v}")
+        # self._logger.info(f"{globals()}")
+        # self._logger.info(f"{MKTOPEN} {MKTCLOSE} {NPMKTOPEN} {NPMKTCLOSE}")
+        if '_tradingHours' in kwargs:
+            self._tradingHours: TradingSession = kwargs['_tradingHours']
+            kwargs.pop('_tradingHours')
+        if '_rth' in kwargs:
+            self._rth: TradingSession = kwargs['_rth']
+            kwargs.pop('_rth')
+        else:
+            self._rth = TradingSession(
+                start=datetime.combine(datetime.today(), time_(9, 30)).astimezone(),
+                end=datetime.combine(datetime.today(), time_(16, 0)).astimezone()
+            )
         self.buffer_size = self._npbufsize(**kwargs)
         # self.buffer_size = self._npbufsize() # 4680 # 1 day data, 5 sec interval, 6.5 hours trading time, RTH
         if len(self) == 0:
-            self._logger.warning(f"len(self) == 0, buffer_size={self.buffer_size}")
+            self._logger.warning(f"len(self)==0, buffer_size={self.buffer_size}")
             # return
         # self.buffer_size = self._npbufsize() # 4680 # 1 day data, 5 sec interval, 6.5 hours trading time, RTH
         self.npdate_ = np.empty(self.buffer_size, dtype='datetime64[s]')
@@ -872,12 +905,12 @@ class BarDataList(List[BarData]):
         self._average[idx] = bar.average
         self._barCount[idx] = bar.barCount
 
-        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else 0
-        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else 0
-        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else 0
-        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else 0
-        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else 0
-        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else 0
+        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else np.NINF
+        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else np.NINF
+        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else np.NINF
+        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else np.NINF
+        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else np.NINF
+        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else np.NINF
 
         self.log_high_low_[idx] = np.log(bar.high / bar.low)
         self.log_close_open_[idx] = np.log(bar.close / bar.open_)
@@ -889,8 +922,8 @@ class BarDataList(List[BarData]):
             self.log_close_close_[idx] = np.log(bar.close / self.close_prices[idx-1])
             self.log_avg_avg_[idx] = np.log(bar.average / self._average[idx-1])
         else:
-            self.log_close_close_[idx] = np.log(bar.close / bar.open_)
-            self.log_avg_avg_[idx] = np.log(bar.average / bar.open_)
+            self.log_close_close_[idx] = 0. # np.log(bar.close / bar.open_)
+            self.log_avg_avg_[idx] = 0. # np.log(bar.average / bar.open_)
         # self.log_prevopen_close[idx] = np.log(bar.open_ / bar.close)
 
     def _add_npdata(self, newbar: BarData):
@@ -900,7 +933,11 @@ class BarDataList(List[BarData]):
         when adding data to list
         """
         if self._npidx >= self.buffer_size:
-            self._logger.error(f"buffer overflow: {self._npidx} >= {self.buffer_size}")
+            self._logger.error(f"buffer overflow: {self._npidx} >= {self.buffer_size}"
+                + f", self.date {self[0].date.astimezone(tz=None)}..{self[-1].date.astimezone(tz=None)}"
+                + f", self.npdate_ {self.npdate_[0]}..{self.npdate_[self.buffer_size-1]}"
+                + f", self.npdate_(rth) {self.npdate_[self._npidx_rth_start]}..{self.npdate_[self._npidx_rth_end-1]}" if self._npidx_rth_start >= 0 else ''
+            )
             self._npidx = 0
         # idx = self._npidx # % self.buffer_size
         self._set_npdata(self._npidx, newbar)
@@ -910,10 +947,13 @@ class BarDataList(List[BarData]):
         if self.useRTH:
             return # no need to update rth_start and rth_end
         else:
-            if newbar.date == NYMKTOPEN:
+            # global MKTOPEN, MKTCLOSE
+            # if newbar.date == MKTOPEN:
+            if newbar.date == self._rth.start:
                 # this should only trigger once
                 self._npidx_rth_start = self._npidx - 1
-            if newbar.date < NYMKTCLOSE:
+            # if newbar.date < MKTCLOSE:
+            if newbar.date < self._rth.end:
                 # this should be triggered whenever _npidx is updated, until MKTCLOSE
                 self._npidx_rth_end = self._npidx # no minus one since it's the tail index (python slice)
     
@@ -924,7 +964,7 @@ class BarDataList(List[BarData]):
         when adding data to list
         """
         idx = (self._npidx - 1) # % self.buffer_size
-        bd_tmp = np.datetime64(bar.date.astimezone(tz=None).replace(tzinfo=None), 's') # convert to naive datetime
+        bd_tmp = bar.date_to_npdatetime64() # np.datetime64(bar.date.astimezone(tz=None).replace(tzinfo=None), 's') # convert to naive datetime
         if self.npdate_[idx] != bd_tmp:
             if not hasattr(self, '_warning_count'):
                 self._warning_count = 0
