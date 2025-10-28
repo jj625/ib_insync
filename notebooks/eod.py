@@ -6,17 +6,34 @@ import numpy as np
 import re
 import json
 import tqdm
+import pathlib
+import platform
+computername = platform.node()
 
 # to import local code
 # https://stackoverflow.com/questions/61058798/python-relative-import-in-jupyter-notebook
 # https://stackoverflow.com/questions/34478398/import-local-function-from-a-module-housed-in-another-directory-with-relative-im
 
 import os, sys
-parent_dir = os.path.abspath('..')
-if parent_dir not in sys.path:
-    # sys.path.append(parent_dir)
-    sys.path.insert(0, parent_dir) # prepend
-    # print(f"{parent_dir} added to sys.path")
+search_dirs = ['../..', '../../..', '..']
+pkg_needed = ['eventkit', 'ib_insync']
+pkg_dirs = {}
+
+for pkg in pkg_needed:
+    for dir in search_dirs:
+        potential_dir = pathlib.Path(dir, pkg).resolve()
+        if potential_dir.exists() and potential_dir.is_dir():
+            pkg_dirs[pkg] = potential_dir
+            break
+
+for pkg, pkg_dir in pkg_dirs.items():
+    if str(pkg_dir) not in sys.path:
+        sys.path.insert(0, str(pkg_dir))
+        print(f"{pkg_dir} added to sys.path")
+
+missing_pkgs = [pkg for pkg in pkg_needed if pkg not in pkg_dirs]
+if missing_pkgs:
+    print(f"Expected directories not found for: {', '.join(missing_pkgs)}")
 
 import ib_insync
 from ib_insync import Stock, IB, util
@@ -93,6 +110,7 @@ def main():
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
     # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
     # argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
+    argparser.add_argument('--account', type=str, default='paper', help='Account number to use')
     argparser.add_argument('--clientid', type=int, help='IBKR API Client ID')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
@@ -114,12 +132,15 @@ def main():
 
     # Connect to IB Gateway
     ib = IB()
-    ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
+    if args.account != 'paper':
+        ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000), account=args.account)
+    else:
+        ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
 
     # download today's trades
-    suffix = f"{datetime.datetime.now():%y%m%d_%H%M}"
+    suffix = f"{datetime.datetime.now():%y%m%d_%H%M}_{computername}"
     trades = ib.trades()
-    logger.info(f"Downloaded {len(trades)} trades")
+    logger.info(f"Downloaded {len(trades)} trades from ib.trades()")
 
     if len(trades) > 0:
         # Flatten all trades and fills

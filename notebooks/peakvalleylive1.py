@@ -1,3 +1,8 @@
+#
+#
+# typical cmd line:
+# python .\peakvalleylive1.py --barsize '5 mins' --win 10 --lag 2 --usecache TLT
+#
 import os
 # Get the program's file name without the extension 
 program_name = os.path.splitext(os.path.basename(__file__))[0] 
@@ -6,7 +11,7 @@ import io
 import copy
 import pickle
 import inspect
-import re
+# import re
 import asyncio
 def get_asyncio_running_loop(prefix: str = '') -> str:
     try:
@@ -18,36 +23,36 @@ def get_asyncio_running_loop(prefix: str = '') -> str:
 
 # print(get_asyncio_running_loop('0. '))
 # import signal
-import ibapi
+# import ibapi
 import pandas as pd
 import numpy as np
 from numpy.typing import NDArray
-import scipy.optimize
+# import scipy.optimize
 np.set_printoptions(precision=2, suppress=True)
-import scipy
-from scipy.ndimage import gaussian_filter1d
+# import scipy
+# from scipy.ndimage import gaussian_filter1d
 import logging
 import datetime
 MKTOPEN = datetime.datetime.combine(datetime.datetime.today(), datetime.time(9, 30)).astimezone()
 MKTCLOSE = datetime.datetime.combine(datetime.datetime.today(), datetime.time(16, 0)).astimezone()
 # import time
-import dateutil
+# import dateutil
 import argparse
-import json
+# import json
 # import email.utils
-from collections import defaultdict
-from dataclasses import dataclass, field
+# from collections import defaultdict
+# from dataclasses import dataclass, field
 from typing import List, Optional
-import typing
-import numbers
+# import typing
+# import numbers
 # import pdb
-import telegram
-if telegram.__version__ < '20.0':
-    print("Requires python-telegram-bot library version 20.0 or higher")
-    sys.exit(1)
-import rich
-from rich.logging import RichHandler
-from concurrent.futures import ThreadPoolExecutor
+# import telegram
+# if telegram.__version__ < '20.0':
+#     print("Requires python-telegram-bot library version 20.0 or higher")
+#     sys.exit(1)
+# import rich
+# from rich.logging import RichHandler
+# from concurrent.futures import ThreadPoolExecutor
 import zoneinfo
 local_tz = zoneinfo.ZoneInfo('US/Eastern') # Adjust for your local timezone, America/New_York
 
@@ -67,6 +72,7 @@ import pathlib
 
 search_dirs = ['..', '../..', '../../..']
 pkg_needed = ['eventkit', 'rlabbe/filterpy', 'jj625/python-telegram-bot', 'jj625/mplfinance']
+pkg_needed = []
 pkg_dirs = {}
 
 for pkg in pkg_needed:
@@ -111,6 +117,9 @@ from scipy.stats import skew, kurtosis, mode
 import time
 import functools
 
+import gizmo
+from gizmo import LoggerFilter, parse_hours
+
 def _repr_bar(bar: BarData) -> str:
     if isinstance(bar.date, datetime.datetime):
         time_str = (r'%Y-%m-%d ' if bar.date.date() != datetime.date.today() else '') + ("%H:%M" if bar.date.second == 0 else "%H:%M:%S")
@@ -119,45 +128,6 @@ def _repr_bar(bar: BarData) -> str:
         d = bar.date
     return f"[{d} o={bar.open_:.2f} h={bar.high:.2f} l={bar.low:.2f} c={bar.close:.2f} v={int(bar.volume)} a={bar.average:.3f} bc={bar.barCount:n}]"
 BarData.__repr__ = _repr_bar
-
-# Works with regular functions, instance methods, class methods, static methods, and coroutines.
-# Correctly identifies and displays the class name for methods.
-# Distinguishes between functions and coroutines in the output.
-
-def measure_time(func):
-    @functools.wraps(func)
-    def sync_wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = func(*args, **kwargs)
-        end_time = time.perf_counter()
-        execution_time = end_time - start_time
-        print_result(func, args, execution_time)
-        return result
-
-    @functools.wraps(func)
-    async def async_wrapper(*args, **kwargs):
-        start_time = time.perf_counter()
-        result = await func(*args, **kwargs)
-        end_time = time.perf_counter()
-        execution_time = end_time - start_time
-        print_result(func, args, execution_time)
-        return result
-
-    def print_result(func, args, execution_time):
-        if inspect.ismethod(func):
-            func_name = f"{func.__self__.__class__.__name__}.{func.__name__}"
-        elif args and hasattr(args[0].__class__, func.__name__):
-            func_name = f"{args[0].__class__.__name__}.{func.__name__}"
-        else:
-            func_name = func.__name__
-
-        print(f"{'Coroutine' if asyncio.iscoroutinefunction(func) else 'Function'} "
-              f"'{func_name}' took {execution_time:.6f} seconds to execute.")
-
-    if asyncio.iscoroutinefunction(func):
-        return async_wrapper
-    else:
-        return sync_wrapper
 
 def onBarUpdate(bars: BarDataList, hasNewBar: bool):
     currentBar = bars[-1] # bar that is being built, never full
@@ -182,23 +152,17 @@ def onBarUpdate(bars: BarDataList, hasNewBar: bool):
             v = pkvl0b.get_valleys()
             logger.info(f"0b v({len(v)}): {_repr_pkvl(v)}")
 
-        prev_avg, cur_avg, peak, valley = pkvl1.process_price(currentBar.average, currentBar.date)
-        if peak:
-            logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        if valley:
-            logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+        # prev_avg, cur_avg, peak, valley = pkvl1.process_price(currentBar.average, currentBar.date)
+        # if peak:
+        #     logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        # if valley:
+        #     logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
-        prev_avg, cur_avg, peak, valley = pkvl2.process_price(currentBar.average, currentBar.date)
-        if peak:
-            logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        if valley:
-            logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
-
-def _repr_pkvl(lst: list):
-    res = []
-    for pkvl in lst:
-        res.append(f"{pkvl[0]:.2f} {pkvl[1]:%H:%M:%S}")
-    return '[' + ', '.join(res) + ']'
+        # prev_avg, cur_avg, peak, valley = pkvl2.process_price(currentBar.average, currentBar.date)
+        # if peak:
+        #     logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        # if valley:
+        #     logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
 def onHistDataEnd(start: str, end: str, bars: BarDataList):
     logger.info(f"start={start}, end={end}, len(bars)={len(bars)}")
@@ -214,119 +178,51 @@ def onHistDataEnd(start: str, end: str, bars: BarDataList):
         prev_avg, cur_avg, peak, valley = pkvl0b.process_price(bar.average, bar.date)
         if peak:
             logger.info(f"0b peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-            logger.info(f"0b p: {_repr_pkvl(pkvl0b.get_peaks())}")
+            p = pkvl0b.get_peaks()
+            logger.info(f"0b p({len(p)}): {_repr_pkvl(p)}")
         if valley:
             logger.info(f"0b valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
-            logger.info(f"0b v: {_repr_pkvl(pkvl0b.get_valleys())}")
+            v = pkvl0b.get_valleys()
+            logger.info(f"0b v({len(v)}): {_repr_pkvl(v)}")
 
-        prev_avg, cur_avg, peak, valley = pkvl1.process_price(bar.average, bar.date)
-        if peak:
-            logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        if valley:
-            logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+        # prev_avg, cur_avg, peak, valley = pkvl1.process_price(bar.average, bar.date)
+        # if peak:
+        #     logger.info(f"1 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        # if valley:
+        #     logger.info(f"1 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
-        prev_avg, cur_avg, peak, valley = pkvl2.process_price(bar.average, bar.date)
-        if peak:
-            logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
-        if valley:
-            logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
+        # prev_avg, cur_avg, peak, valley = pkvl2.process_price(bar.average, bar.date)
+        # if peak:
+        #     logger.info(f"2 peak detected: {peak[0]:.2f} {peak[1]:%H:%M:%S}")
+        # if valley:
+        #     logger.info(f"2 valley detected: {valley[0]:.2f} {valley[1]:%H:%M:%S}")
 
 # function to convert timestamp to minute
 def timestamp_to_minute(timestamp):
     return timestamp.hour * 60 + timestamp.minute
 
+class CustomFormatter(logging.Formatter):
+    grey = "\\x1b[38;21m"
+    yellow = "\\x1b[33;21m"
+    red = "\\x1b[31;21m"
+    bold_red = "\\x1b[31;1m"
+    reset = "\\x1b[0m"
+    # format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
+    format = ('%(asctime)s:%(levelname)s:%(name)s:%(funcName)s:%(message)s')
+    FORMATS = {
+        # logging.DEBUG: grey + format + reset,
+        # logging.INFO: grey + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
 
-class LoggerFilter(logging.Filter):
-    def __init__(self, logger_name, pattern=r'.*'):
-        super().__init__()
-        self.logger_name = logger_name
-        self.pattern = re.compile(pattern)
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return not (record.name == self.logger_name and
-            self.pattern.search(msg) and 
-            record.levelno >= logging.INFO
-        )
-
-class PriceDetector:
-    def __init__(self):
-        self.prev_price = None
-        self.current_price = None
-        self.minutes = deque(maxlen=2)
-        self.peak = None
-        self.valley = None
-        self.peaks = []
-        self.valleys = []
-
-    def process_price(self, price, minute):
-        self.prev_price = self.current_price
-        self.current_price = price
-        self.minutes.append(minute)
-
-        if self.prev_price is not None:
-            if self.current_price > self.prev_price:
-                # self._handle_price_increase(minute)
-                if self.peak is None or self.current_price > self.peak[0]:
-                    self.peak = (self.current_price, minute)
-                if self.valley is not None:
-                    self.valleys.append(self.valley)
-                    self.valley = None
-            elif self.current_price < self.prev_price:
-                # self._handle_price_decrease(minute)
-                if self.valley is None or self.current_price < self.valley[0]:
-                    self.valley = (self.current_price, minute)
-                if self.peak is not None:
-                    self.peaks.append(self.peak)
-                    self.peak = None
-        
-        return self.prev_price, self.current_price, self.peak, self.valley
-
-    # def _handle_price_increase(self, minute):
-    #     if self.peak is None or self.current_price > self.peak:
-    #         self.peak = self.current_price
-    #     if self.valley is not None:
-    #         self.valleys.append((self.valley, minute))
-    #         self.valley = None
-
-    # def _handle_price_decrease(self, minute):
-    #     if self.valley is None or self.current_price < self.valley:
-    #         self.valley = self.current_price
-    #     if self.peak is not None:
-    #         self.peaks.append(self.peak)
-    #         self.peak = None
-
-    def get_peaks(self):
-        return self.peaks
-
-    def get_valleys(self):
-        return self.valleys
-
-class PD2(PriceDetector):
-    def process_price(self, price, minute):
-        prev_price, current_price, peak, valley = super().process_price(price, minute)
-
-        if peak and not self.peaks:
-            self.peaks.append(peak)
-        elif peak and self.peaks and peak[0] >= self.peaks[-1][0]: # if higher peaks
-            if len(self.minutes) > 1 and self.peaks[-1][1] == self.minutes[-2]:
-                self.peaks.pop()
-            self.peaks.append(peak)
-        elif peak:
-            self.peaks.append(peak)
-        self.peak = None
-        
-        if valley and not self.valleys:
-            self.valleys.append(valley)
-        elif valley and self.valleys and valley[0] <= self.valleys[-1][0]: # if successively lower valleys
-            if len(self.minutes) > 1 and self.valleys[-1][1] == self.minutes[-2]:
-                self.valleys.pop()
-            self.valleys.append(valley)
-        elif valley:
-            self.valleys.append(valley)
-        self.valley = None
-    
-        return prev_price, current_price, peak, valley
+from peakvaly import PriceDetector, PD2, _repr_pkvl
 
 class IntradayPeakValleyDetectorBase:
     def __init__(self, window_size=3, lag=2): # window_size=3, lag=2 yields the same behavior as PriceDetector()
@@ -540,6 +436,9 @@ def main():
         #     logging.StreamHandler()
         # ]
     )
+    ch = logging.StreamHandler()
+    ch.setFormatter(CustomFormatter())
+    # logging.getLogger().addHandler(ch)
 
     argparser = argparse.ArgumentParser()
     argparser.add_argument('symbols', nargs='*', type=str, default=['NVDA'], help='Just run for this symbol(s)') # nargs='+' means one or more
@@ -559,10 +458,13 @@ def main():
     args = argparser.parse_args()
     print(args)
 
+    barSizeSetting = args.barsize
+
     # Set up logging
     logging.basicConfig(level=args.loglevel, format=('%(asctime)s:' + logging.BASIC_FORMAT))
     global logger
     logger = logging.getLogger(__name__)
+    # logger.addHandler(ch)
     
     if args.loglevel != 'INFO':
         logger.setLevel(args.loglevel)
@@ -580,7 +482,7 @@ def main():
     pkvl1 = IntradayPeakValleyDetector1(window_size=args.windowsize, lag=args.lag)
     pkvl2 = IntradayPeakValleyDetector2(window_size=args.windowsize, lag=args.lag)
 
-    dtnow = datetime.datetime.now()
+    dtnow = datetime.datetime.now(tz=local_tz)
     cachefilename = f'data/{args.symbols[0]}_{args.barsize.replace(' ', '_')}_data_{dtnow:%y%m%d}.pkl'
     logger.info(f"Cache file: {cachefilename}")
 
@@ -629,9 +531,38 @@ def main():
             logger.error(f"Contract details not found for {sym}")
             continue
         else:
-            logger.info(f"Contract details {temp[0].contract}")
-            contract_ = temp[0].contract
-        logger.info(f"Requesting historical bars for {sym}...")
+            cdl = temp[0]
+            tradingHours_ld = parse_hours(cdl.tradingHours, cdl.timeZoneId)
+            liquidHours_ld = parse_hours(cdl.liquidHours, cdl.timeZoneId)
+            if tradingHours_ld is None or liquidHours_ld is None:
+                logger.error(f"Missing trading hours data in contractDetails")
+                continue
+            if tradingHours_ld[0]['is_error']:
+                logger.error(f"Cannot parse trading hours: {tradingHours_ld[0]['period_str']}")
+                continue
+            elif tradingHours_ld[0]['is_closed'] and tradingHours_ld[0]['date_start'] == dtnow.date():
+                logger.error(f"Market is closed: {tradingHours_ld[0]['period_str']}")
+                continue
+            else:
+                # current trading hours
+                if useRTH:
+                    trading_start = cdl.liquidSessions()[0].start
+                    trading_end = cdl.liquidSessions()[0].end
+                else:
+                    trading_start = cdl.tradingSessions()[0].start
+                    trading_end = cdl.tradingSessions()[0].end
+                logger.info(f"Trading start: {trading_start:%H:%M:%S}, Trading end: {trading_end:%H:%M:%S}")
+                if trading_start < dtnow:
+                    # if trading has started, only request number of seconds from trading start
+                    # requesting more than that or '1 D' will spill over to yesterday's data as well
+                    durationStr = f"{(dtnow - trading_start).seconds + 5} S"
+                    durationStr = r"1 D"
+                else:
+                    # if trading has not started ...
+                    durationStr = f"1 S" # as short as possible
+            contract_ = cdl.contract
+            logger.info(f"Contract {contract_}")
+        logger.info(f"Requesting durationStr='{durationStr}' barSize='{barSizeSetting}' bars for {sym}...")
         if args.dryrun:
             continue
 

@@ -7,6 +7,7 @@ import copy
 import inspect
 import re
 import asyncio
+asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 def get_asyncio_running_loop(prefix: str = '') -> str:
     try:
         running_loop = asyncio.get_running_loop()
@@ -35,6 +36,9 @@ import numbers
 from concurrent.futures import ThreadPoolExecutor
 import zoneinfo
 local_tz = zoneinfo.ZoneInfo('US/Eastern') # Adjust for your local timezone, America/New_York
+
+import zmq
+import zmq.asyncio
 
 # to import local code
 # https://stackoverflow.com/questions/61058798/python-relative-import-in-jupyter-notebook
@@ -95,6 +99,7 @@ from scipy.stats import skew, kurtosis, mode
 
 import time
 import functools
+import code
 
 # Works with regular functions, instance methods, class methods, static methods, and coroutines.
 # Correctly identifies and displays the class name for methods.
@@ -178,6 +183,49 @@ def future_done_callback(future: asyncio.Future):
     count = future.remove_done_callback(future_done_callback)
     logger.info(f"future_done_callback removed: {count}")
 
+def process_exec_command(command, caller_locals):
+    # Example: Evaluate the command using exec or eval
+    try:
+        exec(command, globals(), caller_locals)
+        return "Command executed successfully"
+    except Exception as e:
+        return str(e)
+
+def process_eval_command(command, caller_locals):
+    try:
+        result = eval(command, globals(), caller_locals)
+        return str(result)
+    except Exception as e:
+        return str(e)
+
+async def zmq_listener(ib: IB) -> int:
+    context = zmq.asyncio.Context()
+    socket = context.socket(zmq.REP)
+    socket.bind("tcp://*:5555")
+    loop_count = 0
+
+    while True:
+        loop_count += 1
+        message = await socket.recv_string()
+        args = message.split()
+        logger.info(f"Received request: {args}")
+        # await socket.send_string(f"Echo: {message}")
+        match args[0]:
+            case "exec":
+                response = process_exec_command(args[1], locals())
+                await socket.send_string(response)
+            case "eval":
+                response = process_eval_command(args[1], locals())
+                await socket.send_string(response)
+            case "exit":
+                break
+            case "repl":
+                # Start an interactive Python REPL
+                code.interact(local=locals())
+            case _:
+                await socket.send_string("Unknown request")
+    return loop_count
+
 def main():
     scriptdir = os.path.dirname(os.path.realpath(__file__))
     filesuffix = f'_{datetime.datetime.now():%y%m%d_%H%M}'
@@ -227,6 +275,15 @@ def main():
     ib.barUpdateEvent += onBarUpdate
 
     ib.connect(args.host, args.port, clientId=args.clientid or np.random.randint(1_000, 10_000))
+
+    def done_callback(future: asyncio.Future):
+        logger.info(f"zmq_listener done: {future.result()}")
+
+    background_tasks = set()
+    # loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(zmq_listener(ib))
+    background_tasks.add(task)
+    task.add_done_callback(done_callback)
 
     dtnow = datetime.datetime.now()
     syms = args.symbols or ['MES']
@@ -290,7 +347,7 @@ def main():
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
                 formatDate=1,
-                timeout=5, # if timeout, future is still marked as done, not cancelled
+                timeout=60*5, # if timeout, future is still marked as done, not cancelled
                 # _historicalDataEndHook=initial_resample_hook
                 )
         )
@@ -359,6 +416,14 @@ def main():
     bars = future.result()
     print("result: len(bars) ", len(bars))
     ib.cancelMktData(contract_)
+
+    # check background tasks for completion
+    done = False
+    while not done:
+        done = all(task.done() for task in background_tasks)
+        logger.info(f"Waiting for background tasks to complete...")
+        ib.sleep(60)
+
     # Disconnect
     ib.disconnect()
     logger.info("Done")

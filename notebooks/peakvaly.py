@@ -39,7 +39,7 @@ class PriceDetector:
                     self.peaks.append(self.peak)
                     self.peak = None
             else:
-                self._logger.warning(f"Price unchanged: {price} at {minute:%H:%M:%S}")
+                self._logger.warning(f"Price unchanged: {price:.4f} at {minute:%H:%M:%S}")
         
         return self.prev_price, self.current_price, self.peak, self.valley
 

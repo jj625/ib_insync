@@ -31,6 +31,7 @@ if parent_dir not in sys.path:
 import ib_insync
 print(inspect.getfile(ib_insync))
 from ib_insync import Stock, Future, IB, util, ContractDetails, Contract, BarDataList, BarData
+from ib_insync.util import waitUntilAsync
 
 from gizmo import LoggerFilter
 
@@ -42,6 +43,38 @@ def last_business_dt() -> datetime.datetime:
     else:
         return today + datetime.timedelta(days=-1)
 
+class IBInstrument():
+    logger = logging.getLogger(__name__)
+    def __init__(self, ib: IB, contract: Contract):
+        self.ib = ib
+        self.contract = contract
+
+    async def get_contract_details(self):
+        temp: list[ContractDetails] = self.ib.reqContractDetails(self.contract)
+        if len(temp) == 0:
+            logger.error(f"Contract details not found for {sym}")
+            # continue
+        elif len(temp) > 1:
+            logger.info(f"Multiple contract details found for {contract_}")
+            # continue
+            # contract_ = temp[0].contract
+        else:
+            cdl: ContractDetails = temp[0]
+            contract_ = cdl.contract
+            logger.info(f"Contract details {cdl}")
+
+    async def get_historical_data(self, durationStr, barSizeSetting):
+        bars = await self.ib.reqHistoricalDataAsync(
+            self.contract,
+            endDateTime='', # endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
+            durationStr=durationStr,
+            barSizeSetting=barSizeSetting,
+            whatToShow='TRADES',
+            useRTH=False,
+            formatDate=1,
+            keepUpToDate=True)
+        return bars
+    
 class PitLogger():
     """
     Log pit (point-in-time) data to a file
@@ -57,6 +90,7 @@ class PitLogger():
         self.logfile.write("date,open,high,low,close,average,volume,barCount,hasNewBar,timestamp\n")
         self.logfile.flush()
 
+        # self.ib.waitUntil(datetime.time(17, 59, 57, tzinfo=tz_NY))
         self.future = asyncio.ensure_future(self.ib.reqHistoricalDataAsync(
             self.contract,
             endDateTime='', # endDateTime.strftime(r'%Y%m%d 21:00:00 US/Eastern'),
@@ -77,8 +111,9 @@ class PitLogger():
         self.logfile.flush()
         # logger.info(f"{last_bar.timestamp},{last_bar.date},{last_bar.open},{last_bar.high},{last_bar.low},{last_bar.close},{last_bar.volume:n},{last_bar.barCount:n}")
 
-    def run(self):
+    def run(self, untilTime: datetime.datetime):
         self.loop = asyncio.get_event_loop()
+        # waitUntilAsync(untilTime)
         self.loop.run_until_complete(self.future)
         self.bars = self.future.result()
         self.bars.updateEvent += self.onBarUpdate
@@ -174,20 +209,37 @@ def main():
             logger.info(f"Contract details {cdl}")
 
         dtnow = datetime.datetime.now(tz_NY)
+        _idx = 0
+        if cdl.tradingSessions()[_idx].end < dtnow:
+            _idx += 1
+        startTime = cdl.tradingSessions()[_idx].start
         pl1m = PitLogger(ib, contract_, '1 D', '1 min', f'./data/{sym}_pit_1m_{dtnow:%Y%m%d_%H%M}.csv')
-        pl1m.run()
+        pl1m.run(startTime)
         pl15s = PitLogger(ib, contract_, '1 D', '15 secs', f'./data/{sym}_pit_15s_{dtnow:%Y%m%d_%H%M}.csv')
-        pl15s.run()
+        pl15s.run(startTime)
         pl5m = PitLogger(ib, contract_, '1 D', '5 mins', f'./data/{sym}_pit_5m_{dtnow:%Y%m%d_%H%M}.csv')
-        pl5m.run()
+        pl5m.run(startTime)
         pl30m = PitLogger(ib, contract_, '1 D', '30 mins', f'./data/{sym}_pit_30m_{dtnow:%Y%m%d_%H%M}.csv')
-        pl30m.run()
+        pl30m.run(startTime)
         # pl1d = PitLogger(ib, contract_, '1 D', '1 day', f'./data/{sym}_pit_1d_{dtnow:%Y%m%d_%H%M}.csv')
         # pl1d.run()
-        untilTime = cdl.tradingSessions()[0].end+datetime.timedelta(minutes=1)
-        logger.info(f"running until {untilTime}")
+        results = await asyncio.gather(
+            pl1m.future,
+            pl15s.future,
+            pl5m.future,
+            pl30m.future
+        )
+        untilTime = cdl.tradingSessions()[_idx].end + datetime.timedelta(minutes=1, days=0)
+        logger.info(f"running until {untilTime.astimezone()}")
         ib.waitUntil(untilTime)
-
+        for i, result in enumerate(results):
+            logger.info(f"{i}: {result}")
+            if isinstance(result, Exception):
+                logger.error(f"{i}: {result}")
+            else:
+                logger.info(f"{i}: {result.result()}")
+    
+    # ib.disconnect()
     logger.info("Done!")
     return # end of main
 

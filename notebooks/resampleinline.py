@@ -3,6 +3,7 @@ import os
 program_name = os.path.splitext(os.path.basename(__file__))[0] 
 import sys
 import io
+import copy
 import pickle
 import inspect
 import re
@@ -88,7 +89,17 @@ import ib_insync
 import ib_insync.ib
 ib_insync.ib.install_custom_repr_()
 
-from ib_insync import IB, MarketOrder, LimitOrder, BarData, Stock, util
+from ib_insync import IB, MarketOrder, LimitOrder, BarData, BarDataList, Stock, util
+
+# probe if IB class has reqHistoricalDataExt()
+if not hasattr(ib_insync.IB, 'reqHistoricalDataExt'):
+    print(f"{ib_insync.IB} does not have reqHistoricalDataExt()")
+    sys.exit(1)
+
+# probe for numpy support in BarDataList
+if not hasattr(BarDataList, '_init_npdata'):
+    print(f"{BarDataList} does not have numpy extension")
+    sys.exit(1)
 
 import filterpy
 from filterpy.kalman import KalmanFilter as kf
@@ -215,8 +226,14 @@ class OnlineStatsReal:
     def deciles(self):
         return np.percentile(self.values, np.arange(10, 100, 10))
 
-class BarEventHandler:
-    def __init__(self):
+outBars2m: List[BarData] = [] # resampled 2m bars
+outBars5m: List[BarData] = [] # resampled 5m bars
+outBars10m: List[BarData] = [] # resampled 10m bars
+outBars15m: List[BarData] = [] # resampled 15m bars
+
+class BarDataResampler():
+    def __init__(self, *args):
+        self._logger = logging.getLogger(__name__)
         self.first_call = True
     
     def __call__(self, bars: List[BarData], hasNewBar: bool):
@@ -226,9 +243,24 @@ class BarEventHandler:
         self.onBarUpdate(bars, hasNewBar)
 
     def onFirstCall(self, bars: List[BarData], hasNewBar: bool):
-        logger.info(f"bars[-1]={bars[-1]} hasNewBar={hasNewBar}")
-        # for b in bars:
-            
+        pass
+
+    def initialize(self, bars: List[BarData]):
+        logger.info(f"len(bars)={len(bars)}, len(resampled)={len(resampled)}")
+        for b in bars:
+            self.resampler_5s_1m([b], resampled)
+        logger.info(f"len(resampled)={len(resampled)}")
+
+    def data_end_hook(self, start: str, end: str, bars: BarDataList):
+        logger.info(f"data_end_hook: start={start} end={end} len(bars)={len(bars)}")
+        for b in bars:
+            self.resampler_5s_1m([b], resampled)
+        logger.info(f"len(resampled)={len(resampled)}")
+        logger.info(f"len(outBars2m)={len(outBars2m)}")
+        logger.info(f"len(outBars5m)={len(outBars5m)}")
+        logger.info(f"len(outBars10m)={len(outBars10m)}")
+        logger.info(f"len(outBars15m)={len(outBars15m)}")
+
     def onBarUpdate(self, bars: List[BarData], hasNewBar: bool):
         onBarUpdate5s(bars, hasNewBar)
         r, h = self.resampler_5s_1m(bars, resampled)
@@ -241,20 +273,43 @@ class BarEventHandler:
         outBars: 1m bars
         """
         outBarsHasNewBar = False
-        z = inBars[-1]
-        b: BarData = BarData(z.date, z.open, z.high, z.low, z.close
-            , z.volume, z.average, z.barCount) # make sure b is a copy so we don't inadvertently change bar5s
+        z: BarData = inBars[-1]
+        b: BarData = BarData(z.date, z.open_, z.high, z.low, z.close, z.volume, z.average, z.barCount, z.timestamp) # make sure b is a copy so we don't inadvertently change bar5s
+
         # logger.info(f"{inBars[-1]} hasNewBar={hasNewBar}")
         atTopMinute = b.date.second % 60 == 0 # at the top of the minute
-        if atTopMinute or outBars == []:
+        hasNewBar1m = b.date.second == 0 # new 1m bar
+        hasNewBar2m = b.date.second == 0 and b.date.minute % 2 == 0 # new 2m bar
+        hasNewBar5m = b.date.second == 0 and b.date.minute % 5 == 0 # new 5m bar
+        hasNewBar10m = b.date.second == 0 and b.date.minute % 10 == 0 # new 10m bar
+        hasNewBar15m = b.date.second == 0 and b.date.minute % 15 == 0 # new 15m bar
+    
+        # if atTopMinute or outBars == []:
+        if hasNewBar1m or outBars == []:
             # resample to 60 seconds/1 min
             if atTopMinute and outBars:
                 logger.debug(f"outBars[-2]={outBars[-1]}") # the one just closed
-            outBars.append(b)
+            outBars.append(copy.copy(b))
             assert b == outBars[-1]
             outBarsHasNewBar = True
             logger.debug(f"outBars[-1]={outBars[-1]} hasNewBar=True")
-        elif outBars:
+        if hasNewBar2m or outBars2m == []:
+            # resample to 120 seconds/2 min
+            outBars2m.append(copy.copy(b))
+        if hasNewBar5m or outBars5m == []:
+            # resample to 300 seconds/5 min
+            outBars5m.append(copy.copy(b))
+        if hasNewBar10m or outBars10m == []:
+            # resample to 600 seconds/10 min
+            outBars10m.append(copy.copy(b))
+        if hasNewBar15m or outBars15m == []:
+            # resample to 900 seconds/15 min
+            outBars15m.append(copy.copy(b))
+
+        # elif outBars:
+        assert outBars != [] and outBars2m != [] and outBars5m != [] and outBars10m != [] and outBars15m != [] # should have been initialized
+
+        if not hasNewBar1m:
             sumVolume = outBars[-1].volume + b.volume
             sumValues = outBars[-1].volume * outBars[-1].average + b.volume * b.average
             outBars[-1].close = b.close
@@ -267,14 +322,66 @@ class BarEventHandler:
             outBars[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close # has average even if volume is 0
             logger.debug(f"outBars[-1]={outBars[-1]} hasNewBar=False")
 
+        if not hasNewBar2m:
+            sumVolume = outBars2m[-1].volume + b.volume
+            sumValues = outBars2m[-1].volume * outBars2m[-1].average + b.volume * b.average
+            outBars2m[-1].close = b.close
+            if b.high > outBars2m[-1].high:
+                outBars2m[-1].high = b.high
+            if b.low < outBars2m[-1].low:
+                outBars2m[-1].low = b.low
+            outBars2m[-1].volume += b.volume
+            outBars2m[-1].barCount += b.barCount
+            outBars2m[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close # has average even if volume is 0
+
+        if not hasNewBar5m:
+            sumVolume = outBars5m[-1].volume + b.volume
+            sumValues = outBars5m[-1].volume * outBars5m[-1].average + b.volume * b.average
+            outBars5m[-1].close = b.close
+            if b.high > outBars5m[-1].high:
+                outBars5m[-1].high = b.high
+            if b.low < outBars5m[-1].low:
+                outBars5m[-1].low = b.low
+            outBars5m[-1].volume += b.volume
+            outBars5m[-1].barCount += b.barCount
+            outBars5m[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close
+
+        if not hasNewBar10m:
+            sumVolume = outBars10m[-1].volume + b.volume
+            sumValues = outBars10m[-1].volume * outBars10m[-1].average + b.volume * b.average
+            outBars10m[-1].close = b.close
+            if b.high > outBars10m[-1].high:
+                outBars10m[-1].high = b.high
+            if b.low < outBars10m[-1].low:
+                outBars10m[-1].low = b.low
+            outBars10m[-1].volume += b.volume
+            outBars10m[-1].barCount += b.barCount
+            outBars10m[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close
+
+        if not hasNewBar15m:
+            sumVolume = outBars15m[-1].volume + b.volume
+            sumValues = outBars15m[-1].volume * outBars15m[-1].average + b.volume * b.average
+            outBars15m[-1].close = b.close
+            if b.high > outBars15m[-1].high:
+                outBars15m[-1].high = b.high
+            if b.low < outBars15m[-1].low:
+                outBars15m[-1].low = b.low
+            outBars15m[-1].volume += b.volume
+            outBars15m[-1].barCount += b.barCount
+            outBars15m[-1].average = sumValues / sumVolume if sumVolume > 0 else b.close
+
         onResampledBar(outBars, outBarsHasNewBar) # forward to resampled bar event
+        onResampledBar2m(outBars2m, hasNewBar2m)
+        onResampledBar5m(outBars5m, hasNewBar5m)
+        onResampledBar10m(outBars10m, hasNewBar10m)
+        onResampledBar15m(outBars15m, hasNewBar15m)
         return (outBars, outBarsHasNewBar)
 
 # Global variables
 logger = None
 
 bars5s: List[BarData] = []
-b5s_eventhandler = BarEventHandler()
+b5s_eventhandler = BarDataResampler()
 resampled: List[BarData] = [] # resampled 1m bars
 bars1m: List[BarData] = []
 
@@ -297,16 +404,16 @@ def onError(reqId, errorCode, errorString, contract):
     logger.error(f"Error. Id: {reqId}, Code: {errorCode}, Msg: {errorString}")
 
 def onBarUpdate1m(bars: List[BarData], hasNewBar: bool):
-    logger.info(f"bars1m[-1]={bars1m[-1]} hasNewBar={hasNewBar}")
+    logger.info(f"bars1m[-1]={bars1m[-1]._repr_()} hasNewBar={hasNewBar}")
     if hasNewBar:
-        logger.info(f"bars1m[-2]={bars1m[-2]}") # the one just closed
+        logger.info(f"bars1m[-2]={bars1m[-2]._repr_()}") # the one just closed
 
     # high minus low
     currentBar = bars[-1] # bar that is being built, never full
     currentFullBar = bars[-2] # the most recent fully formed bar
     hmlfb_ = currentFullBar.high - currentFullBar.low
     hml_ = currentBar.high - currentBar.low
-    logger.info(f"hmlfb={hmlfb_:0.2f} hml={hml_:0.2f}")
+    # logger.info(f"hmlfb={hmlfb_:0.2f} hml={hml_:0.2f}")
     if hasNewBar or hml == []: # new bar or first bar
         fbhml_ = currentFullBar.high - currentFullBar.low
         # if hml and fbhml_ != hml[-1]:
@@ -319,9 +426,41 @@ def onBarUpdate1m(bars: List[BarData], hasNewBar: bool):
         # hml_pct[-1] = hml_ / prevclose
     # lastPrice = get_market_price() # sample the market price # was bars[-1].close
     hmlstat.update(int(hml_*100.))
-    logger.info(f"hml={hml[-1]:0.2f} mean={hmlstat.mean:0.3f} stddev={hmlstat.stddev():0.3f} quartiles={hmlstat.quartiles()}")
+    # logger.info(f"hml={hml[-1]:0.2f} mean={hmlstat.mean:0.3f} stddev={hmlstat.stddev():0.3f} quartiles={hmlstat.quartiles()}")
 
 def onResampledBar(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        if len(bars) <= 1:
+            logger.info("resampled[-2] is not available")
+        else:
+            logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+
+def onResampledBar2m(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        if len(bars) <= 1:
+            logger.info("resampled[-2] is not available")
+        else:
+            logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+
+def onResampledBar5m(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        if len(bars) <= 1:
+            logger.info("resampled[-2] is not available")
+        else:
+            logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+
+def onResampledBar10m(bars: List[BarData], hasNewBar: bool):
+    logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
+    if hasNewBar:
+        if len(bars) <= 1:
+            logger.info("resampled[-2] is not available")
+        else:
+            logger.info(f"resampled[-2]={bars[-2]}") # the one just closed
+
+def onResampledBar15m(bars: List[BarData], hasNewBar: bool):
     logger.info(f"resampled[-1]={bars[-1]} hasNewBar={hasNewBar}")
     if hasNewBar:
         if len(bars) <= 1:
@@ -346,7 +485,7 @@ def onBarUpdate5s(bars: List[BarData], hasNewBar: bool):
     bars: ohlcv every 5 seconds
     """
     logging.info("-"*40)
-    msg = f"bars[-1]={bars[-1]}"
+    msg = f"bars[-1]={bars[-1]._repr_()}"
     if hasNewBar == False: # we don't expect False for 5s
         msg += " hasNewBar=False" # in case it happens, print warning
         logging.warning(msg)
@@ -388,11 +527,12 @@ def main():
     argparser.add_argument('symbols', nargs='*', type=str, help='Just run for this symbol(s)') # nargs='+' means one or more
     # argparser.add_argument('numshares', type=int, nargs='?', help='Number of shares to trade')
     # argparser.add_argument('maxloss', type=float, nargs='?', help='Max loss threshold')
-    argparser.add_argument('--clientid', type=int, help='IBKR API Client ID')
+    argparser.add_argument('--clientid', type=int, help='IBKR API Client ID. Default is random between 1k and 10k.')
     argparser.add_argument('--host', type=str, default='127.0.0.1', help='Host name')
     argparser.add_argument('--port', type=int, default=7497, help='Port number') # IB Gateway 4001, TWS 7496
     argparser.add_argument('--loglevel', type=str, default='INFO', help='Logging level')
     argparser.add_argument('--dryrun', action='store_true', help='Dry run, don\'t actually download data')
+    argparser.add_argument('--enddate', type=datetime.datetime.fromisoformat, help='End date')
     # argparser.add_argument('--live_trading', action='store_true', help='Live trading')
     args = argparser.parse_args()
     print(args)
@@ -435,7 +575,7 @@ def main():
             continue
 
         global bars5s, bars1m
-        bars5s = ib.reqHistoricalData(
+        bars5s = ib.reqHistoricalDataExt(
                 contract_,
                 endDateTime=endDateTime,
                 durationStr='1 D',
@@ -443,9 +583,12 @@ def main():
                 whatToShow='TRADES',
                 useRTH=useRTH,
                 keepUpToDate=keepUpToDate,
-                formatDate=1)
-        bars5s.updateEvent += b5s_resampler.__call__
+                formatDate=1,
+                _historicalDataEndHook=b5s_eventhandler.data_end_hook)
+        b5s_eventhandler.initialize(bars5s)
+        bars5s.updateEvent += b5s_eventhandler.__call__
         # bars5s.updateEvent += onBarUpdate5s
+        logger.info(f"{len(bars5s)} bars5s downloaded")
 
         bars1m = ib.reqHistoricalData(
                 contract_,
@@ -457,11 +600,14 @@ def main():
                 keepUpToDate=keepUpToDate,
                 formatDate=1)
         bars1m.updateEvent += onBarUpdate1m
+        logger.info(f"{len(bars1m)} bars1m downloaded")
     
     if datetime.datetime.now().time() < datetime.time(16, 0, 0):
+        logger.info("Waiting until 4:02pm...")
         ib.waitUntil(datetime.time(16, 2, 0))
     else:
-        ib.sleep(3 * 60)
+        logger.info("Waiting 1 minute...")
+        ib.sleep(1 * 60)
 
     # # compare with the real 1m bars
     # bars1m_real = ib.reqHistoricalData(
@@ -477,18 +623,50 @@ def main():
     filename5s = f"./data/{sym}_5s_{dtnow:%y%m%d_%H%M}.csv"
     filename1m = f"./data/{sym}_1m_{dtnow:%y%m%d_%H%M}.csv"
     filename1m_resampled = f"./data/{sym}_resampled_{dtnow:%y%m%d_%H%M}.csv"
+    filename2m_resampled = f"./data/{sym}_resampled2m_{dtnow:%y%m%d_%H%M}.csv"
+    filename5m_resampled = f"./data/{sym}_resampled5m_{dtnow:%y%m%d_%H%M}.csv"
+    filename10m_resampled = f"./data/{sym}_resampled10m_{dtnow:%y%m%d_%H%M}.csv"
+    filename15m_resampled = f"./data/{sym}_resampled15m_{dtnow:%y%m%d_%H%M}.csv"
     bars5s_df = util.df(bars5s)
     bars1m_df = util.df(bars1m)
     resampled_df = util.df(resampled)
-    bars5s_df.to_csv(filename5s, index=False)
-    bars1m_df.to_csv(filename1m, index=False)
+    resampled2m_df = util.df(outBars2m)
+    resampled5m_df = util.df(outBars5m)
+    resampled10m_df = util.df(outBars10m)
+    resampled15m_df = util.df(outBars15m)
+    bars5s_df.style.format({'average': '{:.4f}'}).to_csv(filename5s, index=False)
+    bars1m_df.style.format({'average': '{:.4f}'}).to_csv(filename1m, index=False)
     if resampled_df is not None:
-        resampled_df.to_csv(filename1m_resampled, index=False)
+        resampled_df.style.format({'average': '{:.4f}'}).to_csv(filename1m_resampled, index=False)
         buf = io.StringIO()
         resampled_df.info(buf=buf, verbose=True)
         logger.info(f"\n{buf}")
         logger.info(f"\n{resampled_df.describe().to_string()}")
-    logger.info(f"Script done. Files saved to:\n{filename5s}\n{filename1m}\n{filename1m_resampled}")
+    if resampled2m_df is not None:
+        resampled2m_df.style.format({'average': '{:.4f}'}).to_csv(filename2m_resampled, index=False)
+        buf = io.StringIO()
+        resampled2m_df.info(buf=buf, verbose=True)
+        logger.info(f"\n{buf}")
+        logger.info(f"\n{resampled2m_df.describe().to_string()}")
+    if resampled5m_df is not None:
+        resampled5m_df.style.format({'average': '{:.4f}'}).to_csv(filename5m_resampled, index=False)
+        buf = io.StringIO()
+        resampled5m_df.info(buf=buf, verbose=True)
+        logger.info(f"\n{buf}")
+        logger.info(f"\n{resampled5m_df.describe().to_string()}")
+    if resampled10m_df is not None:
+        resampled10m_df.style.format({'average': '{:.4f}'}).to_csv(filename10m_resampled, index=False)
+        buf = io.StringIO()
+        resampled10m_df.info(buf=buf, verbose=True)
+        logger.info(f"\n{buf}")
+        logger.info(f"\n{resampled10m_df.describe().to_string()}")
+    if resampled15m_df is not None:
+        resampled15m_df.style.format({'average': '{:.4f}'}).to_csv(filename15m_resampled, index=False)
+        buf = io.StringIO()
+        resampled15m_df.info(buf=buf, verbose=True)
+        logger.info(f"\n{buf}")
+        logger.info(f"\n{resampled15m_df.describe().to_string()}")
+    logger.info(f"Script done. Files saved to:\n{filename5s}\n{filename1m}\n{filename1m_resampled}\n{filename2m_resampled}\n{filename5m_resampled}\n{filename10m_resampled}\n{filename15m_resampled}")
 
     ib.disconnect()
 

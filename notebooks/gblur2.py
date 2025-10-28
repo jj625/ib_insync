@@ -11,7 +11,7 @@ plt.ion()  # Turn on interactive mode
 # util.logToConsole(logging.INFO)
 sym = 'SPY'
 
-date = f'{datetime.datetime.now()+datetime.timedelta(days=-1):%Y%m%d}'
+date = f'{datetime.datetime.now()+datetime.timedelta(days=0):%Y%m%d}'
 filename = f'{sym}_1m_{date}.csv'
 load_from_csv = True
 bars = None
@@ -25,15 +25,18 @@ x_axis_values = bars_df[m1]['date']
 vector = np.asarray(bars_df[m1]['average'])
 der1_full = gaussian_filter1d(vector, sigma=16, mode='nearest', order=1)
 
-plt.figure(figsize=(9, 6))
+# fig = plt.figure() # figsize=(9, 6)
+fig, ax = plt.subplots()
 for i in range(1, vector.size + 1):
-    plt.clf()  # Clear the current figure
-    plt.ylim(vector.min(), vector.max())
+    # plt.clf()  # Clear the current figure
+    # plt.ylim(vector.min(), vector.max())
+    fig.clf()
+    ax.set_ylim(vector.min(), vector.max())
     running_vector = vector[:i]
     smoothed_vector_3n = gaussian_filter1d(running_vector, sigma=16, mode='nearest')
     der1 = gaussian_filter1d(running_vector, sigma=16, mode='nearest', order=1)
     
-    plt.plot(running_vector, label='Running Vector', alpha=0.5)
+    plt.plot(running_vector, scalex=True, scaley=True, label='Running Vector', alpha=0.5)
     plt.plot(smoothed_vector_3n, label="Smoothed Vector (sigma=16, mode='nearest')")
     # plt.xticks(ticks=np.arange(max(0, i-60), i), labels=x_axis_values[max(0, i-60):i].dt.strftime('%H:%M'))
     # plt.gca().xaxis.set_major_locator(ticker.MultipleLocator(5))
@@ -44,14 +47,14 @@ for i in range(1, vector.size + 1):
     last_point_slope_text = 'positive' if last_point_slope > 0 else 'negative'
     plt.text(0.95, 0.95, f'Slope: {last_point_slope*100:.1%} {last_point_slope_text}', horizontalalignment='right', verticalalignment='top', transform=plt.gca().transAxes)
     plt.legend()
-    plt.title('Running and Smoothed Vectors')
-    plt.xlabel('Index')
-    plt.ylabel('Value')
+    ax.set_title('Running and Smoothed Vectors')
+    ax.set_xlabel('Index')
+    ax.set_ylabel('Value')
     plt.grid(True)
     
-    plt.pause(0.5)  # Pause for 0.2 seconds
+    plt.pause(0.1)  # Pause for 0.2 seconds
     
-    if not plt.fignum_exists(plt.gcf().number):  # Check if the current figure is closed
+    if not plt.fignum_exists(fig.number):  # Check if the current figure is closed
         break
     # if plt.waitforbuttonpress(timeout=0.1):
     #     if plt.get_current_fig_manager().canvas.manager.key_press_handler_id == 'q':

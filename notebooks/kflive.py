@@ -110,10 +110,12 @@ def init_animation():
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M')) # %Y-%m-%d %H:%M:%S
     # ax1.set_ylim(min(log_prices - log_base_price) * 0.9, max(log_prices - log_base_price) * 1.1)
     ax1.set_ylim(-.01, .01)
-    ax2.set_xlim(dates[0], dates[0] + np.timedelta64(60*23, 'm'))
+
+    # Make ax1, ax2, ax3 share the same x-axis
+    ax2.sharex(ax1)
+    ax3.sharex(ax1)
+
     ax2.set_ylim(-.01, .01)
-    ax3.set_xlim(dates[0], dates[0] + np.timedelta64(60*23, 'm'))
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M')) # %Y-%m-%d %H:%M:%S
     ax3.set_ylim(-.001, .001)
     line1.set_data([], [])
     line2.set_data([], [])
@@ -277,6 +279,7 @@ if __name__ == '__main__':
     argparser.add_argument('--loglevel', type=str, help='Logging level')
     argparser.add_argument('--date', type=str, help='Date to download data for')
     argparser.add_argument('--live', action='store_true', help='Use IB live data')
+    argparser.add_argument('--barsize', type=str, default='1 min', help='Bar size')
 
     args = argparser.parse_args()
     if args.loglevel and args.loglevel.upper() not in {'INFO'}:
@@ -327,8 +330,10 @@ if __name__ == '__main__':
                 logger.info(f"Contract details {temp[0].contract}")
                 contract_ = temp[0].contract
             # logger.info(f"Requesting historical bars for {sym}... ending {endDateTime}")
-            bars = download_bars(contract_, '1 D', '1 min')
-
+            bars = download_bars(contract_, '1 D', args.barsize)
+            if not bars:
+                # logger.error(f"Failed to get historical bars for {sym}")
+                sys.exit(1)
             # initialize prices, log_prices, dates, high_minus_low (arrays)
             # the arrays will grow
             # initialize base_price, log_base_price (scalars)
