@@ -1,4 +1,6 @@
-ib_insync/__pycache__
+__pycache__
+.conda
+.venv
 dist
 build
 .vscode
@@ -13,3 +15,17 @@ docs/html/.buildinfo
 docs/html/.doctrees
 docs/doctrees
 ib_insync.egg-info
+*.log
+*.csv
+notebooks/data
+notebooks/logs
+notebooks/*.csv
+notebooks/*.log
+*.ffs_db
+execs*.json
+trades*.json
+*.xlsx
+*.tmp
+*.html
+*-prod-*.py
+resampleinline-24*.py
