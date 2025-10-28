@@ -27,5 +27,9 @@ trades*.json
 *.xlsx
 *.tmp
 *.html
-*-prod-*.py
+tracker-prod-*.py
 resampleinline-24*.py
+eventkit
+filterpy
+pricedb/ohclv.db
+spy_holdings.db
