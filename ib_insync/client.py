@@ -91,7 +91,30 @@ class Client:
 
     (DISCONNECTED, CONNECTING, CONNECTED) = range(3)
 
+    import weakref, threading
+    _live_instances: weakref.WeakSet = weakref.WeakSet()
+    _lock = threading.Lock()
+    def _check_single_instance(self):
+        """Ensure only a single class instance is created."""
+        with Client._lock:
+            Client._live_instances.add(self)
+            count = len(Client._live_instances)
+            if count > 1:
+                raise RuntimeError(
+                    f'Only a single {self.__class__.__name__} instance is allowed, '
+                    f'found {count} instances')
+    @classmethod
+    def live_count(cls):
+        with cls._lock:
+            return len(cls._live_instances)
+
+    @classmethod
+    def all_instances(cls):
+        with cls._lock:
+            return list(cls._live_instances)
+
     def __init__(self, wrapper: Wrapper):
+        self._check_single_instance()
         self.version = '0.0.1'
         self.wrapper: Wrapper = wrapper
         self.decoder = Decoder(wrapper, 0)
@@ -144,7 +167,7 @@ class Client:
         loop.run_forever()
 
     def isConnected(self):
-        self._logger.debug('Client::isConnected')
+        # self._logger.debug('Client::isConnected')
         return self.connState == Client.CONNECTED
 
     def isReady(self) -> bool:
@@ -153,7 +176,7 @@ class Client:
 
     def connectionStats(self) -> ConnectionStats:
         """Get statistics about the connection."""
-        self._logger.debug('Client::connectionStats')
+        # self._logger.debug('Client::connectionStats')
         if not self.isReady():
             raise ConnectionError('Not connected')
         return ConnectionStats(

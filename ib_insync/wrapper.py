@@ -130,7 +130,30 @@ class Wrapper:
     _logger: logging.Logger
     _timeoutHandle: Union[asyncio.TimerHandle, None]
 
+    import weakref, threading
+    _live_instances: weakref.WeakSet = weakref.WeakSet()
+    _lock = threading.Lock()
+    def _check_single_instance(self):
+        """Ensure only a single class instance is created."""
+        with Wrapper._lock:
+            Wrapper._live_instances.add(self)
+            count = len(Wrapper._live_instances)
+            if count > 1:
+                raise RuntimeError(
+                    f'Only a single {self.__class__.__name__} instance is allowed, '
+                    f'found {count} instances')
+    @classmethod
+    def live_count(cls):
+        with cls._lock:
+            return len(cls._live_instances)
+
+    @classmethod
+    def all_instances(cls):
+        with cls._lock:
+            return list(cls._live_instances)
+
     def __init__(self, ib: 'IB'):
+        self._check_single_instance()
         self.version = '0.0.1'
         self.ib = ib
         self._logger = logging.getLogger('ib_insync.wrapper')
@@ -258,8 +281,20 @@ class Wrapper:
         self._reqId2Contract.pop(subscriber.reqId, None)
         self.reqId2Subscriber.pop(subscriber.reqId, None)
 
-    def orderKey(self, clientId: int, orderId: int, permId: int) -> \
+    @staticmethod
+    def orderKey(clientId: int, orderId: int, permId: int) -> \
             OrderKeyType:
+        """
+        Generate a unique key for identifying orders.
+        
+        Args:
+            clientId: Client ID of the order
+            orderId: Order ID 
+            permId: Permanent ID of the order
+            
+        Returns:
+            OrderKeyType: Either permId for manual TWS orders or (clientId, orderId) tuple
+        """
         key: OrderKeyType
         if orderId <= 0:
             # order is placed manually from TWS

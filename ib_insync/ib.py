@@ -209,7 +209,30 @@ class IB:
     MaxSyncedSubAccounts: int = 50
     TimezoneTWS: str = ''
 
+    import weakref, threading
+    _live_instances: weakref.WeakSet = weakref.WeakSet()
+    _lock = threading.Lock()
+    def _check_single_instance(self):
+        """Ensure only a single IB instance is created."""
+        with IB._lock:
+            IB._live_instances.add(self)
+            count = len(IB._live_instances)
+            if count > 1:
+                raise RuntimeError(
+                    f'Only a single {self.__class__.__name__} instance is allowed, '
+                    f'found {count} instances')
+    @classmethod
+    def live_count(cls):
+        with cls._lock:
+            return len(cls._live_instances)
+
+    @classmethod
+    def all_instances(cls):
+        with cls._lock:
+            return list(cls._live_instances)
+
     def __init__(self):
+        self._check_single_instance()
         self._createEvents()
         self.wrapper = Wrapper(self)
         self.client = Client(self.wrapper)
