@@ -26,12 +26,13 @@ class Decoder:
     _lock = threading.Lock()
     def _check_single_instance(self):
         """Ensure only a single Decoder instance is created."""
-        with Decoder._lock:
-            Decoder._live_instances.add(self)
-            count = len(Decoder._live_instances)
+        cls = type(self)
+        with cls._lock:
+            cls._live_instances.add(self)
+            count = len(cls._live_instances)
             if count > 1:
                 raise RuntimeError(
-                    f'Only a single {self.__class__.__name__} instance is allowed, '
+                    f'Only a single {cls.__name__} instance is allowed, '
                     f'found {count} instances')
     @classmethod
     def live_count(cls):
