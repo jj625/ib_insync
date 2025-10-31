@@ -325,6 +325,8 @@ class IB:
         Disconnect from a TWS or IB gateway application.
         This will clear all session state.
         """
+        if getattr(self, 'client', None) is None:
+            return
         if not self.client.isConnected():
             return
         stats = self.client.connectionStats()
