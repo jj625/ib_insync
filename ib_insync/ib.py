@@ -1662,7 +1662,7 @@ class IB:
             endDateTime: Union[str, datetime.date],
             totalResults: int,
             historicalNewsOptions: List[TagValue] = []) \
-            -> HistoricalNews:
+            -> List[HistoricalNews]:
         """
         Get historical news headline.
 
@@ -2333,7 +2333,7 @@ class IB:
             endDateTime: Union[str, datetime.date],
             totalResults: int,
             historicalNewsOptions: List[TagValue] = []) \
-            -> Optional[HistoricalNews]:
+            -> List[HistoricalNews]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         start = util.formatIBDatetime(startDateTime)
@@ -2346,7 +2346,7 @@ class IB:
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqHistoricalNewsAsync: Timeout')
-            return None
+            return []
 
     async def requestFAAsync(self, faDataType: int):
         future = self.wrapper.startReq('requestFA')
