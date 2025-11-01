@@ -427,8 +427,8 @@ class Wrapper:
     def positionMulti(
             self, reqId: int, account: str, modelCode: str,
             contract: Contract, pos: float, avgCost: float):
-        pos = PositionMulti(account, contract, pos, avgCost, modelCode, datetime.now(timezone.utc).astimezone())
-        self._logger.info(f'positionMulti: {pos}')
+        position = PositionMulti(account, contract, pos, avgCost, modelCode, datetime.now(timezone.utc).astimezone())
+        self._logger.info(f'positionMulti: {position}')
 
     def positionMultiEnd(self, reqId: int):
         self.ib.positionMultiEndEvent.emit(reqId)
@@ -661,7 +661,7 @@ class Wrapper:
 
     def marketDataType(self, reqId: int, marketDataId: int):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'marketDataType: {reqId} {marketDataId} {ticker.__repr_minimal__()}')
+        self._logger.info(f'marketDataType: {reqId} {marketDataId} {ticker.__repr_minimal__() if ticker else ""}')
         if ticker:
             ticker.marketDataType = marketDataId
 
@@ -678,7 +678,7 @@ class Wrapper:
             bars.updateEvent.emit(bars, True)
 
     def historicalData(self, reqId: int, bar: BarData):
-        results: BarDataList = self._results.get(reqId)
+        results: Optional[BarDataList] = self._results.get(reqId)
         self._logger.debug(f'historicalData: {reqId} {bar}')
         if results is not None:
             bar.date = parseIBDatetime(bar.date)  # type: ignore
@@ -688,7 +688,7 @@ class Wrapper:
 
     def historicalDataEnd(self, reqId, _start: str, _end: str):
         self._logger.info(f'historicalDataEnd: reqId={reqId} start={_start} end={_end}')
-        container: BarDataList = self._results.get(reqId)
+        container: Optional[BarDataList] = self._results.get(reqId)
         if container:
             self._logger.info(f'historicalDataEnd: reqId={reqId} len(bars)={len(container)}')
             if container.keepUpToDate:
@@ -712,7 +712,7 @@ class Wrapper:
         self._endReq(reqId)
 
     def historicalDataUpdate(self, reqId: int, bar: BarData):
-        bars: BarDataList = self.reqId2Subscriber.get(reqId)
+        bars: Optional[BarDataList] = self.reqId2Subscriber.get(reqId)
         if not bars:
             self._logger.error(f'historicalDataUpdate: {reqId} no bar')
             return
@@ -910,7 +910,7 @@ class Wrapper:
             size: float, tickAttribLast: TickAttribLast,
             exchange, specialConditions):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__()}')
+        self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
             self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -931,7 +931,7 @@ class Wrapper:
             bidSize: float, askSize: float,
             tickAttribBidAsk: TickAttribBidAsk):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__()}')
+        self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
             self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -970,7 +970,8 @@ class Wrapper:
         if not ticker:
             self._logger.error(f'tickString: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
-        self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
+        self._logger.debug(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}' if tickType != 45 
+            else f'tickString: {reqId} {tickType} {datetime.fromtimestamp(int(value), timezone.utc)} {ticker.__repr_minimal__()}')
         try:
             if tickType == 32:
                 ticker.bidExchange = value
@@ -1076,7 +1077,7 @@ class Wrapper:
             self, reqId: int, minTick: float, bboExchange: str,
             snapshotPermissions: int):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__()}')
+        self._logger.info(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
             self._logger.error(f'tickReqParams: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return

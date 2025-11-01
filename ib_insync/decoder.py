@@ -281,7 +281,7 @@ class Decoder:
             float(marketValue), float(averageCost), float(unrealizedPNL),
             float(realizedPNL), accountName)
 
-    def contractDetails(self, fields: list[str]):
+    def contractDetails(self, fields: list[Any]):
         cd = ContractDetails()
         cd.contract = c = Contract()
         if self.serverVersion < 164: # MIN_SERVER_VER_SIZE_RULES=164
@@ -371,7 +371,7 @@ class Decoder:
                 cd.fundClosedForNewMoney,
                 cd.fundNotifyAmount,
                 cd.fundMinimumInitialPurchase,
-                cd.fundMinimumSubsequentPurchase,
+                cd.fundSubsequentMinimumPurchase,
                 cd.fundBlueSkyStates,
                 cd.fundBlueSkyTerritories,
                 cd.fundDistributionPolicyIndicator,

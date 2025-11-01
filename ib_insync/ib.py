@@ -1128,7 +1128,7 @@ class IB:
             useRTH: bool, formatDate: int = 1, keepUpToDate: bool = False,
             chartOptions: List[TagValue] = [], timeout: float = 60,
             _historicalDataEndHook: Optional[Callable] = None,
-            tradingHours: List[TradingSession] = [],
+            tradingHours: TradingSession | None = None,
             # _historicalDataHook: Callable = None
             ) \
             -> BarDataList:

@@ -117,6 +117,9 @@ class BarData:
     def _str_date(self) -> str: # convert date to string in the format that we want
         if isinstance(self.date, datetime):
             d = self.date.astimezone(tz=None).strftime(f"{r'%Y-%m-%d ' if self.date.date() != datetime.now().date() else ''}" '%H:%M:%S')
+        else:
+            d = str(self.date)
+        return d
     def _repr_(self) -> str:
         if isinstance(self.date, datetime):
             d = self.date.astimezone(tz=None).strftime(f"{r'%Y-%m-%d ' if self.date.date() != datetime.now().date() else ''}" '%H:%M:%S')
@@ -473,7 +476,9 @@ class BarDataList(List[BarData]):
             logmsg.append(f"useRTH={self.useRTH}")
             rthfactor_pad = kwargs.get('rthfactor_pad', 0)
             if len(self) > 0:
-                logmsg.append(f"len(self)={len(self)} self.date={self[0].date.astimezone(tz=None)}..{self[-1].date.astimezone(tz=None)}")
+                start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, (datetime, pd.Timestamp)) else self[0].date
+                end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, (datetime, pd.Timestamp)) else self[-1].date
+                logmsg.append(f"len(self)={len(self)} self.date={start_date_str}..{end_date_str}")
                 if isinstance(self[0].date, (datetime, pd.Timestamp)) and self[0].date.astimezone(tz=None).time() == time_(18, 0): # MBT, ES 6pm - 5pm
                     # logmsg.append(f"assuming 23 hours trading time")
                     rthfactor_pad = 7.0
@@ -486,8 +491,8 @@ class BarDataList(List[BarData]):
             rthfactor = 0
         logmsg.append(f"rthfactor={rthfactor}")
 
+        dur_sec = dur_day = dur_week = dur_month = dur_year = 0
         if hasattr(self, 'durationStr'):
-            dur_sec = dur_day = dur_week = dur_month = dur_year = 0
             if self.durationStr.endswith(' S'):
                 dur_sec = int(self.durationStr[:-2]) # number of seconds
                 # round to nearest days
@@ -896,7 +901,10 @@ class BarDataList(List[BarData]):
         """
         Set numpy data at [idx] from BarData.
         """
-        self.npdate_[idx] = bar.date.astimezone(tz=None).replace(tzinfo=None) # convert to naive datetime
+        if isinstance(bar.date, datetime):
+            self.npdate_[idx] = bar.date.astimezone(tz=None).replace(tzinfo=None) # convert to naive datetime
+        else:
+            self.npdate_[idx] = np.datetime64(bar.date)
         self.open_prices[idx] = bar.open_
         self.high_prices[idx] = bar.high
         self.low_prices[idx] = bar.low
@@ -933,8 +941,10 @@ class BarDataList(List[BarData]):
         when adding data to list
         """
         if self._npidx >= self.buffer_size:
+            start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, (datetime, pd.Timestamp)) else self[0].date
+            end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, (datetime, pd.Timestamp)) else self[-1].date
             self._logger.error(f"buffer overflow: {self._npidx} >= {self.buffer_size}"
-                + f", self.date {self[0].date.astimezone(tz=None)}..{self[-1].date.astimezone(tz=None)}"
+                + f", self.date {start_date_str}..{end_date_str}"
                 + f", self.npdate_ {self.npdate_[0]}..{self.npdate_[self.buffer_size-1]}"
                 + f", self.npdate_(rth) {self.npdate_[self._npidx_rth_start]}..{self.npdate_[self._npidx_rth_end-1]}" if self._npidx_rth_start >= 0 else ''
             )
