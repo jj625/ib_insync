@@ -4149,7 +4149,7 @@ def onOrderStatus(trade: ib_insync.order.Trade):
 
 def onErrorEvent(reqId, errorCode, errorString, contract):
     # https://interactivebrokers.github.io/tws-api/message_codes.html#system_codes
-    if errorCode in [2104, 2106, 2107, 2108, 2158]: # not a real error
+    if errorCode in [2104, 2106, 2108, 2158]: # not a real error
         return
     if errorCode == 202:
         # https://interactivebrokers.github.io/tws-api/automated_considerations.html#order_placement
