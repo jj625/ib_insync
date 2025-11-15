@@ -394,7 +394,7 @@ class Wrapper:
             contract, posSize, marketPrice, marketValue,
             averageCost, unrealizedPNL, realizedPNL, account)
         portfolioItems = self.portfolio[account]
-        if posSize == 0:
+        if posSize == 0 and getattr(self, '_ExtraArgs', {}).get('_keep_zero_positions', False) is False:
             portfolioItems.pop(contract.conId, None)
         else:
             portfolioItems[contract.conId] = portfItem
@@ -410,7 +410,7 @@ class Wrapper:
         contract = Contract.create(**dataclassAsDict(contract))
         position = Position(account, contract, posSize, avgCost)
         positions = self.positions[account]
-        if posSize == 0:
+        if posSize == 0 and getattr(self, '_ExtraArgs', {}).get('_keep_zero_positions', False) is False:
             positions.pop(contract.conId, None)
         else:
             positions[contract.conId] = position
