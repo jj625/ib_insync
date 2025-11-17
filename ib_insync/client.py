@@ -87,7 +87,7 @@ class Client:
     RequestsInterval = 1
 
     MinClientVersion = 157
-    MaxClientVersion = 178 # 187
+    MaxClientVersion = 178 # 178 or 187. 187 breaks cancelOrder
 
     (DISCONNECTED, CONNECTING, CONNECTED) = range(3)
 
