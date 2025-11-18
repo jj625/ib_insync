@@ -1,0 +1,37 @@
+name: ibpy
+channels:
+  - defaults
+dependencies:
+  - numpy>=2.0
+  - pandas
+  - pytz
+  - pytest
+  - pytest-asyncio
+  - ipykernel
+  - jupyter
+  - matplotlib
+  - scipy
+  - conda-forge::mplfinance
+  - conda-forge::ipympl
+  - pytables
+  - tqdm
+  - ffmpeg-python
+  - seaborn
+  - rich
+  - panel
+  - anaconda::more-itertools
+  - openpyxl
+  - antropy
+  - flask-cors
+  - flask
+  - requests
+  - xlrd
+  - odfpy
+  - python-calamine
+  - pyxlsb
+  - lxml
+  - fastapi
+  - httpx
+  - uvicorn[standard]
+  - statsmodels
+  - anaconda::pyzmq
