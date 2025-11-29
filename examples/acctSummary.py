@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import pprint
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
 logger = logging.getLogger(__name__)
@@ -272,26 +273,30 @@ if __name__ == '__main__':
     (host, port, clientId) = ('127.0.0.1', 7496, 9999)
     connectInfo = (host, port, clientId)
     ib = IB()
-    # ib.accountSummaryEvent += onAcctSummary
-    ib.connect(*connectInfo)
-
     myC = myClass(ib)
+    ib.accountSummaryEvent += onAcctSummary
+    ib.connect(*connectInfo)
+    logger.info(f"Managed Accounts: {ib.managedAccounts()}")
 
     logger.info("=== ib.accountSummary() ===")
     summary = ib.accountSummary() # will trigger accountSummaryEvent
 
-    # # print account summary
-    # logger.info( len(summary) )
+    # print account summary
+    logger.info( len(summary) )
+    # logger.info(pprint.pformat(summary))
     # for av in summary:
     #     logger.info(f"{av.account}, {av.tag}, {av.value}")
     
+    # av = ib.accountValues()
+    # logger.info("=== ib.accountValues() ===")
+    # logger.info(pprint.pformat(av))
     
     # create a dummy asyncio awaitable that does nothing to keep the event loop running
     async def aw():
         while True:
             await asyncio.sleep(1)
     try:
-        IB.run(aw(), timeout=60*60)
+        IB.run(aw(), timeout=10)
     except TimeoutError:
         logger.warning('timeout')
     finally:
