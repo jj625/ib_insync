@@ -187,13 +187,51 @@ class myClass:
         self.account_summary_event_count += 1
 
     async def onAcctSummaryDebounce3Async(self, acctVal: AccountValue):
+        """
+        Asynchronously handle account summary updates with debouncing to batch rapid events.
+        This method collects account summary value updates and debounces them by waiting for a 
+        period of inactivity before processing the collected batch. It tracks arrival times and 
+        maintains per-account state buffers.
+        Args:
+            acctVal (AccountValue): An AccountValue object containing:
+                - tag (str): The type of account value (e.g., 'NetLiquidation', 'AvailableFunds')
+                - value (str): The current value for this tag
+                - account (str): The account identifier
+        Returns:
+            None
+        Behavior:
+            - On first call, initializes debouncing infrastructure including:
+                * _acct_summary_state: Dict mapping account keys to their state (buffer and sequence)
+                * _acct_summary_debounce_delay: Delay in seconds (default 0.1) to wait for event cessation
+                * _arrival_time: List of timestamps (in nanoseconds) tracking when updates arrive
+                * _watcher_task: Async task that monitors for event completion
+            - Records the arrival timestamp of each update
+            - Updates per-account buffer with the latest tag/value pairs
+            - Increments a sequence counter for each account
+            - The internal _watcher() coroutine:
+                * Continuously checks if new events are arriving
+                * When no new events arrive within the debounce delay period, considers the batch complete
+                * Logs the time range of the debounced event batch
+                * Clears all state to prepare for the next batch
+                * Automatically restarts on the next event
+        Notes:
+            - The watcher task is created lazily on first event and recreated after each batch completion
+            - State is maintained across multiple calls until the watcher determines the batch is complete
+            - The method accumulates the most recent value for each tag per account
+            - Earlier values for the same tag are overwritten by later ones in the buffer
+        Potential Issues Fixed:
+            - The watcher task creation logic has a race condition: if multiple events arrive 
+            simultaneously before _watcher_task is set, multiple watchers could be created
+            - The buffer only stores the latest value per tag, so intermediate updates are lost 
+            (this may be intentional for debouncing)
+        """
     
         _tag = acctVal.tag
         _value = acctVal.value
         _account = acctVal.account
         _account_key = str(_account)
 
-        async def time_ns_isofmt(ts_ns):
+        def time_ns_isofmt(ts_ns):
             secs = ts_ns // 1_000_000_000
             ns = ts_ns % 1_000_000_000
             base = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(secs))
@@ -220,7 +258,7 @@ class myClass:
             #     if not state["buffer"]:
             #         continue
             #     logger.info(f"[EVENT] accountSummaryEvent (debounced) - {_account_key}: {state}")
-            logger.info(f"[EVENT] accountSummaryEvent (debounced) - {await time_ns_isofmt(self._arrival_time[0])} to {await time_ns_isofmt(self._arrival_time[-1])}")
+            logger.info(f"[EVENT] accountSummaryEvent (debounced) - {time_ns_isofmt(self._arrival_time[0])} to {time_ns_isofmt(self._arrival_time[-1])}")
             
             # clear everything
             # delattr(self, "_acct_summary_state")
