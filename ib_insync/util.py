@@ -383,7 +383,7 @@ def run(*awaitables: Awaitable, timeout: Optional[float] = None):
     if not awaitables:
         if loop.is_running():
             return
-        loop.run_forever()
+        loop.run_forever() # without ever scheduling loop.stop(), this would block forever
         result = None
         if sys.version_info >= (3, 7):
             all_tasks = asyncio.all_tasks(loop)  # type: ignore
@@ -562,8 +562,20 @@ def getLoop():
     try:
         return asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.get_event_loop_policy().get_event_loop() # really the same as asyncio.get_event_loop()
-
+        # no running loop in this thread
+        try:
+            # in python >= 3.10, if no loop exists, this raises a RuntimeError
+            # in python < 3.10, this will auto-create a loop if none exists
+            loop = asyncio.get_event_loop_policy().get_event_loop() # really the same as asyncio.get_event_loop()
+        except RuntimeError:
+            # create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.get_event_loop_policy().set_event_loop(loop)
+        if loop.is_closed():
+            # create a new event loop if the existing one is closed
+            loop = asyncio.new_event_loop()
+            asyncio.get_event_loop_policy().set_event_loop(loop)
+        return loop
 
 def startLoop():
     """Use nested asyncio event loop for Jupyter notebooks."""
