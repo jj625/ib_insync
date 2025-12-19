@@ -353,10 +353,10 @@ def get_holdings(client: httpx.Client, soup: bs4.BeautifulSoup):
     supabase: Client = create_client(supabase_url, supabase_key)
 
     # Check if data already exists for the download date
-    response = supabase.table('spy_holdings').select('*', count='exact').eq('download_datetime', download_date).execute()
+    response = supabase.table('spy_holdings').select('*', count='exact').eq('download_datetime', download_date).execute() # type: ignore
     count = response.count if hasattr(response, 'count') else len(response.data)
 
-    if count > 0:
+    if count > 0: # type: ignore
         logger.info(f'Data already downloaded on {download_date}, rowcount {count}')
         exit()
 
@@ -391,7 +391,7 @@ def get_holdings(client: httpx.Client, soup: bs4.BeautifulSoup):
     batch_size = 1000
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
-        supabase.table('spy_holdings').insert(batch).execute()
+        supabase.table('spy_holdings').insert(batch).execute() # type: ignore
         logger.info(f'Inserted batch {i//batch_size + 1}: {len(batch)} rows')
 
     logger.info(f'Inserted total {len(df_nona)} rows into the spy_holdings table')
