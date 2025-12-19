@@ -123,10 +123,11 @@ def extract_holdings_section(soup: bs4.BeautifulSoup) -> bs4.Tag:
         raise ValueError("Holdings section not found on the page.")
     return holdings_section
 
-def extract_holdings_download_link(soup: bs4.BeautifulSoup) -> str:
+def extract_holdings_download_link(soup: bs4.BeautifulSoup) -> tuple[str, str]:
     root_url = "https://www.ssga.com"
     holdings_section = extract_holdings_section(soup)
-    btn = holdings_section.find('button', string='Fund Top Holdings')
+    assert holdings_section is not None, "Holdings section not found."
+    btn = holdings_section.find('button', string='Fund Top Holdings') # type: ignore
     asofdate = btn.find_next('span', class_='date')
     dl = asofdate.find_next('div', class_='download')
     download_link = dl.find('a')['href']
@@ -149,27 +150,31 @@ def extract_nav_download_link(soup: bs4.BeautifulSoup) -> str:
     for div in download_divs:
         link = div.find("a", href=True)
         if link and 'NAV' in link.text:
-            return urljoin(root_url, link['href'])
+            return urljoin(root_url, link['href']) # type: ignore
     raise ValueError("NAV download link not found.")
 
-def extract_nav_download_link_2(soup: bs4.BeautifulSoup) -> str:
+def extract_nav_download_link_2(soup: bs4.BeautifulSoup) -> tuple[str, str]:
     root_url = "https://www.ssga.com"
     ov = extract_overview_section(soup)
-    sec_tag = ov.section
-    while sec_tag: # iterate through <section> ... </section>
-        # find any element with class="comp-title" and text containing "Fund Net Asset Value" 
-        title_elem = sec_tag.find(class_='comp-title')
-        if title_elem and 'Fund Net Asset Value' in title_elem.text:
-            # grab the element with class="date"
-            # most likely something like <span class="date">as of Dec 18 2025</span>
-            nav_date_elem = title_elem.find_next(class_='date')
-            # find element with class="download" after nav_date_elem
-            download_elem = nav_date_elem.find_next(class_='download')
-            nav_link = download_elem.find('a')['href']
-            return urljoin(root_url, nav_link), nav_date_elem.text.strip()
-        # 
-        sec_tag = sec_tag.find_next('section')
-    raise ValueError("NAV download link not found.")
+    try:
+        sec_tag = ov.section
+        while sec_tag: # iterate through <section> ... </section>
+            # find any element with class="comp-title" and text containing "Fund Net Asset Value" 
+            title_elem = sec_tag.find(class_='comp-title')
+            if title_elem and 'Fund Net Asset Value' in title_elem.text:
+                # grab the element with class="date"
+                # most likely something like <span class="date">as of Dec 18 2025</span>
+                nav_date_elem = title_elem.find_next(class_='date')
+                assert nav_date_elem is not None, "NAV class_='date' element not found."
+                # find element with class="download" after nav_date_elem
+                download_elem = nav_date_elem.find_next(class_='download')
+                nav_link: str = download_elem.find('a')['href'] # type: ignore
+                return urljoin(root_url, nav_link), nav_date_elem.text.strip()
+            # 
+            sec_tag = sec_tag.find_next('section')
+    except Exception as e:
+        raise ValueError(f"Error extracting NAV download link: {e}")
+    return "", ""
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s:%(funcName)s:%(message)s')
