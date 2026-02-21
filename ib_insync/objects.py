@@ -12,9 +12,41 @@ from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, NPMKTOPEN, NPMKTCLOSE, MKT
 nan = float('nan')
 
 import numpy as np
+_is_numpy_2_or_newer = tuple(map(int, np.__version__.split(".")[:2])) >= (2, 0)
+NPNINF = -np.inf if _is_numpy_2_or_newer else np.NINF # type: ignore
 import pandas as pd
 import logging
 import math
+import decimal
+from enum import IntEnum
+
+def _decimal_places(v: float) -> int:
+    """
+    Return number of significant decimal places using arithmetic only.
+    ```
+    Examples:
+    ```
+    150.0      → 1  (you'd then max with 2 → 2)
+    150.25     → 2
+    150.1      → 1  (→ 2)
+    150.123    → 3
+    0.00000001 → 8
+    """
+    eps = 1e-9
+    frac = v % 1
+    if frac < eps or frac > 1 - eps:
+        return 0
+    for i in range(1, 11):
+        v, frac = math.modf(v * 10)  # frac, int parts
+        if frac < eps or frac > 1 - eps: # abs(v) < 1e-9
+            return i
+        # v *= 10
+        # if abs(v % 1) < 1e-9:
+        #     return i
+    return 10
+def _fmt_float(v: float, min_places: int) -> str:
+    places = max(min_places, _decimal_places(v))
+    return f"{v:.{places}f}" # if min_places > 0 else f"{v:.0f}"
 
 @dataclass
 class ScannerSubscription:
@@ -131,6 +163,25 @@ class BarData:
             d = self.date
         ts = f" ts={self.timestamp.astimezone(tz=None).strftime(f'%H:%M:%S,%f')[:-3]}" if self.timestamp != EPOCH else ''
         return f"[{d} o={self.open_:.2f} h={self.high:.2f} l={self.low:.2f} c={self.close:.2f} v={int(self.volume):_} a={self.average:.4f} bc={self.barCount:n}{ts}]"
+
+    def __repr__(self):
+        """
+    This gives you something like:
+    BarData(date=2024-01-15, O=150.25, H=152.1, L=149.8, C=151.45, vol=1200000, avg=150.98, bars=47)
+        """
+        return (
+            f"BarData("
+            f"date={self.date}, "
+            f"O={_fmt_float(self.open_, 2)}, "
+            f"H={_fmt_float(self.high, 2)}, "
+            f"L={_fmt_float(self.low, 2)}, "
+            f"C={_fmt_float(self.close, 2)}, "
+            f"vol={_fmt_float(self.volume, 0)}, "
+            f"avg={_fmt_float(self.average, 2)}, "
+            f"bars={self.barCount}, "
+            f"timestamp={self.timestamp}"
+            f")"
+        )
 
 @dataclass
 class RealTimeBar:
