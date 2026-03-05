@@ -560,6 +560,14 @@ class IB:
         """Get a list of all tickers."""
         return list(self.wrapper.tickers.values())
 
+    def tickersByLocalsymbol(self) -> dict[str, Ticker]:
+        """Get a list of all tickers."""
+        return self.wrapper.tickersByLocalsymbol
+    
+    def lastTime(self) -> datetime.datetime:
+        """ UTC time of last network packet arrival. """
+        return self.wrapper.lastTime
+
     def pendingTickers(self) -> List[Ticker]:
         """Get a list of all tickers that have pending ticks or domTicks."""
         return list(self.wrapper.pendingTickers)
