@@ -299,7 +299,125 @@ class AccountValue(NamedTuple):
     currency: str
     modelCode: str
     lastUpdateTime: datetime
+    def __repr__(self):
+        parts = [f"account={self.account!r}", f"tag={self.tag!r}", f"value={self.value!r}"]
+        if self.currency:
+            parts.append(f"currency={self.currency!r}")
+        if self.modelCode:
+            parts.append(f"modelCode={self.modelCode!r}")
+        parts.append(f"lastUpdateTime='{self.lastUpdateTime.astimezone().isoformat()}'")
+        return f"AccountValue({', '.join(parts)})"
 
+class TickTypeEnum(IntEnum):
+    BID_SIZE = 0
+    BID = 1
+    ASK = 2
+    ASK_SIZE = 3
+    LAST = 4
+    LAST_SIZE = 5
+    HIGH = 6
+    LOW = 7
+    VOLUME = 8
+    CLOSE = 9
+    BID_OPTION_COMPUTATION = 10
+    ASK_OPTION_COMPUTATION = 11
+    LAST_OPTION_COMPUTATION = 12
+    MODEL_OPTION = 13
+    OPEN = 14
+    LOW_13_WEEK = 15
+    HIGH_13_WEEK = 16
+    LOW_26_WEEK = 17
+    HIGH_26_WEEK = 18
+    LOW_52_WEEK = 19
+    HIGH_52_WEEK = 20
+    AVG_VOLUME = 21
+    OPEN_INTEREST = 22
+    OPTION_HISTORICAL_VOL = 23
+    OPTION_IMPLIED_VOL = 24
+    OPTION_BID_EXCH = 25
+    OPTION_ASK_EXCH = 26
+    OPTION_CALL_OPEN_INTEREST = 27
+    OPTION_PUT_OPEN_INTEREST = 28
+    OPTION_CALL_VOLUME = 29
+    OPTION_PUT_VOLUME = 30
+    INDEX_FUTURE_PREMIUM = 31
+    BID_EXCH = 32
+    ASK_EXCH = 33
+    AUCTION_VOLUME = 34
+    AUCTION_PRICE = 35
+    AUCTION_IMBALANCE = 36
+    MARK_PRICE = 37
+    BID_EFP_COMPUTATION = 38
+    ASK_EFP_COMPUTATION = 39
+    LAST_EFP_COMPUTATION = 40
+    OPEN_EFP_COMPUTATION = 41
+    HIGH_EFP_COMPUTATION = 42
+    LOW_EFP_COMPUTATION = 43
+    CLOSE_EFP_COMPUTATION = 44
+    LAST_TIMESTAMP = 45
+    SHORTABLE = 46
+    FUNDAMENTAL_RATIOS = 47
+    RT_VOLUME = 48
+    HALTED = 49
+    BID_YIELD = 50
+    ASK_YIELD = 51
+    LAST_YIELD = 52
+    CUST_OPTION_COMPUTATION = 53
+    TRADE_COUNT = 54
+    TRADE_RATE = 55
+    VOLUME_RATE = 56
+    LAST_RTH_TRADE = 57
+    RT_HISTORICAL_VOL = 58
+    IB_DIVIDENDS = 59
+    BOND_FACTOR_MULTIPLIER = 60
+    REGULATORY_IMBALANCE = 61
+    NEWS_TICK = 62
+    SHORT_TERM_VOLUME_3_MIN = 63
+    SHORT_TERM_VOLUME_5_MIN = 64
+    SHORT_TERM_VOLUME_10_MIN = 65
+    DELAYED_BID = 66
+    DELAYED_ASK = 67
+    DELAYED_LAST = 68
+    DELAYED_BID_SIZE = 69
+    DELAYED_ASK_SIZE = 70
+    DELAYED_LAST_SIZE = 71
+    DELAYED_HIGH = 72
+    DELAYED_LOW = 73
+    DELAYED_VOLUME = 74
+    DELAYED_CLOSE = 75
+    DELAYED_OPEN = 76
+    RT_TRD_VOLUME = 77
+    CREDITMAN_MARK_PRICE = 78
+    CREDITMAN_SLOW_MARK_PRICE = 79
+    DELAYED_BID_OPTION = 80
+    DELAYED_ASK_OPTION = 81
+    DELAYED_LAST_OPTION = 82
+    DELAYED_MODEL_OPTION = 83
+    LAST_EXCH = 84
+    LAST_REG_TIME = 85
+    FUTURES_OPEN_INTEREST = 86
+    AVG_OPT_VOLUME = 87
+    DELAYED_LAST_TIMESTAMP = 88
+    SHORTABLE_SHARES = 89
+    DELAYED_HALTED = 90
+    REUTERS_2_MUTUAL_FUNDS = 91
+    ETF_NAV_CLOSE = 92
+    ETF_NAV_PRIOR_CLOSE = 93
+    ETF_NAV_BID = 94
+    ETF_NAV_ASK = 95
+    ETF_NAV_LAST = 96
+    ETF_FROZEN_NAV_LAST = 97
+    ETF_NAV_HIGH = 98
+    ETF_NAV_LOW = 99
+    SOCIAL_MARKET_ANALYTICS = 100
+    ESTIMATED_IPO_MIDPOINT = 101
+    FINAL_IPO_LAST = 102
+    DELAYED_YIELD_BID = 103
+    DELAYED_YIELD_ASK = 104
+    NOT_SET = 105
+
+    def __repr__(self):
+        return self.name  # or f"TickTypeEnum.{self.name}"
 
 class TickData(NamedTuple):
     time: datetime
@@ -307,6 +425,14 @@ class TickData(NamedTuple):
     price: float
     size: float
 
+    def __repr__(self):
+        name: TickTypeEnum = TickTypeEnum(self.tickType)
+        match self.tickType, self.size:
+            case TickTypeEnum.CLOSE, 0:
+                return f"TickData(time='{self.time.astimezone().isoformat()}', tickType={name.name}, price={self.price})"
+            case _:
+                return f"TickData(time='{self.time.astimezone().isoformat()}', " \
+                       f"tickType={name.name}, price={self.price}, size={self.size})"
 
 class HistoricalTick(NamedTuple):
     time: datetime
