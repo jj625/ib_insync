@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import datetime as dt
 from typing import ClassVar, List, Optional, Union
 
 from eventkit import Event, Op
@@ -11,7 +12,7 @@ from ib_insync.objects import (
     DOMLevel, Dividends, FundamentalRatios, MktDepthData,
     OptionComputation, TickByTickAllLast, TickByTickBidAsk, TickByTickMidPoint,
     TickData)
-from ib_insync.util import dataclassRepr, isNan
+from ib_insync.util import dataclassNonDefaults, dataclassRepr, isNan
 
 nan = float('nan')
 
@@ -125,8 +126,28 @@ class Ticker:
     def __hash__(self):
         return id(self)
 
-    __repr__ = lambda self: dataclassRepr(self)
-    __str__ = lambda self: dataclassRepr(self)
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+
+        def _fmt(k, v):
+            if isinstance(v, dt.datetime):
+                return v.astimezone().isoformat()
+            elif isinstance(v, dt.date):
+                return v.isoformat()
+            elif isinstance(v, dt.time):
+                return v.isoformat()
+            elif k in ('bidSize', 'askSize', 'lastSize', 'volume', 'halted', 'prevLastSize', 'prevBidSize', 'prevAskSize') and isinstance(v, float):
+                if int(v) == v:
+                    return f"{int(v)}"
+                else:
+                    return v
+            else:
+                return repr(v)
+        s = ', '.join(f'{k}={_fmt(k, v)}' for k, v in attrs.items())
+        return f'{clsName}({s})'
+
+    __str__ = lambda self: repr(self)
 
     def hasBidAsk(self) -> bool:
         """See if this ticker has a valid bid and ask."""
