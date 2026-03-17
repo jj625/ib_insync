@@ -1873,11 +1873,11 @@ class IB:
             reqs['positions'] = self.reqPositionsAsync()
             if not readonly:
                 reqs['open orders'] = self.reqOpenOrdersAsync()
-            if not readonly and self.client.serverVersion() >= 150:
-                reqs['completed orders'] = self.reqCompletedOrdersAsync(False)
-            else:
-                self._logger.warning(
-                    'Server version too low for reqCompletedOrders')
+                if self.client.serverVersion() >= 150:
+                    reqs['completed orders'] = self.reqCompletedOrdersAsync(False)
+                else:
+                    self._logger.warning(
+                        'Server version too low for reqCompletedOrders')
             if account:
                 reqs['account updates'] = self.reqAccountUpdatesAsync(account)
             else:

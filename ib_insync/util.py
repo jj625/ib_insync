@@ -127,7 +127,7 @@ def dataclassUpdate(obj, *srcObjs, **kwargs) -> object:
     return obj
 
 
-def dataclassRepr(obj) -> str:
+def dataclassRepr(obj: object) -> str:
     """
     Provide a culled representation of the given ``dataclass`` instance,
     showing only the fields with a non-default value.

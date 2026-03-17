@@ -125,8 +125,8 @@ class Ticker:
     def __hash__(self):
         return id(self)
 
-    __repr__ = dataclassRepr
-    __str__ = dataclassRepr
+    __repr__ = lambda self: dataclassRepr(self)
+    __str__ = lambda self: dataclassRepr(self)
 
     def hasBidAsk(self) -> bool:
         """See if this ticker has a valid bid and ask."""
