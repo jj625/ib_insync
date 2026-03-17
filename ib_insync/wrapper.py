@@ -389,6 +389,10 @@ class Wrapper:
             self, contract: Contract, posSize: float, marketPrice: float,
             marketValue: float, averageCost: float, unrealizedPNL: float,
             realizedPNL: float, account: str):
+        """
+        IMPORTANT: TWS config → API Settings → Send zero positions for today's opening positions only
+        must be UNCHECKED to receive zero positions.
+        """
         contract = Contract.create(**dataclassAsDict(contract))
         portfItem = PortfolioItem(
             contract, posSize, marketPrice, marketValue,
