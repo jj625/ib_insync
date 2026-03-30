@@ -1,0 +1,65 @@
+/*! \page historical_limitations Historical Data Limitations
+
+	The maximum number of simultaneous open historical data requests from the API is 50. In practice, it will probably be more efficient to have a much smaller number of requests pending at a time.
+
+	\section pacing_violations Pacing Violations for Small Bars (30 secs or less) 
+	
+	Although Interactive Brokers offers our clients high quality market data, IB is not a specialised market data provider and as such it is forced to put in place restrictions to limit traffic which is not directly associated to trading. 
+	A <b>Pacing Violation<sup>1</sup></b> occurs whenever one or more of the following restrictions is not observed:
+	
+	 - Making identical historical data requests within 15 seconds.
+	 - Making six or more historical data requests for the same Contract, Exchange and Tick Type within two seconds.
+	 - Making more than 60 requests within any ten minute period.
+		
+	<i>Note that when BID_ASK historical data is requested, each request is counted <b>twice</b>. In a nutshell, the information above can simply be put as "do not request too much data too quick".</i>
+		
+	<b>Important:</b> the above limitations apply to all our clients and it is not possible to overcome them. If your trading strategy's market data requirements are not met by our market data services
+	please consider contacting a specialised provider.
+
+	\section hd_step_sizes Step Sizes
+	
+	A step size is defined as the ratio between the historical data request's duration period and its granularity (i.e. bar size). Historical Data requests need to be assembled in such a way
+	that only a few thousand bars are returned at a time. The following table exemplifies this concept:
+	
+	<table>
+		<tr><th>Duration</th><th>Allowed Bar Sizes</th></tr>
+		<tr><td>60 S</td><td>1 sec - 1 mins</td></tr>
+		<tr><td>120 S</td><td>1 sec - 2 mins</td></tr>
+		<tr><td>1800 S (30 mins)</td><td>1 sec - 30 mins</td></tr>
+		<tr><td>3600 S (1 hr)</td><td>5 secs - 1 hr</td></tr>
+		<tr><td>14400 S (4hr)</td><td>10 secs - 3 hrs</td></tr>
+		<tr><td>28800 S (8 hrs)</td><td>30 secs - 8 hrs</td></tr>
+		<tr><td>1 D</td><td>1 min - 1 day</td></tr>
+		<tr><td>2 D</td><td>2 mins - 1 day</td></tr>
+		<tr><td>1 W</td><td>3 mins - 1 week</td></tr>
+		<tr><td>1 W</td><td>4 mins - 1 week</td></tr>
+		<tr><td>1 M</td><td>30 mins - 1 month</td></tr>
+		<tr><td>1 Y</td><td>1 day - 1 month</td></tr>
+	</table>
+		
+	\section non-available_hd Unavailable Historical Data
+	
+	- Studies and indicators such as Weighted Moving Averages or Bollinger Bands are not available from the API. VWAP is available.
+
+	The other historical data limitations listed are general limitations for all trading platforms:	
+
+	- Bars whose size is 30 seconds or less <b>older than six months</b>
+	- Expired futures data older than two years counting from the future's expiration date.
+	- Expired options, FOPs, warrants and structured products.
+	- End of Day (EOD) data for options, FOPs, warrants and structured products.
+	- Data for expired future spreads
+	- Data for securities which are no longer trading.
+	- Native historical data for combos. Historical data is not stored in the IB database separately for combos.; combo historical data in TWS or the API is the sum of data from the legs. 
+	- Historical data for securities which move to a new exchange will often not be available prior to the time of the move.
+
+	<i>
+		<i><b>Note:</b></i> 
+		
+		<i>1. At this time Historical Data Limitations for barSize = "1 mins" and greater have been lifted. However, please use caution when requesting large amounts of historical data or sending historical data requests too frequently.
+		Though IB has lifted the "hard" limit, we still implement a "soft" slow to load-balance client requests vs. server response. Requesting too much historical data can lead to throttling and eventual disconnect of the API client. If a request requires more than several minutes to return data, it would be best to cancel the request using the @ref IBApi::EClient::cancelHistoricalData function. </i>
+	</i>	
+	
+	<br><br>
+	
+
+*/

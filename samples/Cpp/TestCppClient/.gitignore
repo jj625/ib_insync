@@ -1,0 +1,14 @@
+.*
+*~
+*.o
+*.obj
+*.dll
+TestCppClient
+TestCppClient.exe
+Debug
+Release
+*.vcxproj.user
+*.opensdf
+*.sdf
+/Debug/
+/ipch/
