@@ -14,11 +14,56 @@ from eventkit import Event
 from .connection import Connection
 from .contract import Contract
 from .decoder import Decoder
+from .decoder_pb import ProtobufDecoder
 from .objects import ConnectionStats, WshEventData
 from .order import Order
 from .util import UNSET_DOUBLE, UNSET_INTEGER, dataclassAsTuple, getLoop, run
 
 from .wrapper import Wrapper
+
+# Protobuf protocol constants
+PROTOBUF_MSG_ID = 200
+MIN_SERVER_VER_PROTOBUF = 201
+
+# Outgoing protobuf request types (only what's needed for connectAsync)
+from ibapi.protobuf.StartApiRequest_pb2 import StartApiRequest as StartApiRequestProto
+from ibapi.protobuf.PositionsRequest_pb2 import PositionsRequest as PositionsRequestProto
+from ibapi.protobuf.OpenOrdersRequest_pb2 import OpenOrdersRequest as OpenOrdersRequestProto
+from ibapi.protobuf.CompletedOrdersRequest_pb2 import CompletedOrdersRequest as CompletedOrdersRequestProto
+from ibapi.protobuf.AccountDataRequest_pb2 import AccountDataRequest as AccountDataRequestProto
+from ibapi.protobuf.AccountUpdatesMultiRequest_pb2 import AccountUpdatesMultiRequest as AccountUpdatesMultiRequestProto
+from ibapi.protobuf.ExecutionRequest_pb2 import ExecutionRequest as ExecutionRequestProto
+from ibapi.protobuf.ExecutionFilter_pb2 import ExecutionFilter as ExecutionFilterProto
+from ibapi.protobuf.AutoOpenOrdersRequest_pb2 import AutoOpenOrdersRequest as AutoOpenOrdersRequestProto
+from ibapi.protobuf.AllOpenOrdersRequest_pb2 import AllOpenOrdersRequest as AllOpenOrdersRequestProto
+from ibapi.protobuf.AccountSummaryRequest_pb2 import AccountSummaryRequest as AccountSummaryRequestProto
+from ibapi.protobuf.CancelAccountSummary_pb2 import CancelAccountSummary as CancelAccountSummaryProto
+from ibapi.protobuf.CancelPositions_pb2 import CancelPositions as CancelPositionsProto
+from ibapi.protobuf.PositionsMultiRequest_pb2 import PositionsMultiRequest as PositionsMultiRequestProto
+from ibapi.protobuf.CancelPositionsMulti_pb2 import CancelPositionsMulti as CancelPositionsMultiProto
+from ibapi.protobuf.CancelAccountUpdatesMulti_pb2 import CancelAccountUpdatesMulti as CancelAccountUpdatesMultiProto
+
+# Outgoing message IDs (matching ibapi.message.OUT)
+_OUT_START_API = 71
+_OUT_REQ_OPEN_ORDERS = 5
+_OUT_REQ_ACCT_DATA = 6
+_OUT_REQ_EXECUTIONS = 7
+_OUT_REQ_AUTO_OPEN_ORDERS = 15
+_OUT_REQ_ALL_OPEN_ORDERS = 16
+_OUT_REQ_POSITIONS = 61
+_OUT_REQ_ACCOUNT_SUMMARY = 62
+_OUT_CANCEL_ACCOUNT_SUMMARY = 63
+_OUT_CANCEL_POSITIONS = 64
+_OUT_REQ_POSITIONS_MULTI = 74
+_OUT_CANCEL_POSITIONS_MULTI = 75
+_OUT_REQ_ACCOUNT_UPDATES_MULTI = 76
+_OUT_CANCEL_ACCOUNT_UPDATES_MULTI = 77
+_OUT_REQ_COMPLETED_ORDERS = 99
+
+# Min server versions for protobuf per request category
+_MIN_PB_COMPLETED_ORDER = 204  # MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER
+_MIN_PB_ACCOUNTS_POSITIONS = 207  # MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS
+_MIN_PB_REST_3 = 213  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_3
 
 class Client:
     """
@@ -87,7 +132,7 @@ class Client:
     RequestsInterval = 1
 
     MinClientVersion = 157
-    MaxClientVersion = 178 # 178 or 187. 187 breaks cancelOrder
+    MaxClientVersion = 223  # raised to negotiate protobuf-capable server versions
 
     (DISCONNECTED, CONNECTING, CONNECTED) = range(3)
 
@@ -119,6 +164,7 @@ class Client:
         self.version = '0.0.1'
         self.wrapper: Wrapper = wrapper
         self.decoder = Decoder(wrapper, 0)
+        self.pbDecoder = ProtobufDecoder(wrapper, 0)
         self.apiStart = Event('apiStart')
         self.apiEnd = Event('apiEnd')
         self.apiError = Event('apiError')
@@ -335,6 +381,22 @@ class Client:
         # prefix a message with its length
         return struct.pack('>I', len(msg)) + msg
 
+    def _useProtobuf(self) -> bool:
+        """Whether the current server version supports protobuf framing."""
+        return self._serverVersion >= MIN_SERVER_VER_PROTOBUF
+
+    def sendProto(self, msgId: int, proto_msg) -> None:
+        """Serialize and send a protobuf request message."""
+        if not self.isConnected():
+            raise ConnectionError('Not connected')
+        payload = proto_msg.SerializeToString()
+        # outgoing protobuf: msgId + PROTOBUF_MSG_ID offset, as big-endian int32
+        byteArray = (msgId + PROTOBUF_MSG_ID).to_bytes(4, 'big') + payload
+        self.conn.sendMsg(self._prefix(byteArray))
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._logger.debug(
+                '>>> proto msgId=%d len=%d', msgId, len(payload))
+
     def _onSocketHasData(self, data):
         debug = self._logger.isEnabledFor(logging.DEBUG)
         if self._tcpDataArrived:
@@ -351,50 +413,115 @@ class Client:
             if len(self._data) < msgEnd:
                 # insufficient data for now
                 break
-            msg = self._data[4:msgEnd].decode(errors='backslashreplace')
+            rawMsg = self._data[4:msgEnd]
             self._data = self._data[msgEnd:]
-            fields = msg.split('\0')
-            fields.pop()  # pop off last empty element
             self._numMsgRecv += 1
 
-            if debug:
-                self._logger.debug('<<< %s', ','.join(fields))
+            if not self._serverVersion:
+                # Handshake: always text, 2 null-delimited fields
+                msg = rawMsg.decode(errors='backslashreplace')
+                fields = msg.split('\0')
+                fields.pop()
+                if debug:
+                    self._logger.debug('<<< %s', ','.join(fields))
+                if len(fields) == 2:
+                    version, _connTime = fields
+                    self._serverVersion = int(version)
+                    if self._serverVersion < self.MinClientVersion:
+                        self._onSocketDisconnected(
+                            'TWS/gateway version must be >= 972')
+                        return
+                    self.decoder.serverVersion = self._serverVersion
+                    self.pbDecoder.serverVersion = self._serverVersion
+                    self.connState = Client.CONNECTED
+                    self.startApi()
+                    self.wrapper.connectAck()
+                    self._logger.info(
+                        f'Logged on to server version {self._serverVersion}')
+                continue
 
-            if not self._serverVersion and len(fields) == 2:
-                # this concludes the handshake
-                version, _connTime = fields
-                self._serverVersion = int(version)
-                if self._serverVersion < self.MinClientVersion:
-                    self._onSocketDisconnected(
-                        'TWS/gateway version must be >= 972')
-                    return
-                self.decoder.serverVersion = self._serverVersion
-                self.connState = Client.CONNECTED
-                self.startApi()
-                self.wrapper.connectAck()
-                self._logger.info(
-                    f'Logged on to server version {self._serverVersion}')
+            # Post-handshake message routing
+            if self._useProtobuf():
+                # New framing: first 4 bytes are msgId as big-endian int32
+                msgId = int.from_bytes(rawMsg[:4], 'big')
+                msgPayload = rawMsg[4:]
+
+                if msgId > PROTOBUF_MSG_ID:
+                    # Protobuf message
+                    realMsgId = msgId - PROTOBUF_MSG_ID
+                    if debug:
+                        self._logger.debug(
+                            '<<< proto msgId=%d len=%d',
+                            realMsgId, len(msgPayload))
+
+                    # Snoop for nextValidId and managedAccounts
+                    if not self._apiReady:
+                        self._snoopProtobuf(realMsgId, msgPayload)
+
+                    self.pbDecoder.processProtoBuf(msgPayload, realMsgId)
+                else:
+                    # Legacy text message with binary msgId prefix
+                    text = msgPayload.decode(errors='backslashreplace')
+                    fields = text.split('\0')
+                    if fields and fields[-1] == '':
+                        fields.pop()
+                    # Prepend msgId as first field for Decoder compatibility
+                    fields = [str(msgId)] + fields
+                    if debug:
+                        self._logger.debug('<<< %s', ','.join(fields))
+
+                    if not self._apiReady:
+                        self._snoopText(msgId, fields)
+
+                    self.decoder.interpret(fields)
             else:
-                if not self._apiReady:
-                    # snoop for nextValidId and managedAccounts response,
-                    # when both are in then the client is ready
-                    msgId = int(fields[0])
-                    if msgId == 9:
-                        _, _, validId = fields
-                        self.updateReqId(int(validId))
-                        self._hasReqId = True
-                    elif msgId == 15:
-                        _, _, accts = fields
-                        self._accounts = [a for a in accts.split(',') if a]
-                    if self._hasReqId and self._accounts:
-                        self._apiReady = True
-                        self.apiStart.emit()
+                # Legacy framing: all text, null-delimited
+                msg = rawMsg.decode(errors='backslashreplace')
+                fields = msg.split('\0')
+                fields.pop()
+                if debug:
+                    self._logger.debug('<<< %s', ','.join(fields))
 
-                # decode and handle the message
+                if not self._apiReady:
+                    msgId = int(fields[0])
+                    self._snoopText(msgId, fields)
+
                 self.decoder.interpret(fields)
 
         if self._tcpDataProcessed:
             self._tcpDataProcessed()
+
+    def _snoopText(self, msgId: int, fields: list):
+        """Snoop text messages for nextValidId / managedAccounts during init."""
+        if msgId == 9:  # NEXT_VALID_ID
+            _, _, validId = fields
+            self.updateReqId(int(validId))
+            self._hasReqId = True
+        elif msgId == 15:  # MANAGED_ACCTS
+            _, _, accts = fields
+            self._accounts = [a for a in accts.split(',') if a]
+        if self._hasReqId and self._accounts:
+            self._apiReady = True
+            self.apiStart.emit()
+
+    def _snoopProtobuf(self, msgId: int, payload: bytes):
+        """Snoop protobuf messages for nextValidId / managedAccounts."""
+        from ibapi.protobuf.NextValidId_pb2 import NextValidId as NextValidIdProto
+        from ibapi.protobuf.ManagedAccounts_pb2 import ManagedAccounts as ManagedAccountsProto
+        if msgId == 9:  # NEXT_VALID_ID
+            proto = NextValidIdProto()
+            proto.ParseFromString(payload)
+            validId = proto.orderId if proto.HasField('orderId') else 0
+            self.updateReqId(validId)
+            self._hasReqId = True
+        elif msgId == 15:  # MANAGED_ACCTS
+            proto = ManagedAccountsProto()
+            proto.ParseFromString(payload)
+            accts = proto.accountsList if proto.HasField('accountsList') else ''
+            self._accounts = [a for a in accts.split(',') if a]
+        if self._hasReqId and self._accounts:
+            self._apiReady = True
+            self.apiStart.emit()
 
     def _onSocketDisconnected(self, msg):
         wasReady = self.isReady()
@@ -674,12 +801,43 @@ class Client:
         self.send(*fields)
 
     def reqOpenOrders(self):
+        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+            self.sendProto(_OUT_REQ_OPEN_ORDERS, OpenOrdersRequestProto())
+            return
         self.send(5, 1)
 
     def reqAccountUpdates(self, subscribe: bool, acctCode):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = AccountDataRequestProto()
+            proto.subscribe = subscribe
+            if acctCode:
+                proto.acctCode = acctCode
+            self.sendProto(_OUT_REQ_ACCT_DATA, proto)
+            return
         self.send(6, 2, subscribe, acctCode)
 
     def reqExecutions(self, reqId, execFilter):
+        if self._serverVersion >= MIN_SERVER_VER_PROTOBUF:
+            filterProto = ExecutionFilterProto()
+            if execFilter.clientId:
+                filterProto.clientId = int(execFilter.clientId)
+            if execFilter.acctCode:
+                filterProto.acctCode = execFilter.acctCode
+            if execFilter.time:
+                filterProto.time = execFilter.time
+            if execFilter.symbol:
+                filterProto.symbol = execFilter.symbol
+            if execFilter.secType:
+                filterProto.secType = execFilter.secType
+            if execFilter.exchange:
+                filterProto.exchange = execFilter.exchange
+            if execFilter.side:
+                filterProto.side = execFilter.side
+            reqProto = ExecutionRequestProto()
+            reqProto.reqId = reqId
+            reqProto.executionFilter.CopyFrom(filterProto)
+            self.sendProto(_OUT_REQ_EXECUTIONS, reqProto)
+            return
         self.send(
             7, 3, reqId,
             execFilter.clientId,
@@ -737,9 +895,17 @@ class Client:
         self.send(14, 1, logLevel)
 
     def reqAutoOpenOrders(self, bAutoBind):
+        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+            proto = AutoOpenOrdersRequestProto()
+            proto.bAutoBind = bAutoBind
+            self.sendProto(_OUT_REQ_AUTO_OPEN_ORDERS, proto)
+            return
         self.send(15, 1, bAutoBind)
 
     def reqAllOpenOrders(self):
+        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+            self.sendProto(_OUT_REQ_ALL_OPEN_ORDERS, AllOpenOrdersRequestProto())
+            return
         self.send(16, 1)
 
     def reqManagedAccts(self):
@@ -898,15 +1064,35 @@ class Client:
         self.send(59, 1, marketDataType)
 
     def reqPositions(self):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            self.sendProto(_OUT_REQ_POSITIONS, PositionsRequestProto())
+            return
         self.send(61, 1)
 
     def reqAccountSummary(self, reqId, groupName, tags):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = AccountSummaryRequestProto()
+            proto.reqId = reqId
+            if groupName:
+                proto.groupName = groupName
+            if tags:
+                proto.tags = tags
+            self.sendProto(_OUT_REQ_ACCOUNT_SUMMARY, proto)
+            return
         self.send(62, 1, reqId, groupName, tags)
 
     def cancelAccountSummary(self, reqId):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = CancelAccountSummaryProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_ACCOUNT_SUMMARY, proto)
+            return
         self.send(63, 1, reqId)
 
     def cancelPositions(self):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            self.sendProto(_OUT_CANCEL_POSITIONS, CancelPositionsProto())
+            return
         self.send(64, 1)
 
     def verifyRequest(self, apiName, apiVersion):
@@ -928,6 +1114,13 @@ class Client:
         self.send(70, 1, reqId)
 
     def startApi(self):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = StartApiRequestProto()
+            proto.clientId = self.clientId
+            if self.optCapab:
+                proto.optionalCapabilities = self.optCapab
+            self.sendProto(_OUT_START_API, proto)
+            return
         self.send(71, 2, self.clientId, self.optCapab)
 
     def verifyAndAuthRequest(self, apiName, apiVersion, opaqueIsvKey):
@@ -937,15 +1130,44 @@ class Client:
         self.send(73, 1, apiData, xyzResponse)
 
     def reqPositionsMulti(self, reqId, account, modelCode):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = PositionsMultiRequestProto()
+            proto.reqId = reqId
+            if account:
+                proto.account = account
+            if modelCode:
+                proto.modelCode = modelCode
+            self.sendProto(_OUT_REQ_POSITIONS_MULTI, proto)
+            return
         self.send(74, 1, reqId, account, modelCode)
 
     def cancelPositionsMulti(self, reqId):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = CancelPositionsMultiProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_POSITIONS_MULTI, proto)
+            return
         self.send(75, 1, reqId)
 
     def reqAccountUpdatesMulti(self, reqId, account, modelCode, ledgerAndNLV):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = AccountUpdatesMultiRequestProto()
+            proto.reqId = reqId
+            if account:
+                proto.account = account
+            if modelCode:
+                proto.modelCode = modelCode
+            proto.ledgerAndNLV = ledgerAndNLV
+            self.sendProto(_OUT_REQ_ACCOUNT_UPDATES_MULTI, proto)
+            return
         self.send(76, 1, reqId, account, modelCode, ledgerAndNLV)
 
     def cancelAccountUpdatesMulti(self, reqId):
+        if self._serverVersion >= _MIN_PB_ACCOUNTS_POSITIONS:
+            proto = CancelAccountUpdatesMultiProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_ACCOUNT_UPDATES_MULTI, proto)
+            return
         self.send(77, 1, reqId)
 
     def reqSecDefOptParams(
@@ -1032,6 +1254,11 @@ class Client:
         self.send(98, reqId)
 
     def reqCompletedOrders(self, apiOnly):
+        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+            proto = CompletedOrdersRequestProto()
+            proto.apiOnly = apiOnly
+            self.sendProto(_OUT_REQ_COMPLETED_ORDERS, proto)
+            return
         self.send(99, apiOnly)
 
     def reqWshMetaData(self, reqId):
