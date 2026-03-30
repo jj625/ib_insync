@@ -33,3 +33,6 @@ eventkit
 filterpy
 pricedb/ohclv.db
 spy_holdings.db
+notebooks/tracker-prod.py
+notebooks/tracker-241106-prod.py
+pricedb/ohlcv.db
