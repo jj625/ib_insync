@@ -1,0 +1,80 @@
+/*! \page support TWS API Support & Troubleshooting
+
+	The API documentation contains a complete description of all API functions. Additionally the source code of the API itself is distributed freely and is a great resource for more in-depth understanding of how the API works. If after reviewing these resources there are remaining questions about available API functionality, the API Support group is available to help. 
+	
+	-> It is important to keep in mind that that IB <b>cannot provide programming assistance</b> or give suggestions on how to code custom applications. The API group can review log files which contain a record of communications between API applications and TWS, and give details about what the API can provide. 
+
+	General suggestions on starting out with the IB system: 
+	
+	- <b>Become familiar with the analogous functionality in TWS before using the API</b>: the TWS API is nothing but a communication channel between your client application and TWS. Each API function has a corresponding tool in TWS. For instance, the market data tick types in the API correspond to watchlist columns in TWS. Any order which can be created in the API can first be created in TWS, and it is recommended to do so. Additionally, if information is not available in TWS, it will not be available in the API. Before using IB Gateway with the API, it is recommended to first become familiar with TWS. 
+	<br><br>
+	
+	- <b>Make use of the sample API applications</b>: the sample applications distributed with the API download have examples of essentially every API function in each of the available programming languages. If an issue does not occur in the corresponding sample application, that implies there is a problem with the custom implementation. 
+	<br><br>
+	
+	- <b>Upgrade TWS or IB Gateway periodically</b>: TWS and IB Gateway often have new software releases that have enhancements, and that can sometimes have bug fixes. Because of this, we strongly recommend our users to keep 
+	their software as up to date as possible. There is no problem with staying with a version of the API and upgrading TWS, as TWS/IB Gateway are designed to be backwards compatible with older API versions. If you are experiencing a specific problem that is occurring in TWS or IB Gateway and not in the API program, it is quite possible it does not occur in the more recent software build. 
+		
+	\section tws_logs Log Files
+	
+	The log files are essential to provide detailed information about how a custom application may be malfunctioning. They are useful tools for direct review by an API application programmer, and additionally they can be uploaded for review by the API Support group.
+	
+	\subsection api_logs API Log
+	
+	TWS and IB Gateway can be configured to create a separate log file which has a record of just communications with API applications. This log is not enabled by default; but needs to be enabled by the Global Configuration setting <b>"Create API Message Log File"</b>(picture below). 
+
+	- API logs contain a record of exchanged messages between API applications and TWS/IB Gateway. Since only API messages are recorded, the API logs are more compact and easier to handle. However they do not contain general diagnostic information about TWS/IBG as the TWS/IBG logs. The TWS/IBG settings folder is by default <b>C:\\Jts</b> (or IBJts on Mac/Linux). The API logs are named <b>api.[clientId].[day].log</b>, where [clientId] corresponds to the Id the client application used to connect to the TWS and [day] to the week day (i.e. api.123.Thu.log).
+	
+	- There is also a setting "Include Market Data in API Log" that will include streaming market data values in the API log file. Historical candlestick data is always recorded in the API log.
+    
+    <b>Note:</b> Beginning in TWS Build 977, both the API and TWS logs are encrypted locally. The API logs can be decrypted for review from the associated TWS or IB Gateway session, just like the TWS logs, as shown in the section describing the @ref log_files.
+	
+	<b>Enabling creation of API logs</b>
+	
+	TWS:
+	- Navigate to File/Edit → Global Configuration → API → Settings
+	- Check the box <i>Create API message log file</i>
+	- Click Apply and Ok
+	
+	\image html enable_api_log.png
+	
+	IB Gateway:
+	- Navigate to Configure → Settings → API → Settings
+	- Check the box <i>Create API message log file</i>
+	- Click Apply and Ok
+	
+	\subsection logging_level TWS Log File
+	
+	The TWS Logging Level must be set to the 'Detail' level to record information pertinent to the API. By default it is at the 'Error' level which records a minimum of diagnostic information. To capture API messages it is necessary to change the Logging Level to 'Detail'. Note the 'Logging Level', like all TWS/IBG settings, is saved separately for different users and for TWS and IBG.
+
+	- <b>Important:</b> The TWS/IB Gateway log file setting has to be set to 'Detail' level before an issue occurs so that information recorded correctly when it manifests. However due to the high amount of information that will be generated under this level, the resulting logs can grow considerably in size. It is therefore recommended to use the 'Detail' level only when troubleshooting and/or tracking a very specific issue. This can also be done from the API client itself using the @ref IBApi::EClient::setServerLogLevel function. Some third party applications, such as NinjaTrader, are configured to invoke this function to set the TWS Logging Level every time they connect, and so to set the TWS Log to 'Detail' this will have to be done from within the API client program.
+	
+	<b>Steps to set TWS Logging Level to Detail</b>
+	
+	TWS:
+	- Navigate to File/Edit → Global Configuration → API → Settings
+	- Set <i>Logging Level</i> to <i>Detail</i>
+	
+	\image html logging_detail.png
+	
+	IB Gateway:
+	- Navigate to Configure → Settings → API → Settings
+	- Set <i>Logging Level</i> to <i>Detail</i>
+	 
+	\subsection log_files Local location of logs
+	
+	Logs are stored in the TWS settings directory, C:\\Jts\\ by default on a Windows computer (the default can be configured differently on the login screen).  
+	
+	The path to the log file directory can be found from a TWS or IB Gateway session by using the combination <b>Ctrl-Alt-U</b>. This will reveal path such as C:\\Jts\\detcfsvirl\\ (on Windows).
+	
+	Due to privacy regulations, logs are <b>encrypted</b> before they are saved to disk. They can be decrypted from the associated TWS or IB Gateway session. In TWS: Classic TWS -> Account -> Diagnostics -> TWS Logs. In IB Gateway, File -> Gateway Logs. 
+	
+	\subsection uploading_logs Uploading logs
+	
+	- If API logging has been enabled with the setting "Create API Message Log" during the time when an issue occurs, it can be uploaded to the API group using the combination <b>Ctrl-Alt-Q</b>, then clicking <b>Submit</b>. If logs have been uploaded, please let the API Support group know by <b>creating a webticket</b> in the Message Center in Account Management (under Support) indicating the <b>username</b> of the associated TWS session. In some cases a TWS log may also be requested at the Detailed logging level. The TWS log can grow quite large and may not be uploadable by the automatic method; in this case an alternative means of upload can be found. 
+    
+    \subpage automated_considerations
+	
+	<br><br>
+
+*/

@@ -1,0 +1,200 @@
+/*! \page market_scanners Market Scanners
+
+	Some scans in the TWS <a target="_blank" class="linkexternal" href="https://www.interactivebrokers.com/en/software/webtrader/webtrader/marketscanners/market%20scanners.htm">Advanced Market Scanner</a> can 
+	be accessed via the TWS API through the @ref IBApi::EClient::reqScannerSubscription. 
+		
+	<ul id="tab">
+		<li class="active"> 
+			\snippet Program.cs reqscannersubscription
+		</li>
+		<li>
+			\snippet Testbed.java reqscannersubscription
+		</li>
+		<li>
+			\snippet MainModule.vb reqscannersubscription
+		</li>
+		<li>
+			\snippet TestCppClient.cpp reqscannersubscription
+		</li>
+		<li>
+			\snippet Program.py reqscannersubscription
+		</li>
+	</ul>
+	
+	Available API filters and and parameters until TWS <b>v973</b> and API <b>v973.07</b> are defined in the @ref IBApi::ScannerSubscription object, including [AbovePrice, BelowPrice, AboveVolume, ...] . Some @ref scanner_examples are listed at the bottom of this page.
+	
+	Scans are limited to a maximum result of 50 results per scan code, and only 10 API scans can be active at a time.
+	
+	Results are delivered via @ref IBApi::EWrapper::scannerData and the @ref IBApi::EWrapper::scannerDataEnd marker will indicate when all results have been delivered. The returned results to scannerData simply consist of a list of contracts. There are no market data fields (bid, ask, last, volume, ...) returned from the scanner, and so if these are desired they have to be requested separately with the reqMktData function. Since the scanner results do not include any market data fields, it is not necessary to have market data subscriptions to use the API scanner. However to use filters, market data subscriptions <b>are</b> generally required.
+	
+	<ul id="tab">
+		<li class="active"> 
+			\snippet EWrapperImpl.cs ewrapperimpl
+		   ...
+			\snippet EWrapperImpl.cs scannerdata 
+			...
+			\snippet EWrapperImpl.cs scannerdataend
+		</li>
+		<li>
+			\snippet EWrapperImpl.java ewrapperimpl
+			...
+			\snippet EWrapperImpl.java scannerdata
+			...
+			\snippet EWrapperImpl.java scannerdataend
+		</li>
+		<li>
+			\snippet EWrapperImpl.vb ewrapperimpl
+		   ...
+			\snippet EWrapperImpl.vb scannerdata 
+			...
+			\snippet EWrapperImpl.vb scannerdataend
+		</li>
+		<li>
+			\snippet TestCppClient.h ewrapperimpl
+		   ...
+			\snippet TestCppClient.cpp scannerdata 
+			...
+			\snippet TestCppClient.cpp scannerdataend
+		</li>
+		<li>
+			\snippet Program.py ewrapperimpl
+		   ...
+			\snippet Program.py scannerdata 
+			...
+			\snippet Program.py scannerdataend
+		</li>
+	</ul>
+	
+	Since the @ref IBApi::EClient::reqScannerSubscription request keeps a subscription open you will keep receiving periodic updates until the request is cancelled via @ref IBApi::EClient::cancelScannerSubscription :
+	
+	<ul id="tab">
+		<li class="active"> 
+			\snippet Program.cs cancelscannersubscription
+		</li>
+		<li>
+			\snippet Testbed.java cancelscannersubscription
+		</li>
+		<li>
+			\snippet MainModule.vb cancelscannersubscription
+		</li>
+		<li>
+			\snippet TestCppClient.cpp cancelscannersubscription
+		</li>
+		<li>
+			\snippet Program.py cancelscannersubscription
+		</li>
+	</ul>
+	
+	\section scanner_examples Market Scanner Examples
+	
+	With API <b>v973.07</b> and TWS <b>v973</b> and lower, the available API scans are the fields of the ScannerSubscription object, i.e. <i>abovePrice, aboveVolume, belowPrice</i>, etc. 
+	Beginning with the next version of the API (expected to be v973.08) and TWS v974, an extra parameter scannerSubscriptionFilterOptions has been added to the API to allow for generic filters. This field is entered as a list of TagValues which have a tag followed by its value, e.g. TagValue("usdMarketCapAbove", "10000") indicates a market cap above 10000 USD. Available filters can be found using the @ref IBApi::EClient::reqScannerParameters function.
+	
+	<ul id="tab">
+		<li class="active"> 
+			\snippet ScannerSubscriptionSamples.cs hotusvolume
+			...
+			\snippet ScannerSubscriptionSamples.cs toppercentgaineribis
+			...
+			\snippet ScannerSubscriptionSamples.cs mostactivefuteurex
+			...
+			\snippet ScannerSubscriptionSamples.cs highoptvolume
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.java hotusvolume
+			...
+			\snippet ScannerSubscriptionSamples.java toppercentgaineribis
+			...
+			\snippet ScannerSubscriptionSamples.java mostactivefuteurex
+			...
+			\snippet ScannerSubscriptionSamples.java highoptvolume
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.vb hotusvolume
+			...
+			\snippet ScannerSubscriptionSamples.vb toppercentgaineribis
+			...
+			\snippet ScannerSubscriptionSamples.vb mostactivefuteurex
+			...
+			\snippet ScannerSubscriptionSamples.vb highoptvolume
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.cpp hotusvolume
+			...
+			\snippet ScannerSubscriptionSamples.cpp toppercentgaineribis
+			...
+			\snippet ScannerSubscriptionSamples.cpp mostactivefuteurex
+			...
+			\snippet ScannerSubscriptionSamples.cpp highoptvolume
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.py hotusvolume
+			...
+			\snippet ScannerSubscriptionSamples.py toppercentgaineribis
+			...
+			\snippet ScannerSubscriptionSamples.py mostactivefuteurex
+			...
+			\snippet ScannerSubscriptionSamples.py highoptvolume
+		</li>
+	</ul>
+	
+	See also \subpage scanner_parameters
+	
+	\section complex_orders_trades_scanner Complex Orders and Trades Scanner
+	
+	The <a target="_blank" class="linkexternal" href="https://www.interactivebrokers.com/en/software/tws/usersguidebook/mosaic/complexorderstradescanner.htm">TWS Complex and Orders and Trades Scanner</a> is a special scan type available from the API with TWS v975 and API v973.07 or higher. 
+	
+	<ul id="tab">
+		<li class="active"> 
+			\snippet ScannerSubscriptionSamples.cs combolatesttrade
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.java combolatesttrade
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.vb combolatesttrade
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.cpp combolatesttrade
+		</li>
+		<li>
+			\snippet ScannerSubscriptionSamples.py combolatesttrade
+		</li>
+	</ul>
+	
+	
+	<ul id="tab">
+		<li class="active"> 
+			\snippet Program.cs reqcomplexscanner
+		</li>
+		<li>
+			\snippet Testbed.java reqcomplexscanner
+		</li>
+		<li>
+			\snippet MainModule.vb reqcomplexscanner
+		</li>
+		<li>
+			\snippet TestCppClient.cpp reqcomplexscanner
+		</li>
+		<li>
+			\snippet Program.py reqcomplexscanner
+		</li>
+	</ul>
+	
+	Complex Orders and Trades Scanner available scan codes: 
+	
+	- COMBO_LATEST_TRADE
+	- COMBO_QUOTES
+	- COMBO_MOST_ACTIVE
+	- COMBO_ALL_TRADE_TIME_ASC
+	- COMBO_ALL_TRADE_TIME_DESC
+	- COMBO_ALL_QUOTE_TIME_ASC
+	- COMBO_ALL_QUOTE_TIME_DESC
+	- COMBO_ALL_TRADE_QUOTE_TIME_ASC
+	- COMBO_ALL_TRADE_QUOTE_TIME_DESC
+	- COMBO_ALL_VOLUME_ASC
+	- COMBO_ALL_VOLUME_DESC
+	
+	<br><br>
+
+*/

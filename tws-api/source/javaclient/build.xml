@@ -1,0 +1,36 @@
+<project name="TwsApi" basedir="." default="clean-build">
+
+    <property name="src.dir"     value="."/>
+
+    <property name="build.dir"   value="build"/>
+    <property name="classes.dir" value="${build.dir}/classes"/>
+    <property name="classes.debug.dir" value="${build.dir}/classes_debug/"/>
+    <property name="jar.dir"     value="."/>
+    <property environment="env"/>
+    <property name="lib.dir" value="${src.dir}/jars"/>	
+
+    <target name="clean">
+        <delete dir="${build.dir}"/>
+    </target>
+
+    <path id="lib.path">
+        <fileset dir="${lib.dir}" includes="**/*.jar"/>
+    </path>
+
+    <target name="compile">
+        <mkdir dir="${classes.dir}"/>
+        <javac srcdir="${src.dir}" destdir="${classes.dir}" debug="false" classpathref="lib.path"/>
+
+        <mkdir dir="${classes.debug.dir}"/>
+        <javac srcdir="${src.dir}" destdir="${classes.debug.dir}" debug="true" classpathref="lib.path"/>
+    </target>
+
+    <target name="jar" depends="compile">
+        <jar destfile="${jar.dir}/${ant.project.name}.jar" basedir="${classes.dir}" />
+        <jar destfile="${jar.dir}/${ant.project.name}_debug.jar" basedir="${classes.debug.dir}" />
+        <delete dir="${build.dir}"/>
+    </target>
+
+    <target name="clean-build" depends="clean,jar"/>
+
+</project>

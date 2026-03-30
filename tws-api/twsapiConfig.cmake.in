@@ -1,0 +1,12 @@
+# Contains path to twsapi shared object and include directories
+get_filename_component(TWSAPI_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
+set(TWSAPI_INCLUDE_DIRS "@CONF_INCLUDE_DIRS@")
+
+#if(NOT TARGET foo AND NOT FooBar_BINARY_DIR)
+#    include("${TWSAPI_CMAKE_DIR}/lib/twsapi.cmake")
+#endif()
+
+# set the install path if it is not default
+set(TWSAPI_LIBRARIES_PATH ${TWSAPI_CMAKE_DIR}/lib)
+
+set(TWSAPI_LIBRARIES twsapi)
