@@ -562,7 +562,7 @@ class IB:
 
     def tickersByLocalsymbol(self) -> dict[str, Ticker]:
         """Get a list of all tickers."""
-        return self.wrapper.tickersByLocalsymbol
+        return getattr(self.wrapper, 'tickersByLocalsymbol', {})
     
     def lastTime(self) -> datetime.datetime:
         """ UTC time of last network packet arrival. """
