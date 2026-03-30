@@ -1,1 +1,2 @@
 notebooks/* linguist-documentation
+*.ipynb filter=nbstripout

@@ -1,0 +1,16 @@
+name: ibpy
+channels:
+  - defaults
+dependencies:
+  - ipykernel
+  - jupyter
+  - matplotlib
+  - numpy
+  - pandas
+  - pytz
+  - python
+  - pytest
+  - pytest-asyncio
+# prefix: C:\Users\Jimmy\.conda\envs\ibpy
+  - fastapi
+  - httpx

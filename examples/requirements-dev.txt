@@ -1,0 +1,6 @@
+-e c:/Users/Jimmy/source/erdewit/eventkit
+-e c:/Users/Jimmy/source/erdewit/ib_insync
+numpy
+pandas
+tzdata
+ipykernel

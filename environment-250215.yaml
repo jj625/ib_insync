@@ -1,0 +1,27 @@
+name: ibpy2
+channels:
+  - defaults
+dependencies:
+  - numpy>=2.0
+  - pandas
+  - pytz
+  - pytest
+  - pytest-asyncio
+  - ipykernel
+  - jupyter
+  - matplotlib
+  - scipy
+  - conda-forge::mplfinance
+  - conda-forge::ipympl
+  - pytables
+  - tqdm
+  - ffmpeg-python
+  - seaborn
+  - rich
+  - panel
+  - anaconda::more-itertools
+  - openpyxl
+  - antropy
+  - statsmodels
+  - anaconda::pyzmq
+  - conda-forge::duckdb
