@@ -42,6 +42,76 @@ from ibapi.protobuf.CancelPositions_pb2 import CancelPositions as CancelPosition
 from ibapi.protobuf.PositionsMultiRequest_pb2 import PositionsMultiRequest as PositionsMultiRequestProto
 from ibapi.protobuf.CancelPositionsMulti_pb2 import CancelPositionsMulti as CancelPositionsMultiProto
 from ibapi.protobuf.CancelAccountUpdatesMulti_pb2 import CancelAccountUpdatesMulti as CancelAccountUpdatesMultiProto
+# market data
+from ibapi.protobuf.MarketDataRequest_pb2 import MarketDataRequest as MarketDataRequestProto
+from ibapi.protobuf.CancelMarketData_pb2 import CancelMarketData as CancelMarketDataProto
+from ibapi.protobuf.MarketDataTypeRequest_pb2 import MarketDataTypeRequest as MarketDataTypeRequestProto
+# contract data
+from ibapi.protobuf.ContractDataRequest_pb2 import ContractDataRequest as ContractDataRequestProto
+from ibapi.protobuf.CancelContractData_pb2 import CancelContractData as CancelContractDataProto
+# historical data
+from ibapi.protobuf.HistoricalDataRequest_pb2 import HistoricalDataRequest as HistoricalDataRequestProto
+from ibapi.protobuf.CancelHistoricalData_pb2 import CancelHistoricalData as CancelHistoricalDataProto
+from ibapi.protobuf.RealTimeBarsRequest_pb2 import RealTimeBarsRequest as RealTimeBarsRequestProto
+from ibapi.protobuf.CancelRealTimeBars_pb2 import CancelRealTimeBars as CancelRealTimeBarsProto
+from ibapi.protobuf.HeadTimestampRequest_pb2 import HeadTimestampRequest as HeadTimestampRequestProto
+from ibapi.protobuf.CancelHeadTimestamp_pb2 import CancelHeadTimestamp as CancelHeadTimestampProto
+from ibapi.protobuf.HistogramDataRequest_pb2 import HistogramDataRequest as HistogramDataRequestProto
+from ibapi.protobuf.CancelHistogramData_pb2 import CancelHistogramData as CancelHistogramDataProto
+from ibapi.protobuf.HistoricalTicksRequest_pb2 import HistoricalTicksRequest as HistoricalTicksRequestProto
+from ibapi.protobuf.CancelHistoricalTicks_pb2 import CancelHistoricalTicks as CancelHistoricalTicksProto
+from ibapi.protobuf.TickByTickRequest_pb2 import TickByTickRequest as TickByTickRequestProto
+from ibapi.protobuf.CancelTickByTick_pb2 import CancelTickByTick as CancelTickByTickProto
+# pnl
+from ibapi.protobuf.PnLRequest_pb2 import PnLRequest as PnLRequestProto
+from ibapi.protobuf.CancelPnL_pb2 import CancelPnL as CancelPnLProto
+from ibapi.protobuf.PnLSingleRequest_pb2 import PnLSingleRequest as PnLSingleRequestProto
+from ibapi.protobuf.CancelPnLSingle_pb2 import CancelPnLSingle as CancelPnLSingleProto
+# fa
+from ibapi.protobuf.FARequest_pb2 import FARequest as FARequestProto
+from ibapi.protobuf.FAReplace_pb2 import FAReplace as FAReplaceProto
+# calc implied vol / option price
+from ibapi.protobuf.CalculateImpliedVolatilityRequest_pb2 import CalculateImpliedVolatilityRequest as CalculateImpliedVolatilityRequestProto
+from ibapi.protobuf.CancelCalculateImpliedVolatility_pb2 import CancelCalculateImpliedVolatility as CancelCalculateImpliedVolatilityProto
+from ibapi.protobuf.CalculateOptionPriceRequest_pb2 import CalculateOptionPriceRequest as CalculateOptionPriceRequestProto
+from ibapi.protobuf.CancelCalculateOptionPrice_pb2 import CancelCalculateOptionPrice as CancelCalculateOptionPriceProto
+# orders
+from ibapi.protobuf.GlobalCancelRequest_pb2 import GlobalCancelRequest as GlobalCancelRequestProto
+from ibapi.protobuf.PlaceOrderRequest_pb2 import PlaceOrderRequest as PlaceOrderRequestProto
+from ibapi.protobuf.CancelOrderRequest_pb2 import CancelOrderRequest as CancelOrderRequestProto
+# sec def, family codes, matching symbols, smart components, market rule
+from ibapi.protobuf.SecDefOptParamsRequest_pb2 import SecDefOptParamsRequest as SecDefOptParamsRequestProto
+from ibapi.protobuf.FamilyCodesRequest_pb2 import FamilyCodesRequest as FamilyCodesRequestProto
+from ibapi.protobuf.MatchingSymbolsRequest_pb2 import MatchingSymbolsRequest as MatchingSymbolsRequestProto
+from ibapi.protobuf.SmartComponentsRequest_pb2 import SmartComponentsRequest as SmartComponentsRequestProto
+from ibapi.protobuf.MarketRuleRequest_pb2 import MarketRuleRequest as MarketRuleRequestProto
+from ibapi.protobuf.MarketDepthExchangesRequest_pb2 import MarketDepthExchangesRequest as MarketDepthExchangesRequestProto
+# user info, IDs, current time
+from ibapi.protobuf.UserInfoRequest_pb2 import UserInfoRequest as UserInfoRequestProto
+from ibapi.protobuf.IdsRequest_pb2 import IdsRequest as IdsRequestProto
+from ibapi.protobuf.CurrentTimeRequest_pb2 import CurrentTimeRequest as CurrentTimeRequestProto
+from ibapi.protobuf.SetServerLogLevelRequest_pb2 import SetServerLogLevelRequest as SetServerLogLevelRequestProto
+# verify, display groups
+from ibapi.protobuf.VerifyRequest_pb2 import VerifyRequest as VerifyRequestProto
+from ibapi.protobuf.VerifyMessageRequest_pb2 import VerifyMessageRequest as VerifyMessageRequestProto
+from ibapi.protobuf.QueryDisplayGroupsRequest_pb2 import QueryDisplayGroupsRequest as QueryDisplayGroupsRequestProto
+from ibapi.protobuf.SubscribeToGroupEventsRequest_pb2 import SubscribeToGroupEventsRequest as SubscribeToGroupEventsRequestProto
+from ibapi.protobuf.UpdateDisplayGroupRequest_pb2 import UpdateDisplayGroupRequest as UpdateDisplayGroupRequestProto
+from ibapi.protobuf.UnsubscribeFromGroupEventsRequest_pb2 import UnsubscribeFromGroupEventsRequest as UnsubscribeFromGroupEventsRequestProto
+# WSH
+from ibapi.protobuf.WshMetaDataRequest_pb2 import WshMetaDataRequest as WshMetaDataRequestProto
+from ibapi.protobuf.CancelWshMetaData_pb2 import CancelWshMetaData as CancelWshMetaDataProto
+from ibapi.protobuf.WshEventDataRequest_pb2 import WshEventDataRequest as WshEventDataRequestProto
+from ibapi.protobuf.CancelWshEventData_pb2 import CancelWshEventData as CancelWshEventDataProto
+# fundamental data
+from ibapi.protobuf.FundamentalsDataRequest_pb2 import FundamentalsDataRequest as FundamentalsDataRequestProto
+from ibapi.protobuf.CancelFundamentalsData_pb2 import CancelFundamentalsData as CancelFundamentalsDataProto
+# ibapi client_utils for building contract/order protos
+from ibapi.client_utils import (
+    createContractProto as _createContractProto,
+    createPlaceOrderRequestProto as _createPlaceOrderRequestProto,
+    createCancelOrderRequestProto as _createCancelOrderRequestProto,
+)
 
 # Outgoing message IDs (matching ibapi.message.OUT)
 _OUT_START_API = 71
@@ -59,11 +129,72 @@ _OUT_CANCEL_POSITIONS_MULTI = 75
 _OUT_REQ_ACCOUNT_UPDATES_MULTI = 76
 _OUT_CANCEL_ACCOUNT_UPDATES_MULTI = 77
 _OUT_REQ_COMPLETED_ORDERS = 99
+_OUT_REQ_MKT_DATA = 1
+_OUT_CANCEL_MKT_DATA = 2
+_OUT_REQ_CONTRACT_DATA = 9
+_OUT_REQ_HISTORICAL_DATA = 20
+_OUT_CANCEL_HISTORICAL_DATA = 25
+_OUT_REQ_CURRENT_TIME = 49
+_OUT_REQ_REAL_TIME_BARS = 50
+_OUT_CANCEL_REAL_TIME_BARS = 51
+_OUT_REQ_MARKET_DATA_TYPE = 59
+_OUT_REQ_HEAD_TIMESTAMP = 87
+_OUT_CANCEL_HEAD_TIMESTAMP = 90
+_OUT_REQ_HISTOGRAM_DATA = 88
+_OUT_CANCEL_HISTOGRAM_DATA = 89
+_OUT_REQ_HISTORICAL_TICKS = 96
+_OUT_CANCEL_HISTORICAL_TICKS = 107
+_OUT_REQ_TICK_BY_TICK_DATA = 97
+_OUT_CANCEL_TICK_BY_TICK_DATA = 98
+_OUT_REQ_PNL = 92
+_OUT_CANCEL_PNL = 93
+_OUT_REQ_PNL_SINGLE = 94
+_OUT_CANCEL_PNL_SINGLE = 95
+_OUT_REQ_FA = 18
+_OUT_REPLACE_FA = 19
+_OUT_CANCEL_CONTRACT_DATA = 106
+_OUT_PLACE_ORDER = 3
+_OUT_CANCEL_ORDER = 4
+_OUT_REQ_IDS = 8
+_OUT_SET_SERVER_LOGLEVEL = 14
+_OUT_REQ_GLOBAL_CANCEL = 58
+_OUT_VERIFY_REQUEST = 65
+_OUT_VERIFY_MESSAGE = 66
+_OUT_QUERY_DISPLAY_GROUPS = 67
+_OUT_SUBSCRIBE_TO_GROUP_EVENTS = 68
+_OUT_UPDATE_DISPLAY_GROUP = 69
+_OUT_UNSUBSCRIBE_FROM_GROUP_EVENTS = 70
+_OUT_REQ_SEC_DEF_OPT_PARAMS = 78
+_OUT_REQ_FAMILY_CODES = 80
+_OUT_REQ_MATCHING_SYMBOLS = 81
+_OUT_REQ_MKT_DEPTH_EXCHANGES = 82
+_OUT_REQ_SMART_COMPONENTS = 83
+_OUT_REQ_MARKET_RULE = 91
+_OUT_REQ_CALC_IMPLIED_VOLAT = 54
+_OUT_REQ_CALC_OPTION_PRICE = 55
+_OUT_CANCEL_CALC_IMPLIED_VOLAT = 56
+_OUT_CANCEL_CALC_OPTION_PRICE = 57
+_OUT_REQ_FUNDAMENTAL_DATA = 52
+_OUT_CANCEL_FUNDAMENTAL_DATA = 53
+_OUT_REQ_WSH_META_DATA = 100
+_OUT_CANCEL_WSH_META_DATA = 101
+_OUT_REQ_WSH_EVENT_DATA = 102
+_OUT_CANCEL_WSH_EVENT_DATA = 103
+_OUT_REQ_USER_INFO = 104
 
 # Min server versions for protobuf per request category
 _MIN_PB_COMPLETED_ORDER = 204  # MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER
+_MIN_PB_CONTRACT_DATA = 205  # MIN_SERVER_VER_PROTOBUF_CONTRACT_DATA
+_MIN_PB_MARKET_DATA = 206  # MIN_SERVER_VER_PROTOBUF_MARKET_DATA
 _MIN_PB_ACCOUNTS_POSITIONS = 207  # MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS
+_MIN_PB_HISTORICAL_DATA = 208  # MIN_SERVER_VER_PROTOBUF_HISTORICAL_DATA
+_MIN_PB_SCAN_DATA = 210  # MIN_SERVER_VER_PROTOBUF_SCAN_DATA (also PnL, fundamental)
+_MIN_PB_SCAN_DATA_NEWS = 209  # MIN_SERVER_VER_PROTOBUF_NEWS_DATA (also WSH)
+_MIN_PB_REST_1 = 211  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_1 (FA, exercise, calc)
+_MIN_PB_REST_2 = 212  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_2 (sec def, family, etc)
 _MIN_PB_REST_3 = 213  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_3
+_MIN_PB_CANCEL_CONTRACT_DATA = 215  # MIN_SERVER_VER_CANCEL_CONTRACT_DATA
+_MIN_PB_PLACE_ORDER = 203  # MIN_SERVER_VER_PROTOBUF_PLACE_ORDER
 
 from .msg_names import in_msg_name as _in_msg_name, out_msg_name as _out_msg_name
 
@@ -549,6 +680,20 @@ class Client:
     def reqMktData(
             self, reqId, contract, genericTickList, snapshot,
             regulatorySnapshot, mktDataOptions):
+        if self._serverVersion >= _MIN_PB_MARKET_DATA:
+            proto = MarketDataRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if genericTickList:
+                proto.genericTickList = genericTickList
+            if snapshot:
+                proto.snapshot = snapshot
+            if regulatorySnapshot:
+                proto.regulatorySnapshot = regulatorySnapshot
+            self.sendProto(_OUT_REQ_MKT_DATA, proto)
+            return
         fields = [1, 11, reqId, contract]
 
         if contract.secType == 'BAG':
@@ -568,6 +713,11 @@ class Client:
         self.send(*fields)
 
     def cancelMktData(self, reqId):
+        if self._serverVersion >= _MIN_PB_MARKET_DATA:
+            proto = CancelMarketDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_MKT_DATA, proto)
+            return
         self.send(2, 2, reqId)
 
     def placeOrder(self, orderId, contract, order: Order):
@@ -850,10 +1000,15 @@ class Client:
             execFilter.exchange,
             execFilter.side)
 
-    def reqIds(self, numIds):
-        self.send(8, 1, numIds)
-
     def reqContractDetails(self, reqId, contract):
+        if self._serverVersion >= _MIN_PB_CONTRACT_DATA:
+            proto = ContractDataRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            self.sendProto(_OUT_REQ_CONTRACT_DATA, proto)
+            return
         fields = [
             9, 8, reqId,
             contract,
@@ -893,9 +1048,6 @@ class Client:
     def cancelNewsBulletins(self):
         self.send(13, 1)
 
-    def setServerLogLevel(self, logLevel):
-        self.send(14, 1, logLevel)
-
     def reqAutoOpenOrders(self, bAutoBind):
         if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
             proto = AutoOpenOrdersRequestProto()
@@ -914,14 +1066,48 @@ class Client:
         self.send(17, 1)
 
     def requestFA(self, faData):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = FARequestProto()
+            proto.faDataType = faData
+            self.sendProto(_OUT_REQ_FA, proto)
+            return
         self.send(18, 1, faData)
 
     def replaceFA(self, reqId, faData, cxml):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = FAReplaceProto()
+            proto.reqId = reqId
+            proto.faDataType = faData
+            if cxml:
+                proto.xml = cxml
+            self.sendProto(_OUT_REPLACE_FA, proto)
+            return
         self.send(19, 1, faData, cxml, reqId)
 
     def reqHistoricalData(
             self, reqId, contract, endDateTime, durationStr, barSizeSetting,
             whatToShow, useRTH, formatDate, keepUpToDate, chartOptions):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = HistoricalDataRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if endDateTime:
+                proto.endDateTime = str(endDateTime)
+            if durationStr:
+                proto.duration = durationStr
+            if barSizeSetting:
+                proto.barSizeSetting = barSizeSetting
+            if whatToShow:
+                proto.whatToShow = whatToShow
+            if useRTH:
+                proto.useRTH = useRTH
+            proto.formatDate = formatDate
+            if keepUpToDate:
+                proto.keepUpToDate = keepUpToDate
+            self.sendProto(_OUT_REQ_HISTORICAL_DATA, proto)
+            return
         fields = [
             20, reqId, contract, contract.includeExpired,
             endDateTime, barSizeSetting, durationStr, useRTH,
@@ -1007,25 +1193,55 @@ class Client:
         self.send(24, 1)
 
     def cancelHistoricalData(self, reqId):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelHistoricalDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_HISTORICAL_DATA, proto)
+            return
         self.send(25, 1, reqId)
-
-    def reqCurrentTime(self):
-        self.send(49, 1)
 
     def reqRealTimeBars(
             self, reqId, contract, barSize, whatToShow,
             useRTH, realTimeBarsOptions):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = RealTimeBarsRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            proto.barSize = barSize
+            if whatToShow:
+                proto.whatToShow = whatToShow
+            if useRTH:
+                proto.useRTH = useRTH
+            self.sendProto(_OUT_REQ_REAL_TIME_BARS, proto)
+            return
         self._logger.debug('Client::reqRealTimeBars')
         self.send(
             50, 3, reqId, contract, barSize, whatToShow,
             useRTH, realTimeBarsOptions)
 
     def cancelRealTimeBars(self, reqId):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelRealTimeBarsProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_REAL_TIME_BARS, proto)
+            return
         self._logger.debug('Client::cancelRealTimeBars')
         self.send(51, 1, reqId)
 
     def reqFundamentalData(
             self, reqId, contract, reportType, fundamentalDataOptions):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = FundamentalsDataRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if reportType:
+                proto.reportType = reportType
+            self.sendProto(_OUT_REQ_FUNDAMENTAL_DATA, proto)
+            return
         options = fundamentalDataOptions or []
         self.send(
             52, 2, reqId,
@@ -1039,30 +1255,73 @@ class Client:
             reportType, len(options), options)
 
     def cancelFundamentalData(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = CancelFundamentalsDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_FUNDAMENTAL_DATA, proto)
+            return
         self.send(53, 1, reqId)
 
     def calculateImpliedVolatility(
             self, reqId, contract, optionPrice, underPrice, implVolOptions):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = CalculateImpliedVolatilityRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            proto.optionPrice = optionPrice
+            proto.underPrice = underPrice
+            self.sendProto(_OUT_REQ_CALC_IMPLIED_VOLAT, proto)
+            return
         self.send(
             54, 3, reqId, contract, optionPrice, underPrice,
             len(implVolOptions), implVolOptions)
 
     def calculateOptionPrice(
             self, reqId, contract, volatility, underPrice, optPrcOptions):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = CalculateOptionPriceRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            proto.volatility = volatility
+            proto.underPrice = underPrice
+            self.sendProto(_OUT_REQ_CALC_OPTION_PRICE, proto)
+            return
         self.send(
             55, 3, reqId, contract, volatility, underPrice,
             len(optPrcOptions), optPrcOptions)
 
     def cancelCalculateImpliedVolatility(self, reqId):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = CancelCalculateImpliedVolatilityProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_CALC_IMPLIED_VOLAT, proto)
+            return
         self.send(56, 1, reqId)
 
     def cancelCalculateOptionPrice(self, reqId):
+        if self._serverVersion >= _MIN_PB_REST_1:
+            proto = CancelCalculateOptionPriceProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_CALC_OPTION_PRICE, proto)
+            return
         self.send(57, 1, reqId)
 
     def reqGlobalCancel(self):
+        if self._serverVersion >= _MIN_PB_PLACE_ORDER:
+            self.sendProto(_OUT_REQ_GLOBAL_CANCEL, GlobalCancelRequestProto())
+            return
         self.send(58, 1)
 
     def reqMarketDataType(self, marketDataType):
+        if self._serverVersion >= _MIN_PB_MARKET_DATA:
+            proto = MarketDataTypeRequestProto()
+            proto.marketDataType = marketDataType
+            self.sendProto(_OUT_REQ_MARKET_DATA_TYPE, proto)
+            return
         self.send(59, 1, marketDataType)
 
     def reqPositions(self):
@@ -1098,21 +1357,58 @@ class Client:
         self.send(64, 1)
 
     def verifyRequest(self, apiName, apiVersion):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = VerifyRequestProto()
+            if apiName:
+                proto.apiName = apiName
+            if apiVersion:
+                proto.apiVersion = apiVersion
+            self.sendProto(_OUT_VERIFY_REQUEST, proto)
+            return
         self.send(65, 1, apiName, apiVersion)
 
     def verifyMessage(self, apiData):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = VerifyMessageRequestProto()
+            if apiData:
+                proto.apiData = apiData
+            self.sendProto(_OUT_VERIFY_MESSAGE, proto)
+            return
         self.send(66, 1, apiData)
 
     def queryDisplayGroups(self, reqId):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = QueryDisplayGroupsRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_QUERY_DISPLAY_GROUPS, proto)
+            return
         self.send(67, 1, reqId)
 
     def subscribeToGroupEvents(self, reqId, groupId):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = SubscribeToGroupEventsRequestProto()
+            proto.reqId = reqId
+            proto.groupId = groupId
+            self.sendProto(_OUT_SUBSCRIBE_TO_GROUP_EVENTS, proto)
+            return
         self.send(68, 1, reqId, groupId)
 
     def updateDisplayGroup(self, reqId, contractInfo):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = UpdateDisplayGroupRequestProto()
+            proto.reqId = reqId
+            if contractInfo:
+                proto.contractInfo = contractInfo
+            self.sendProto(_OUT_UPDATE_DISPLAY_GROUP, proto)
+            return
         self.send(69, 1, reqId, contractInfo)
 
     def unsubscribeFromGroupEvents(self, reqId):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = UnsubscribeFromGroupEventsRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_UNSUBSCRIBE_FROM_GROUP_EVENTS, proto)
+            return
         self.send(70, 1, reqId)
 
     def startApi(self):
@@ -1175,6 +1471,18 @@ class Client:
     def reqSecDefOptParams(
             self, reqId, underlyingSymbol, futFopExchange,
             underlyingSecType, underlyingConId):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            proto = SecDefOptParamsRequestProto()
+            proto.reqId = reqId
+            if underlyingSymbol:
+                proto.underlyingSymbol = underlyingSymbol
+            if futFopExchange:
+                proto.futFopExchange = futFopExchange
+            if underlyingSecType:
+                proto.underlyingSecType = underlyingSecType
+            proto.underlyingConId = underlyingConId
+            self.sendProto(_OUT_REQ_SEC_DEF_OPT_PARAMS, proto)
+            return
         self.send(
             78, reqId, underlyingSymbol, futFopExchange,
             underlyingSecType, underlyingConId)
@@ -1183,15 +1491,35 @@ class Client:
         self.send(79, reqId)
 
     def reqFamilyCodes(self):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            self.sendProto(_OUT_REQ_FAMILY_CODES, FamilyCodesRequestProto())
+            return
         self.send(80)
 
     def reqMatchingSymbols(self, reqId, pattern):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            proto = MatchingSymbolsRequestProto()
+            proto.reqId = reqId
+            if pattern:
+                proto.pattern = pattern
+            self.sendProto(_OUT_REQ_MATCHING_SYMBOLS, proto)
+            return
         self.send(81, reqId, pattern)
 
     def reqMktDepthExchanges(self):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            self.sendProto(_OUT_REQ_MKT_DEPTH_EXCHANGES, MarketDepthExchangesRequestProto())
+            return
         self.send(82)
 
     def reqSmartComponents(self, reqId, bboExchange):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            proto = SmartComponentsRequestProto()
+            proto.reqId = reqId
+            if bboExchange:
+                proto.bboExchange = bboExchange
+            self.sendProto(_OUT_REQ_SMART_COMPONENTS, proto)
+            return
         self.send(83, reqId, bboExchange)
 
     def reqNewsArticle(
@@ -1210,39 +1538,127 @@ class Client:
 
     def reqHeadTimeStamp(
             self, reqId, contract, whatToShow, useRTH, formatDate):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = HeadTimestampRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if whatToShow:
+                proto.whatToShow = whatToShow
+            if useRTH:
+                proto.useRTH = useRTH
+            proto.formatDate = formatDate
+            self.sendProto(_OUT_REQ_HEAD_TIMESTAMP, proto)
+            return
         self.send(
             87, reqId, contract, contract.includeExpired,
             useRTH, whatToShow, formatDate)
 
     def reqHistogramData(self, tickerId, contract, useRTH, timePeriod):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = HistogramDataRequestProto()
+            proto.reqId = tickerId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if useRTH:
+                proto.useRTH = useRTH
+            if timePeriod:
+                proto.timePeriod = timePeriod
+            self.sendProto(_OUT_REQ_HISTOGRAM_DATA, proto)
+            return
         self.send(
             88, tickerId, contract, contract.includeExpired,
             useRTH, timePeriod)
 
     def cancelHistogramData(self, tickerId):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelHistogramDataProto()
+            proto.reqId = tickerId
+            self.sendProto(_OUT_CANCEL_HISTOGRAM_DATA, proto)
+            return
         self.send(89, tickerId)
 
     def cancelHeadTimeStamp(self, reqId):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelHeadTimestampProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_HEAD_TIMESTAMP, proto)
+            return
         self.send(90, reqId)
 
     def reqMarketRule(self, marketRuleId):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            proto = MarketRuleRequestProto()
+            proto.marketRuleId = marketRuleId
+            self.sendProto(_OUT_REQ_MARKET_RULE, proto)
+            return
         self.send(91, marketRuleId)
 
     def reqPnL(self, reqId, account, modelCode):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = PnLRequestProto()
+            proto.reqId = reqId
+            if account:
+                proto.account = account
+            if modelCode:
+                proto.modelCode = modelCode
+            self.sendProto(_OUT_REQ_PNL, proto)
+            return
         self.send(92, reqId, account, modelCode)
 
     def cancelPnL(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = CancelPnLProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_PNL, proto)
+            return
         self.send(93, reqId)
 
     def reqPnLSingle(self, reqId, account, modelCode, conid):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = PnLSingleRequestProto()
+            proto.reqId = reqId
+            if account:
+                proto.account = account
+            if modelCode:
+                proto.modelCode = modelCode
+            proto.conId = conid
+            self.sendProto(_OUT_REQ_PNL_SINGLE, proto)
+            return
         self.send(94, reqId, account, modelCode, conid)
 
     def cancelPnLSingle(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+            proto = CancelPnLSingleProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_PNL_SINGLE, proto)
+            return
         self.send(95, reqId)
 
     def reqHistoricalTicks(
             self, reqId, contract, startDateTime, endDateTime,
             numberOfTicks, whatToShow, useRth, ignoreSize, miscOptions):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = HistoricalTicksRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if startDateTime:
+                proto.startDateTime = str(startDateTime)
+            if endDateTime:
+                proto.endDateTime = str(endDateTime)
+            proto.numberOfTicks = numberOfTicks
+            if whatToShow:
+                proto.whatToShow = whatToShow
+            if useRth:
+                proto.useRTH = useRth
+            if ignoreSize:
+                proto.ignoreSize = ignoreSize
+            self.sendProto(_OUT_REQ_HISTORICAL_TICKS, proto)
+            return
         self.send(
             96, reqId, contract, contract.includeExpired,
             startDateTime, endDateTime, numberOfTicks, whatToShow,
@@ -1250,9 +1666,27 @@ class Client:
 
     def reqTickByTickData(
             self, reqId, contract, tickType, numberOfTicks, ignoreSize):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = TickByTickRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                proto.contract.CopyFrom(cp)
+            if tickType:
+                proto.tickType = tickType
+            proto.numberOfTicks = numberOfTicks
+            if ignoreSize:
+                proto.ignoreSize = ignoreSize
+            self.sendProto(_OUT_REQ_TICK_BY_TICK_DATA, proto)
+            return
         self.send(97, reqId, contract, tickType, numberOfTicks, ignoreSize)
 
     def cancelTickByTickData(self, reqId):
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelTickByTickProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_TICK_BY_TICK_DATA, proto)
+            return
         self.send(98, reqId)
 
     def reqCompletedOrders(self, apiOnly):
@@ -1264,12 +1698,43 @@ class Client:
         self.send(99, apiOnly)
 
     def reqWshMetaData(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA_NEWS:
+            proto = WshMetaDataRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_REQ_WSH_META_DATA, proto)
+            return
         self.send(100, reqId)
 
     def cancelWshMetaData(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA_NEWS:
+            proto = CancelWshMetaDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_WSH_META_DATA, proto)
+            return
         self.send(101, reqId)
 
     def reqWshEventData(self, reqId, data: WshEventData):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA_NEWS:
+            proto = WshEventDataRequestProto()
+            proto.reqId = reqId
+            if data.conId:
+                proto.conId = data.conId
+            if data.filter:
+                proto.filter = data.filter
+            if data.fillWatchlist:
+                proto.fillWatchlist = data.fillWatchlist
+            if data.fillPortfolio:
+                proto.fillPortfolio = data.fillPortfolio
+            if data.fillCompetitors:
+                proto.fillCompetitors = data.fillCompetitors
+            if data.startDate:
+                proto.startDate = data.startDate
+            if data.endDate:
+                proto.endDate = data.endDate
+            if data.totalLimit:
+                proto.totalLimit = data.totalLimit
+            self.sendProto(_OUT_REQ_WSH_EVENT_DATA, proto)
+            return
         fields = [102, reqId, data.conId]
         if self.serverVersion() >= 171:
             fields += [
@@ -1285,7 +1750,39 @@ class Client:
         self.send(*fields, makeEmpty=False)
 
     def cancelWshEventData(self, reqId):
+        if self._serverVersion >= _MIN_PB_SCAN_DATA_NEWS:
+            proto = CancelWshEventDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_WSH_EVENT_DATA, proto)
+            return
         self.send(103, reqId)
 
     def reqUserInfo(self, reqId):
+        if self._serverVersion >= _MIN_PB_REST_2:
+            proto = UserInfoRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_REQ_USER_INFO, proto)
+            return
         self.send(104, reqId)
+
+    def reqIds(self, numIds):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = IdsRequestProto()
+            proto.numIds = numIds
+            self.sendProto(_OUT_REQ_IDS, proto)
+            return
+        self.send(8, 1, numIds)
+
+    def reqCurrentTime(self):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            self.sendProto(_OUT_REQ_CURRENT_TIME, CurrentTimeRequestProto())
+            return
+        self.send(49, 1)
+
+    def setServerLogLevel(self, logLevel):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            proto = SetServerLogLevelRequestProto()
+            proto.logLevel = logLevel
+            self.sendProto(_OUT_SET_SERVER_LOGLEVEL, proto)
+            return
+        self.send(14, 1, logLevel)
