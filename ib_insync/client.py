@@ -65,6 +65,8 @@ _MIN_PB_COMPLETED_ORDER = 204  # MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER
 _MIN_PB_ACCOUNTS_POSITIONS = 207  # MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS
 _MIN_PB_REST_3 = 213  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_3
 
+from .msg_names import in_msg_name as _in_msg_name, out_msg_name as _out_msg_name
+
 class Client:
     """
     Replacement for ``ibapi.client.EClient`` that uses asyncio.
@@ -395,7 +397,7 @@ class Client:
         self.conn.sendMsg(self._prefix(byteArray))
         if self._logger.isEnabledFor(logging.DEBUG):
             self._logger.debug(
-                '>>> proto msgId=%d len=%d', msgId, len(payload))
+                '>>> proto %s len=%d', _out_msg_name(msgId), len(payload))
 
     def _onSocketHasData(self, data):
         debug = self._logger.isEnabledFor(logging.DEBUG)
@@ -451,8 +453,8 @@ class Client:
                     realMsgId = msgId - PROTOBUF_MSG_ID
                     if debug:
                         self._logger.debug(
-                            '<<< proto msgId=%d len=%d',
-                            realMsgId, len(msgPayload))
+                            '<<< proto %s len=%d',
+                            _in_msg_name(realMsgId), len(msgPayload))
 
                     # Snoop for nextValidId and managedAccounts
                     if not self._apiReady:

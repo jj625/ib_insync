@@ -11,6 +11,9 @@ implemented here. Extend as needed for other API calls.
 import logging
 from typing import Dict, Callable
 
+from functools import lru_cache
+
+from .msg_names import in_msg_name as _in_msg_name
 from .contract import (
     ComboLeg, Contract, ContractDetails, DeltaNeutralContract)
 from .objects import (
@@ -74,6 +77,20 @@ IN_COMPLETED_ORDER = 101
 IN_COMPLETED_ORDERS_END = 102
 
 
+def _proto_fields(proto_msg) -> frozenset[str]:
+    """Return the set of field names defined in a proto message's schema.
+
+    Cached per message type so the descriptor reflection cost is paid
+    only once.
+    """
+    return _proto_fields_by_type(type(proto_msg))
+
+
+@lru_cache(maxsize=None)
+def _proto_fields_by_type(cls) -> frozenset[str]:
+    return frozenset(f.name for f in cls.DESCRIPTOR.fields)
+
+
 class ProtobufDecoder:
     """Decode protobuf IB messages and invoke corresponding wrapper methods."""
 
@@ -113,14 +130,14 @@ class ProtobufDecoder:
         handler = self._handlers.get(msgId)
         if handler is None:
             self.logger.warning(
-                f'No protobuf handler for msgId {msgId}, '
-                f'payload length {len(payload)}')
+                'No protobuf handler for %s, payload length %d',
+                _in_msg_name(msgId), len(payload))
             return
         try:
             handler(payload)
         except Exception:
             self.logger.exception(
-                f'Error handling protobuf msgId {msgId}')
+                'Error handling protobuf %s', _in_msg_name(msgId))
 
     # ---- helpers ----
 
@@ -198,6 +215,7 @@ class ProtobufDecoder:
         # overwrite with proto's orderId if present
         if orderProto.HasField('orderId'):
             o.orderId = orderProto.orderId
+        # proto_field_name -> ib_insync Order attr name
         _simple_fields = [
             ('action', 'action'), ('orderType', 'orderType'),
             ('lmtPrice', 'lmtPrice'), ('auxPrice', 'auxPrice'),
@@ -264,8 +282,10 @@ class ProtobufDecoder:
             ('autoCancelParent', 'autoCancelParent'),
             ('transmit', 'transmit'),
         ]
+        # Only check fields that actually exist in the proto schema
+        proto_field_names = _proto_fields(orderProto)
         for proto_name, order_name in _simple_fields:
-            if orderProto.HasField(proto_name):
+            if proto_name in proto_field_names and orderProto.HasField(proto_name):
                 setattr(o, order_name, getattr(orderProto, proto_name))
         # totalQuantity is a Decimal in tws-api but float in ib_insync
         if orderProto.HasField('totalQuantity'):
@@ -321,8 +341,9 @@ class ProtobufDecoder:
             ('completedTime', 'completedTime'),
             ('completedStatus', 'completedStatus'),
         ]
+        proto_field_names = _proto_fields(orderStateProto)
         for proto_name, os_name in _fields:
-            if orderStateProto.HasField(proto_name):
+            if proto_name in proto_field_names and orderStateProto.HasField(proto_name):
                 setattr(os, os_name, getattr(orderStateProto, proto_name))
         return os
 
@@ -341,8 +362,9 @@ class ProtobufDecoder:
             ('modelCode', 'modelCode'),
             ('lastLiquidity', 'lastLiquidity'),
         ]
+        proto_field_names = _proto_fields(executionProto)
         for proto_name, exec_name in _fields:
-            if executionProto.HasField(proto_name):
+            if proto_name in proto_field_names and executionProto.HasField(proto_name):
                 setattr(e, exec_name, getattr(executionProto, proto_name))
         if executionProto.HasField('shares'):
             e.shares = float(executionProto.shares)
