@@ -138,6 +138,20 @@ class BarData:
     average: float = 0.0
     barCount: int = 0
     timestamp: datetime|pd.Timestamp = EPOCH # datetime.now(timezone.utc)
+
+    def to_dict(self) -> dict:
+        return {
+            "date": f"{self.date}",
+            "open": self.open_,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "average": self.average,
+            "barCount": self.barCount,
+            "timestamp": f"{self.timestamp}",
+        }
+
     @property
     def open(self) -> float:
         return self.open_
