@@ -1,0 +1,6 @@
+numpy
+pandas
+protobuf>=5.29
+tzdata
+-e ./tws-api/source/pythonclient
+-e ../../erdewit/eventkit

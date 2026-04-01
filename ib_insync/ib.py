@@ -1986,6 +1986,11 @@ class IB:
         self.client.reqCurrentTime()
         return future
 
+    def reqCurrentTimeInMillisAsync(self) -> Awaitable[datetime.datetime]:
+        future = self.wrapper.startReq('currentTimeInMillis')
+        self.client.reqCurrentTimeInMillis()
+        return future
+
     def reqAccountUpdatesAsync(self, account: str) -> Awaitable[None]:
         self._logger.info(f'reqAccountUpdatesAsync: account={account}')
         future = self.wrapper.startReq('accountValues')

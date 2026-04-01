@@ -21,6 +21,8 @@ from .util import UNSET_DOUBLE, UNSET_INTEGER, dataclassAsTuple, getLoop, run
 
 from .wrapper import Wrapper
 
+import ibapi.server_versions
+
 # Protobuf protocol constants
 PROTOBUF_MSG_ID = 200
 MIN_SERVER_VER_PROTOBUF = 201
@@ -31,6 +33,7 @@ from ibapi.protobuf.PositionsRequest_pb2 import PositionsRequest as PositionsReq
 from ibapi.protobuf.OpenOrdersRequest_pb2 import OpenOrdersRequest as OpenOrdersRequestProto
 from ibapi.protobuf.CompletedOrdersRequest_pb2 import CompletedOrdersRequest as CompletedOrdersRequestProto
 from ibapi.protobuf.AccountDataRequest_pb2 import AccountDataRequest as AccountDataRequestProto
+from ibapi.protobuf.ManagedAccountsRequest_pb2 import ManagedAccountsRequest as ManagedAccountsRequestProto
 from ibapi.protobuf.AccountUpdatesMultiRequest_pb2 import AccountUpdatesMultiRequest as AccountUpdatesMultiRequestProto
 from ibapi.protobuf.ExecutionRequest_pb2 import ExecutionRequest as ExecutionRequestProto
 from ibapi.protobuf.ExecutionFilter_pb2 import ExecutionFilter as ExecutionFilterProto
@@ -90,6 +93,7 @@ from ibapi.protobuf.MarketDepthExchangesRequest_pb2 import MarketDepthExchangesR
 from ibapi.protobuf.UserInfoRequest_pb2 import UserInfoRequest as UserInfoRequestProto
 from ibapi.protobuf.IdsRequest_pb2 import IdsRequest as IdsRequestProto
 from ibapi.protobuf.CurrentTimeRequest_pb2 import CurrentTimeRequest as CurrentTimeRequestProto
+from ibapi.protobuf.CurrentTimeInMillisRequest_pb2 import CurrentTimeInMillisRequest as CurrentTimeInMillisRequestProto
 from ibapi.protobuf.SetServerLogLevelRequest_pb2 import SetServerLogLevelRequest as SetServerLogLevelRequestProto
 # verify, display groups
 from ibapi.protobuf.VerifyRequest_pb2 import VerifyRequest as VerifyRequestProto
@@ -120,6 +124,7 @@ _OUT_REQ_ACCT_DATA = 6
 _OUT_REQ_EXECUTIONS = 7
 _OUT_REQ_AUTO_OPEN_ORDERS = 15
 _OUT_REQ_ALL_OPEN_ORDERS = 16
+_OUT_REQ_MANAGED_ACCTS = 17
 _OUT_REQ_POSITIONS = 61
 _OUT_REQ_ACCOUNT_SUMMARY = 62
 _OUT_CANCEL_ACCOUNT_SUMMARY = 63
@@ -181,6 +186,7 @@ _OUT_CANCEL_WSH_META_DATA = 101
 _OUT_REQ_WSH_EVENT_DATA = 102
 _OUT_CANCEL_WSH_EVENT_DATA = 103
 _OUT_REQ_USER_INFO = 104
+_OUT_REQ_CURRENT_TIME_IN_MILLIS = 105
 
 # Min server versions for protobuf per request category
 _MIN_PB_COMPLETED_ORDER = 204  # MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER
@@ -1063,6 +1069,10 @@ class Client:
         self.send(16, 1)
 
     def reqManagedAccts(self):
+        if self._serverVersion >= ibapi.server_versions.MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS:
+            self.sendProto(_OUT_REQ_MANAGED_ACCTS, ManagedAccountsRequestProto())
+            return
+
         self.send(17, 1)
 
     def requestFA(self, faData):
@@ -1778,6 +1788,12 @@ class Client:
             self.sendProto(_OUT_REQ_CURRENT_TIME, CurrentTimeRequestProto())
             return
         self.send(49, 1)
+
+    def reqCurrentTimeInMillis(self):
+        if self._serverVersion >= _MIN_PB_REST_3:
+            self.sendProto(_OUT_REQ_CURRENT_TIME_IN_MILLIS, CurrentTimeInMillisRequestProto())
+            return
+        self.send(105, 1)
 
     def setServerLogLevel(self, logLevel):
         if self._serverVersion >= _MIN_PB_REST_3:

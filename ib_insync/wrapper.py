@@ -1252,6 +1252,10 @@ class Wrapper:
         dt = datetime.fromtimestamp(time, timezone.utc)
         self._endReq('currentTime', dt)
 
+    def currentTimeInMillis(self, timeInMillis: int):
+        dt = datetime.fromtimestamp(timeInMillis / 1000, timezone.utc)
+        self._endReq('currentTimeInMillis', dt)
+
     def tickEFP(
             self, reqId: int, tickType: int, basisPoints: float,
             formattedBasisPoints: str, totalDividends: float,

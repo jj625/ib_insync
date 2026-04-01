@@ -114,6 +114,7 @@ from ibapi.protobuf.WshMetaData_pb2 import WshMetaData as WshMetaDataProto
 from ibapi.protobuf.WshEventData_pb2 import WshEventData as WshEventDataProto
 from ibapi.protobuf.UserInfo_pb2 import UserInfo as UserInfoProto
 from ibapi.protobuf.CurrentTime_pb2 import CurrentTime as CurrentTimeProto
+from ibapi.protobuf.CurrentTimeInMillis_pb2 import CurrentTimeInMillis as CurrentTimeInMillisProto
 from ibapi.protobuf.VerifyMessageApi_pb2 import VerifyMessageApi as VerifyMessageApiProto
 from ibapi.protobuf.VerifyCompleted_pb2 import VerifyCompleted as VerifyCompletedProto
 from ibapi.protobuf.DisplayGroupList_pb2 import DisplayGroupList as DisplayGroupListProto
@@ -235,6 +236,7 @@ class ProtobufDecoder:
             IN.WSH_EVENT_DATA: self._wshEventData,
             IN.USER_INFO: self._userInfo,
             IN.CURRENT_TIME: self._currentTime,
+            IN.CURRENT_TIME_IN_MILLIS: self._currentTimeInMillis,
             IN.VERIFY_MESSAGE_API: self._verifyMessageAPI,
             IN.VERIFY_COMPLETED: self._verifyCompleted,
             IN.DISPLAY_GROUP_LIST: self._displayGroupList,
@@ -1357,6 +1359,12 @@ class ProtobufDecoder:
         proto.ParseFromString(payload)
         time = proto.currentTime if proto.HasField('currentTime') else 0
         self.wrapper.currentTime(time)
+
+    def _currentTimeInMillis(self, payload: bytes):
+        proto = CurrentTimeInMillisProto()
+        proto.ParseFromString(payload)
+        timeInMillis = proto.currentTimeInMillis if proto.HasField('currentTimeInMillis') else 0
+        self.wrapper.currentTimeInMillis(timeInMillis)
 
     def _verifyMessageAPI(self, payload: bytes):
         proto = VerifyMessageApiProto()
