@@ -287,6 +287,14 @@ class ProtobufDecoder:
             c.tradingClass = contractProto.tradingClass
         if contractProto.HasField('primaryExch'):
             c.primaryExchange = contractProto.primaryExch
+        if contractProto.HasField('secIdType'):
+            c.secIdType = contractProto.secIdType
+        if contractProto.HasField('secId'):
+            c.secId = contractProto.secId
+        if contractProto.HasField('description'):
+            c.description = contractProto.description
+        if contractProto.HasField('issuerId'):
+            c.issuerId = contractProto.issuerId
         if contractProto.HasField('comboLegsDescrip'):
             c.comboLegsDescrip = contractProto.comboLegsDescrip
         # comboLegs
@@ -322,6 +330,10 @@ class ProtobufDecoder:
             if dnp.HasField('price'):
                 dnc.price = dnp.price
             c.deltaNeutralContract = dnc
+        if contractProto.HasField('includeExpired'):
+            c.includeExpired = contractProto.includeExpired
+        if contractProto.HasField('lastTradeDate'):
+            c.lastTradeDate = contractProto.lastTradeDate
         return c
 
     @staticmethod
