@@ -838,6 +838,10 @@ class Wrapper:
             ticker.askYield = price
         elif tickType == 52:
             ticker.lastYield = price
+        elif tickType == TickTypeEnum.ETF_FROZEN_NAV_LAST:
+            ticker.etf_frozen_nav_last = price
+        elif tickType == TickTypeEnum.ETF_NAV_LAST:
+            ticker.etf_nav_last = price
         else:
             self._logger.error(f'priceSizeTick: Unknown tickType: {tickType}')
         if price or size:

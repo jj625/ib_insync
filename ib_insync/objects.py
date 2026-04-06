@@ -427,12 +427,19 @@ class TickData(NamedTuple):
 
     def __repr__(self):
         name: TickTypeEnum = TickTypeEnum(self.tickType)
-        match self.tickType, self.size:
-            case TickTypeEnum.CLOSE, 0:
-                return f"TickData(time='{self.time.astimezone().isoformat()}', tickType={name.name}, price={self.price})"
+        tickType_str = f'tickType={name.name}'
+        time_str = f'time={self.time.astimezone().isoformat()}'
+        # if self.size is plain integer, format as integer
+        size_str = f'size={int(self.size)}' if self.size.is_integer() else f'size={self.size}'
+        match self.tickType, self.size, self.price:
+            case TickTypeEnum.LAST | TickTypeEnum.BID | TickTypeEnum.ASK | TickTypeEnum.HIGH | TickTypeEnum.LOW | TickTypeEnum.OPEN | TickTypeEnum.CLOSE | TickTypeEnum.MARK_PRICE | TickTypeEnum.OPTION_IMPLIED_VOL | TickTypeEnum.AUCTION_PRICE | TickTypeEnum.HIGH_13_WEEK | TickTypeEnum.LOW_13_WEEK | TickTypeEnum.HIGH_26_WEEK | TickTypeEnum.LOW_26_WEEK | TickTypeEnum.HIGH_52_WEEK | TickTypeEnum.LOW_52_WEEK | TickTypeEnum.ETF_FROZEN_NAV_LAST | TickTypeEnum.ETF_NAV_ASK | TickTypeEnum.ETF_NAV_BID | TickTypeEnum.ETF_NAV_LAST | TickTypeEnum.ETF_NAV_CLOSE | TickTypeEnum.ETF_NAV_PRIOR_CLOSE, 0, _:
+                return f"TickData({time_str}, {tickType_str}, price={self.price})"
+            case TickTypeEnum.VOLUME | TickTypeEnum.OPTION_CALL_VOLUME | TickTypeEnum.OPTION_PUT_VOLUME | TickTypeEnum.FUTURES_OPEN_INTEREST | TickTypeEnum.OPTION_CALL_OPEN_INTEREST | TickTypeEnum.OPTION_PUT_OPEN_INTEREST | TickTypeEnum.REGULATORY_IMBALANCE | TickTypeEnum.AUCTION_VOLUME | TickTypeEnum.AVG_OPT_VOLUME | TickTypeEnum.AVG_VOLUME | TickTypeEnum.SHORTABLE_SHARES, _, -1.0:
+                return f"TickData({time_str}, {tickType_str}, {size_str})"
+            case TickTypeEnum.HALTED, 0, 0:
+                return f"TickData({time_str}, {tickType_str})"
             case _:
-                return f"TickData(time='{self.time.astimezone().isoformat()}', " \
-                       f"tickType={name.name}, price={self.price}, size={self.size})"
+                return f"TickData({time_str}, {tickType_str}, price={self.price}, {size_str})"
 
 class HistoricalTick(NamedTuple):
     time: datetime
@@ -1090,12 +1097,12 @@ class BarDataList(List[BarData]):
         self._average[idx] = bar.average
         self._barCount[idx] = bar.barCount
 
-        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else np.NINF
-        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else np.NINF
-        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else np.NINF
-        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else np.NINF
-        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else np.NINF
-        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else np.NINF
+        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else NPNINF
+        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else NPNINF
+        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else NPNINF
+        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else NPNINF
+        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else NPNINF
+        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else NPNINF
 
         self.log_high_low_[idx] = np.log(bar.high / bar.low)
         self.log_close_open_[idx] = np.log(bar.close / bar.open_)

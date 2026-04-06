@@ -1851,13 +1851,14 @@ class IB:
             self, host: str = '127.0.0.1', port: int = 7497,
             clientId: int = 1, timeout: Optional[float] = 4,
             readonly: bool = False, account: str = '',
+            _MaxClientVer: int = 178,
             raiseSyncErrors: bool = False):
         clientId = int(clientId)
         self.wrapper.clientId = clientId
         timeout = timeout or None
         try:
             # establish API connection
-            await self.client.connectAsync(host, port, clientId, timeout)
+            await self.client.connectAsync(host, port, clientId, _MaxClientVer, timeout)
 
             # autobind manual orders
             if clientId == 0:
@@ -2078,7 +2079,7 @@ class IB:
         return future
 
     async def reqMatchingSymbolsAsync(self, pattern: str) \
-            -> Optional[List[ContractDescription]]:
+            -> List[ContractDescription]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         self.client.reqMatchingSymbols(reqId, pattern)
@@ -2087,10 +2088,10 @@ class IB:
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqMatchingSymbolsAsync: Timeout')
-            return None
+            return []
 
     async def reqMarketRuleAsync(
-            self, marketRuleId: int) -> Optional[List[PriceIncrement]]:
+            self, marketRuleId: int) -> List[PriceIncrement]:
         future = self.wrapper.startReq(f'marketRule-{marketRuleId}')
         try:
             self.client.reqMarketRule(marketRuleId)
@@ -2098,7 +2099,7 @@ class IB:
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqMarketRuleAsync: Timeout')
-            return None
+            return []
 
     async def reqHistoricalDataAsync(
             self, contract: Contract,

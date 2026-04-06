@@ -115,6 +115,12 @@ class Ticker:
     regulatoryImbalance: float = nan
     bboExchange: str = ''
     snapshotPermissions: int = 0
+    etf_frozen_nav_last: float = nan
+    etf_nav_last: float = nan
+    shortTermVolume3Min: float = nan
+    shortTermVolume5Min: float = nan
+    shortTermVolume10Min: float = nan
+
     lastTimestamp: Optional[datetime] = None # tickType 45, Time of the last trade (in UNIX time).
 
     def __post_init__(self):
