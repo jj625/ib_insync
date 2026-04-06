@@ -21,7 +21,7 @@ from .util import UNSET_DOUBLE, UNSET_INTEGER, dataclassAsTuple, getLoop, run
 
 from .wrapper import Wrapper
 
-import ibapi.server_versions
+import ibapi.server_versions as server_versions
 
 # Protobuf protocol constants
 PROTOBUF_MSG_ID = 200
@@ -402,6 +402,7 @@ class Client:
 
     def connect(
             self, host: str, port: int, clientId: int,
+            _MaxClientVer = 178,
             timeout: float = 2.0):
         """
         Connect to a running TWS or IB gateway application.
@@ -415,9 +416,12 @@ class Client:
                 ``timeout`` seconds then the ``asyncio.TimeoutError`` exception
                 is raised. Set to 0 to disable timeout.
         """
-        run(self.connectAsync(host, port, clientId, timeout))
+        run(self.connectAsync(host, port, clientId, _MaxClientVer, timeout))
 
-    async def connectAsync(self, host: str, port: int, clientId: int, timeout: Optional[float]=2.0):
+    async def connectAsync(self, host: str, port: int, clientId: int, _MaxClientVer = 178, timeout: Optional[float]=2.0):
+        if _MaxClientVer >= 178:
+            self.MaxClientVersion = _MaxClientVer
+            self._logger.info(f'Setting MaxClientVersion to {_MaxClientVer}')
         try:
             self._logger.info(
                 f'Connecting to {host}:{port} with clientId {clientId}...')
@@ -1069,7 +1073,7 @@ class Client:
         self.send(16, 1)
 
     def reqManagedAccts(self):
-        if self._serverVersion >= ibapi.server_versions.MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS:
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS:
             self.sendProto(_OUT_REQ_MANAGED_ACCTS, ManagedAccountsRequestProto())
             return
 
@@ -1790,10 +1794,13 @@ class Client:
         self.send(49, 1)
 
     def reqCurrentTimeInMillis(self):
-        if self._serverVersion >= _MIN_PB_REST_3:
-            self.sendProto(_OUT_REQ_CURRENT_TIME_IN_MILLIS, CurrentTimeInMillisRequestProto())
-            return
-        self.send(105, 1)
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS:
+            if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
+                self.sendProto(_OUT_REQ_CURRENT_TIME_IN_MILLIS, CurrentTimeInMillisRequestProto())
+                return
+            self.send(105, 1)
+        else:
+            self._logger.error('Server version does not support reqCurrentTimeInMillis')
 
     def setServerLogLevel(self, logLevel):
         if self._serverVersion >= _MIN_PB_REST_3:

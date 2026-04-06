@@ -1988,6 +1988,12 @@ class IB:
         return future
 
     def reqCurrentTimeInMillisAsync(self) -> Awaitable[datetime.datetime]:
+        if self.client._serverVersion < ibapi.server_versions.MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS:
+            self._logger.warning('Server version does not support reqCurrentTimeInMillis')
+            future = asyncio.Future()
+            future.set_result(datetime.datetime.now(datetime.timezone.utc).astimezone()) # dummy
+            return future
+
         future = self.wrapper.startReq('currentTimeInMillis')
         self.client.reqCurrentTimeInMillis()
         return future
