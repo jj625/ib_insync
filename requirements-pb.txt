@@ -1,3 +1,4 @@
+colorama
 numpy
 pandas
 protobuf>=5.29

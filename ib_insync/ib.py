@@ -27,6 +27,7 @@ from ib_insync.order import (
     BracketOrder, LimitOrder, Order, OrderState, OrderStatus, StopOrder, Trade)
 from ib_insync.ticker import Ticker
 from ib_insync.wrapper import Wrapper
+import ibapi.server_versions
 
 
 class IB:

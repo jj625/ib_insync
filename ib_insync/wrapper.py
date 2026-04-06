@@ -21,7 +21,7 @@ from ib_insync.objects import (
     NewsTick, OptionChain, OptionComputation, PnL, PnLSingle, PortfolioItem,
     Position, PositionMulti, PriceIncrement, RealTimeBar, RealTimeBarList, SoftDollarTier,
     TickAttribBidAsk, TickAttribLast, TickByTickAllLast, TickByTickBidAsk,
-    TickByTickMidPoint, TickData, TradeLogEntry)
+    TickByTickMidPoint, TickData, TickTypeEnum, TradeLogEntry)
 from ib_insync.order import Order, OrderState, OrderStatus, Trade
 from ib_insync.ticker import Ticker
 from ib_insync.util import (
@@ -691,10 +691,12 @@ class Wrapper:
             self._logger.warning(f'historicalData: reqId={reqId} bar={bar} no results')
 
     def historicalDataEnd(self, reqId, _start: str, _end: str):
-        self._logger.info(f'historicalDataEnd: reqId={reqId} start={_start} end={_end}')
+        msg = [f'reqId={reqId} start={_start} end={_end}']
+        # self._logger.info(f'historicalDataEnd: reqId={reqId} start={_start} end={_end}')
         container: Optional[BarDataList] = self._results.get(reqId)
         if container:
-            self._logger.info(f'historicalDataEnd: reqId={reqId} len(bars)={len(container)}')
+            msg.append(f'len(bars)={len(container)}')
+            # self._logger.info(f'historicalDataEnd: reqId={reqId} len(bars)={len(container)}')
             if container.keepUpToDate:
             # if hasattr(container, '_historicalDataEndHook'):
             #     self._logger.info(f'historicalDataEnd: {reqId} calling _historicalDataEndHook {container._historicalDataEndHook}')
@@ -710,9 +712,12 @@ class Wrapper:
                 container._init_npdata(_start, _end)
                 container._historicalDataEndHook.emit(_start, _end, container)
             else:
-                self._logger.info(f'historicalDataEnd: reqId={reqId} no subscription')
+                msg.append(f'keepUpToDate={container.keepUpToDate}')
+                # self._logger.info(f'historicalDataEnd: reqId={reqId} keepUpToDate={container.keepUpToDate}')
         else:
-            self._logger.warning(f'historicalDataEnd: reqId={reqId} no container')
+            msg.append(f'no container')
+            # self._logger.warning(f'historicalDataEnd: reqId={reqId} no container')
+        self._logger.info(f'historicalDataEnd: {" | ".join(msg)}')
         self._endReq(reqId)
 
     def historicalDataUpdate(self, reqId: int, bar: BarData):
@@ -783,7 +788,7 @@ class Wrapper:
             self._logger.error(f'priceSizeTick: Unknown reqId: {reqId}')
             return
         # https://interactivebrokers.github.io/tws-api/tick_types.html
-        if tickType in (1, 66):
+        if tickType in (TickTypeEnum.BID, TickTypeEnum.DELAYED_BID): # (1, 66)
             if price == ticker.bid and size == ticker.bidSize:
                 return
             if price != ticker.bid:
@@ -792,7 +797,7 @@ class Wrapper:
             if size != ticker.bidSize:
                 ticker.prevBidSize = ticker.bidSize
                 ticker.bidSize = size
-        elif tickType in (2, 67):
+        elif tickType in (TickTypeEnum.ASK, TickTypeEnum.DELAYED_ASK): # (2, 67)
             if price == ticker.ask and size == ticker.askSize:
                 return
             if price != ticker.ask:
@@ -801,42 +806,42 @@ class Wrapper:
             if size != ticker.askSize:
                 ticker.prevAskSize = ticker.askSize
                 ticker.askSize = size
-        elif tickType in (4, 68):
+        elif tickType in (TickTypeEnum.LAST, TickTypeEnum.DELAYED_LAST): # (4, 68)
             if price != ticker.last:
                 ticker.prevLast = ticker.last
                 ticker.last = price
             if size != ticker.lastSize:
                 ticker.prevLastSize = ticker.lastSize
                 ticker.lastSize = size
-        elif tickType in (6, 72):
+        elif tickType in (TickTypeEnum.HIGH, TickTypeEnum.DELAYED_HIGH): # (6, 72)
             ticker.high = price
-        elif tickType in (7, 73):
+        elif tickType in (TickTypeEnum.LOW, TickTypeEnum.DELAYED_LOW): # (7, 73)
             ticker.low = price
-        elif tickType in (9, 75):
+        elif tickType in (TickTypeEnum.CLOSE, TickTypeEnum.DELAYED_CLOSE): # (9, 75)
             ticker.close = price
-        elif tickType in (14, 76):
+        elif tickType in (TickTypeEnum.OPEN, TickTypeEnum.DELAYED_OPEN): # (14, 76)
             ticker.open_ = price
-        elif tickType == 15:
+        elif tickType == TickTypeEnum.LOW_13_WEEK: # 15
             ticker.low13week = price
-        elif tickType == 16:
+        elif tickType == TickTypeEnum.HIGH_13_WEEK: # 16
             ticker.high13week = price
-        elif tickType == 17:
+        elif tickType == TickTypeEnum.LOW_26_WEEK: # 17
             ticker.low26week = price
-        elif tickType == 18:
+        elif tickType == TickTypeEnum.HIGH_26_WEEK: # 18
             ticker.high26week = price
-        elif tickType == 19:
+        elif tickType == TickTypeEnum.LOW_52_WEEK: # 19
             ticker.low52week = price
-        elif tickType == 20:
+        elif tickType == TickTypeEnum.HIGH_52_WEEK: # 20
             ticker.high52week = price
-        elif tickType == 35:
+        elif tickType == TickTypeEnum.AUCTION_PRICE: # 35
             ticker.auctionPrice = price
-        elif tickType == 37:
+        elif tickType == TickTypeEnum.MARK_PRICE: # 37
             ticker.markPrice = price
-        elif tickType in (50, 103):
+        elif tickType in (TickTypeEnum.BID_YIELD, TickTypeEnum.DELAYED_YIELD_BID): # (50, 103)
             ticker.bidYield = price
-        elif tickType in (51, 104):
+        elif tickType in (TickTypeEnum.ASK_YIELD, TickTypeEnum.DELAYED_YIELD_ASK): # (51, 104)
             ticker.askYield = price
-        elif tickType == 52:
+        elif tickType == TickTypeEnum.LAST_YIELD: # 52
             ticker.lastYield = price
         elif tickType == TickTypeEnum.ETF_FROZEN_NAV_LAST:
             ticker.etf_frozen_nav_last = price
@@ -900,6 +905,12 @@ class Wrapper:
             ticker.avOptionVolume = size
         elif tickType == 89:
             ticker.shortableShares = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_3_MIN:
+            ticker.shortTermVolume3Min = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_5_MIN:
+            ticker.shortTermVolume5Min = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_10_MIN:
+            ticker.shortTermVolume10Min = size
         else:
             self._logger.error(f'tickSize: Unknown tickType: {tickType}')
         if price or size:
@@ -974,20 +985,21 @@ class Wrapper:
 
     def tickString(self, reqId: int, tickType: int, value: str):
         ticker = self.reqId2Ticker.get(reqId)
-        # self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
+        ticker_str = f' {ticker.__repr_minimal__()}' if ticker else ''
+        self._logger.info(f'tickString: {reqId} {tickType}({TickTypeEnum(tickType).name}) "{value}"{ticker_str}')
         if not ticker:
             self._logger.error(f'tickString: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
         self._logger.debug(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}' if tickType != 45 
             else f'tickString: {reqId} {tickType} {datetime.fromtimestamp(int(value), timezone.utc)} {ticker.__repr_minimal__()}')
         try:
-            if tickType == 32:
+            if tickType == TickTypeEnum.BID_EXCH: # 32
                 ticker.bidExchange = value
-            elif tickType == 33:
+            elif tickType == TickTypeEnum.ASK_EXCH: # 33
                 ticker.askExchange = value
-            elif tickType == 84:
+            elif tickType == TickTypeEnum.LAST_EXCH: # 84
                 ticker.lastExchange = value
-            elif tickType == 47:
+            elif tickType == TickTypeEnum.FUNDAMENTAL_RATIOS: # 47
                 # https://web.archive.org/web/20200725010343/https://interactivebrokers.github.io/tws-api/fundamental_ratios_tags.html
                 d = dict(t.split('=')                     # type: ignore
                          for t in value.split(';') if t)  # type: ignore
@@ -998,16 +1010,16 @@ class Wrapper:
                         d[k] = float(v)                   # type: ignore
                         d[k] = int(v)                     # type: ignore
                 ticker.fundamentalRatios = FundamentalRatios(**d)
-            elif tickType in (48, 77):
+            elif tickType in (TickTypeEnum.RT_VOLUME, TickTypeEnum.RT_TRD_VOLUME): # (48, 77)
                 # RT Volume or RT Trade Volume string format:
                 # price;size;ms since epoch;total volume;VWAP;single trade
                 # example:
                 # 701.28;1;1348075471534;67854;701.46918464;true
                 priceStr, sizeStr, rtTime, volume, vwap, _ = value.split(';')
                 if volume:
-                    if tickType == 48:
+                    if tickType == TickTypeEnum.RT_VOLUME: # 48
                         ticker.rtVolume = float(volume)
-                    elif tickType == 77:
+                    elif tickType == TickTypeEnum.RT_TRD_VOLUME: # 77
                         ticker.rtTradeVolume = float(volume)
                 if vwap:
                     ticker.vwap = float(vwap)
@@ -1027,7 +1039,7 @@ class Wrapper:
                         ticker.lastSize = size
                     tick = TickData(self.lastTime, tickType, price, size)
                     ticker.ticks.append(tick)
-            elif tickType == 59:
+            elif tickType == TickTypeEnum.IB_DIVIDENDS: # 59
                 # Dividend tick:
                 # https://interactivebrokers.github.io/tws-api/tick_types.html#ib_dividends
                 # example value: '0.83,0.92,20130219,0.23'
@@ -1037,7 +1049,7 @@ class Wrapper:
                     float(next12) if next12 else None,
                     parseIBDatetime(nextDate) if nextDate else None,
                     float(nextAmount) if nextAmount else None)
-            elif tickType == 45:
+            elif tickType == TickTypeEnum.LAST_TIMESTAMP: # 45
                 self.lastTimestamp = datetime.fromtimestamp(int(value), timezone.utc)
             else:
                 self._logger.error(f'tickString: Unknown tickType: {tickType}')
@@ -1053,28 +1065,32 @@ class Wrapper:
         if not ticker:
             self._logger.error(f'tickGeneric: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
-        self._logger.info(f'tickGeneric: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
+        self._logger.info(f'tickGeneric: {reqId} {tickType}({TickTypeEnum(tickType).name}) {value} {ticker.__repr_minimal__()}')
         try:
             value = float(value)
         except ValueError:
             self._logger.error(f'genericTick: malformed value: {value!r}')
             return
-        if tickType == 23:
+        if tickType == TickTypeEnum.OPTION_HISTORICAL_VOL:
             ticker.histVolatility = value
-        elif tickType == 24:
+        elif tickType == TickTypeEnum.OPTION_IMPLIED_VOL:
             ticker.impliedVolatility = value
-        elif tickType == 31:
+        elif tickType == TickTypeEnum.INDEX_FUTURE_PREMIUM:
             ticker.indexFuturePremium = value
-        elif tickType == 49:
+        elif tickType == TickTypeEnum.HALTED:
             ticker.halted = value
-        elif tickType == 54:
+        elif tickType == TickTypeEnum.TRADE_COUNT:
             ticker.tradeCount = value
-        elif tickType == 55:
+        elif tickType == TickTypeEnum.TRADE_RATE:
             ticker.tradeRate = value
-        elif tickType == 56:
+        elif tickType == TickTypeEnum.VOLUME_RATE:
             ticker.volumeRate = value
-        elif tickType == 58:
+        elif tickType == TickTypeEnum.RT_HISTORICAL_VOL:
             ticker.rtHistVolatility = value
+        elif tickType == TickTypeEnum.SHORTABLE:
+            ticker.shortable = value
+        elif tickType == TickTypeEnum.SHORTABLE_SHARES:
+            ticker.shortableShares = value
         else:
             self._logger.error(f'tickGeneric: Unknown tickType: {tickType}')
         tick = TickData(self.lastTime, tickType, value, 0)
@@ -1147,13 +1163,13 @@ class Wrapper:
         if ticker:
             # reply from reqMktData
             # https://interactivebrokers.github.io/tws-api/tick_types.html
-            if tickType in (10, 80):
+            if tickType in (TickTypeEnum.BID_OPTION_COMPUTATION, TickTypeEnum.DELAYED_BID_OPTION): # (10, 80)
                 ticker.bidGreeks = comp
-            elif tickType in (11, 81):
+            elif tickType in (TickTypeEnum.ASK_OPTION_COMPUTATION, TickTypeEnum.DELAYED_ASK_OPTION): # (11, 81)
                 ticker.askGreeks = comp
-            elif tickType in (12, 82):
+            elif tickType in (TickTypeEnum.LAST_OPTION_COMPUTATION, TickTypeEnum.DELAYED_LAST_OPTION): # (12, 82)
                 ticker.lastGreeks = comp
-            elif tickType in (13, 83):
+            elif tickType in (TickTypeEnum.MODEL_OPTION, TickTypeEnum.DELAYED_MODEL_OPTION): # (13, 83)
                 ticker.modelGreeks = comp
             self.pendingTickers.add(ticker)
         elif reqId in self._futures:

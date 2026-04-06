@@ -38,3 +38,4 @@ notebooks/tracker-241106-prod.py
 pricedb/ohlcv.db
 *.pyi
 *.code-workspace
+debug_payload.bin
