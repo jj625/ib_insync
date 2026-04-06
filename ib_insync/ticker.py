@@ -87,6 +87,7 @@ class Ticker:
     tradeRate: float = nan
     volumeRate: float = nan
     shortableShares: float = nan
+    shortable: float = nan
     indexFuturePremium: float = nan
     futuresOpenInterest: float = nan
     putOpenInterest: float = nan
