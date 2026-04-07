@@ -14,7 +14,7 @@ nan = float('nan')
 import numpy as np
 _is_numpy_2_or_newer = tuple(map(int, np.__version__.split(".")[:2])) >= (2, 0)
 NPNINF = -np.inf if _is_numpy_2_or_newer else np.NINF # type: ignore
-import pandas as pd
+# import pandas as pd
 import logging
 import math
 import decimal
@@ -129,7 +129,7 @@ class ExecutionFilter:
 
 @dataclass
 class BarData:
-    date: date_|datetime|pd.Timestamp = EPOCH
+    date: date_|datetime = EPOCH
     open_: float = 0.0
     high: float = 0.0
     low: float = 0.0
@@ -137,7 +137,7 @@ class BarData:
     volume: float = 0
     average: float = 0.0
     barCount: int = 0
-    timestamp: datetime|pd.Timestamp = EPOCH # datetime.now(timezone.utc)
+    timestamp: datetime = EPOCH # datetime.now(timezone.utc)
 
     def to_dict(self) -> dict:
         return {
@@ -441,12 +441,19 @@ class TickData(NamedTuple):
 
     def __repr__(self):
         name: TickTypeEnum = TickTypeEnum(self.tickType)
-        match self.tickType, self.size:
-            case TickTypeEnum.CLOSE, 0:
-                return f"TickData(time='{self.time.astimezone().isoformat()}', tickType={name.name}, price={self.price})"
-            case _:
-                return f"TickData(time='{self.time.astimezone().isoformat()}', " \
-                       f"tickType={name.name}, price={self.price}, size={self.size})"
+        tickType_str = f'tickType={name.name}'
+        time_str = f'time={self.time.astimezone().isoformat()}'
+        # if self.size is plain integer, format as integer
+        size_str = f'size={int(self.size)}' if self.size.is_integer() else f'size={self.size}'
+        match self.tickType, self.size, self.price:
+            case TickTypeEnum.LAST | TickTypeEnum.BID | TickTypeEnum.ASK | TickTypeEnum.HIGH | TickTypeEnum.LOW | TickTypeEnum.OPEN | TickTypeEnum.CLOSE | TickTypeEnum.MARK_PRICE | TickTypeEnum.OPTION_IMPLIED_VOL | TickTypeEnum.AUCTION_PRICE | TickTypeEnum.HIGH_13_WEEK | TickTypeEnum.LOW_13_WEEK | TickTypeEnum.HIGH_26_WEEK | TickTypeEnum.LOW_26_WEEK | TickTypeEnum.HIGH_52_WEEK | TickTypeEnum.LOW_52_WEEK | TickTypeEnum.ETF_FROZEN_NAV_LAST | TickTypeEnum.ETF_NAV_ASK | TickTypeEnum.ETF_NAV_BID | TickTypeEnum.ETF_NAV_LAST | TickTypeEnum.ETF_NAV_CLOSE | TickTypeEnum.ETF_NAV_PRIOR_CLOSE, 0, _:
+                return f"TickData({time_str}, {tickType_str}, price={self.price})"
+            case TickTypeEnum.VOLUME | TickTypeEnum.OPTION_CALL_VOLUME | TickTypeEnum.OPTION_PUT_VOLUME | TickTypeEnum.FUTURES_OPEN_INTEREST | TickTypeEnum.OPTION_CALL_OPEN_INTEREST | TickTypeEnum.OPTION_PUT_OPEN_INTEREST | TickTypeEnum.REGULATORY_IMBALANCE | TickTypeEnum.AUCTION_VOLUME | TickTypeEnum.AVG_OPT_VOLUME | TickTypeEnum.AVG_VOLUME | TickTypeEnum.SHORTABLE_SHARES, _, -1.0:
+                return f"TickData({time_str}, {tickType_str}, {size_str})"
+            case TickTypeEnum.HALTED, 0, 0:
+                return f"TickData({time_str}, {tickType_str})"
+            case _, _, _:
+                return f"TickData({time_str}, {tickType_str}, price={self.price}, {size_str})"
 
 class HistoricalTick(NamedTuple):
     time: datetime
@@ -667,10 +674,10 @@ class BarDataList(List[BarData]):
             logmsg.append(f"useRTH={self.useRTH}")
             rthfactor_pad = kwargs.get('rthfactor_pad', 0)
             if len(self) > 0:
-                start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, (datetime, pd.Timestamp)) else self[0].date
-                end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, (datetime, pd.Timestamp)) else self[-1].date
+                start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, datetime) else self[0].date
+                end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, datetime) else self[-1].date
                 logmsg.append(f"len(self)={len(self)} self.date={start_date_str}..{end_date_str}")
-                if isinstance(self[0].date, (datetime, pd.Timestamp)) and self[0].date.astimezone(tz=None).time() == time_(18, 0): # MBT, ES 6pm - 5pm
+                if isinstance(self[0].date, datetime) and self[0].date.astimezone(tz=None).time() == time_(18, 0): # MBT, ES 6pm - 5pm
                     # logmsg.append(f"assuming 23 hours trading time")
                     rthfactor_pad = 7.0
             # logmsg.append(f"rthfactor_pad={rthfactor_pad}")
@@ -726,7 +733,7 @@ class BarDataList(List[BarData]):
         return num_bars
 
     def __init__(self, *args, durationStr: str='', barSizeSetting: str='', useRTH: Optional[bool]=None,
-            from_df: Optional[pd.DataFrame] = None):
+            from_df = None):
         super().__init__(*args)
         self.updateEvent = Event('updateEvent')
         self._logger = logging.getLogger('ib_insync.objects')
@@ -763,14 +770,14 @@ class BarDataList(List[BarData]):
                     barCount=row.get('barCount', 0),
                     # timestamp=row.timestamp
                 ))
-        BarDataList._init_npdata.doOnce = True
+        setattr(BarDataList._init_npdata, 'doOnce', True)
         if len(self) > 0:
             self._init_npdata('', '')
 
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
     @property
@@ -1104,12 +1111,12 @@ class BarDataList(List[BarData]):
         self._average[idx] = bar.average
         self._barCount[idx] = bar.barCount
 
-        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else np.NINF
-        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else np.NINF
-        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else np.NINF
-        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else np.NINF
-        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else np.NINF
-        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else np.NINF
+        self.log_open_prices[idx] = np.log(bar.open_) if bar.open_ > 0 else NPNINF
+        self.log_high_prices[idx] = np.log(bar.high) if bar.high > 0 else NPNINF
+        self.log_low_prices[idx] = np.log(bar.low) if bar.low > 0 else NPNINF
+        self.log_close_prices[idx] = np.log(bar.close) if bar.close > 0 else NPNINF
+        self.log_volume_[idx] = np.log(bar.volume) if bar.volume > 0 else NPNINF
+        self.log_average_[idx] = np.log(bar.average) if bar.average > 0 else NPNINF
 
         self.log_high_low_[idx] = np.log(bar.high / bar.low)
         self.log_close_open_[idx] = np.log(bar.close / bar.open_)
@@ -1132,8 +1139,8 @@ class BarDataList(List[BarData]):
         when adding data to list
         """
         if self._npidx >= self.buffer_size:
-            start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, (datetime, pd.Timestamp)) else self[0].date
-            end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, (datetime, pd.Timestamp)) else self[-1].date
+            start_date_str = self[0].date.astimezone(tz=None) if isinstance(self[0].date, datetime) else self[0].date
+            end_date_str = self[-1].date.astimezone(tz=None) if isinstance(self[-1].date, datetime) else self[-1].date
             self._logger.error(f"buffer overflow: {self._npidx} >= {self.buffer_size}"
                 + f", self.date {start_date_str}..{end_date_str}"
                 + f", self.npdate_ {self.npdate_[0]}..{self.npdate_[self.buffer_size-1]}"
@@ -1199,7 +1206,7 @@ class RealTimeBarList(List[RealTimeBar]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 
@@ -1223,7 +1230,7 @@ class ScanDataList(List[ScanData]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 

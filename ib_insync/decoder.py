@@ -281,7 +281,7 @@ class Decoder:
             float(marketValue), float(averageCost), float(unrealizedPNL),
             float(realizedPNL), accountName)
 
-    def contractDetails(self, fields: list[Any]):
+    def contractDetails(self, fields: list[str]):
         cd = ContractDetails()
         cd.contract = c = Contract()
         if self.serverVersion < 164: # MIN_SERVER_VER_SIZE_RULES=164

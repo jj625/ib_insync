@@ -1136,7 +1136,7 @@ class IB:
             useRTH: bool, formatDate: int = 1, keepUpToDate: bool = False,
             chartOptions: List[TagValue] = [], timeout: float = 60,
             _historicalDataEndHook: Optional[Callable] = None,
-            tradingHours: TradingSession | None = None,
+            _tradingHours: Optional[TradingSession] = None,
             # _historicalDataHook: Callable = None
             ) \
             -> BarDataList:
@@ -1146,7 +1146,7 @@ class IB:
         return self._run(
             self.reqHistoricalDataExtAsync(
                 contract, endDateTime, durationStr, barSizeSetting, whatToShow,
-                useRTH, formatDate, keepUpToDate, chartOptions, timeout, _historicalDataEndHook, tradingHours))
+                useRTH, formatDate, keepUpToDate, chartOptions, timeout, _historicalDataEndHook, _tradingHours))
 
     def cancelHistoricalData(self, bars: BarDataList):
         """

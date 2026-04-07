@@ -21,7 +21,7 @@ from ib_insync.objects import (
     NewsTick, OptionChain, OptionComputation, PnL, PnLSingle, PortfolioItem,
     Position, PositionMulti, PriceIncrement, RealTimeBar, RealTimeBarList, SoftDollarTier,
     TickAttribBidAsk, TickAttribLast, TickByTickAllLast, TickByTickBidAsk,
-    TickByTickMidPoint, TickData, TradeLogEntry)
+    TickByTickMidPoint, TickData, TickTypeEnum, TradeLogEntry)
 from ib_insync.order import Order, OrderState, OrderStatus, Trade
 from ib_insync.ticker import Ticker
 from ib_insync.util import (
@@ -843,6 +843,12 @@ class Wrapper:
             ticker.askYield = price
         elif tickType == 52:
             ticker.lastYield = price
+        elif tickType == TickTypeEnum.LAST_RTH_TRADE: # 57
+            ticker.lastRthTrade = price
+        elif tickType == TickTypeEnum.ETF_FROZEN_NAV_LAST:
+            ticker.etf_frozen_nav_last = price
+        elif tickType == TickTypeEnum.ETF_NAV_LAST:
+            ticker.etf_nav_last = price
         else:
             self._logger.error(f'priceSizeTick: Unknown tickType: {tickType}')
         if price or size:
@@ -901,6 +907,12 @@ class Wrapper:
             ticker.avOptionVolume = size
         elif tickType == 89:
             ticker.shortableShares = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_3_MIN:
+            ticker.shortTermVolume3Min = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_5_MIN:
+            ticker.shortTermVolume5Min = size
+        elif tickType == TickTypeEnum.SHORT_TERM_VOLUME_10_MIN:
+            ticker.shortTermVolume10Min = size
         else:
             self._logger.error(f'tickSize: Unknown tickType: {tickType}')
         if price or size:
@@ -1076,6 +1088,8 @@ class Wrapper:
             ticker.volumeRate = value
         elif tickType == 58:
             ticker.rtHistVolatility = value
+        elif tickType == TickTypeEnum.SHORTABLE: # 46
+            ticker.shortable = value
         else:
             self._logger.error(f'tickGeneric: Unknown tickType: {tickType}')
         tick = TickData(self.lastTime, tickType, value, 0)

@@ -87,6 +87,7 @@ class Ticker:
     tradeRate: float = nan
     volumeRate: float = nan
     shortableShares: float = nan
+    shortable: float = nan
     indexFuturePremium: float = nan
     futuresOpenInterest: float = nan
     putOpenInterest: float = nan
@@ -115,6 +116,12 @@ class Ticker:
     regulatoryImbalance: float = nan
     bboExchange: str = ''
     snapshotPermissions: int = 0
+    lastRthTrade: float = nan
+    etf_frozen_nav_last: float = nan
+    etf_nav_last: float = nan
+    shortTermVolume3Min: float = nan
+    shortTermVolume5Min: float = nan
+    shortTermVolume10Min: float = nan
     lastTimestamp: Optional[datetime] = None # tickType 45, Time of the last trade (in UNIX time).
 
     def __post_init__(self):
@@ -179,6 +186,9 @@ class Ticker:
         return price
 
     def __repr_minimal__(self):
+        if self.contract is None:
+            return f'Ticker(None)'
+
         return f'Ticker({self.contract.__repr_minimal__()})'
 
 class TickerUpdateEvent(Event):
@@ -288,7 +298,7 @@ class BarList(List[Bar]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 
