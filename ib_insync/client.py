@@ -900,7 +900,7 @@ class Client:
     def reqPositions(self):
         self.send(61, 1)
 
-    def reqAccountSummary(self, reqId, groupName, tags):
+    def reqAccountSummary(self, reqId, groupName: str, tags: str):
         self.send(62, 1, reqId, groupName, tags)
 
     def cancelAccountSummary(self, reqId):

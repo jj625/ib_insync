@@ -812,7 +812,7 @@ class IB:
         """
         self._run(self.reqAccountUpdatesMultiAsync(account, modelCode))
 
-    def reqAccountSummary(self):
+    def reqAccountSummary(self, groupName: str = '', tags: str = ''):
         """
         It is recommended to use :meth:`.accountSummary` instead.
 
@@ -821,7 +821,7 @@ class IB:
 
         This method is blocking.
         """
-        self._run(self.reqAccountSummaryAsync())
+        self._run(self.reqAccountSummaryAsync(groupName, tags))
 
     def reqAutoOpenOrders(self, autoBind: bool = True):
         """
@@ -2011,10 +2011,10 @@ class IB:
         else:
             return list(self.wrapper.acctSummary.values())
 
-    def reqAccountSummaryAsync(self) -> Awaitable[None]:
+    def reqAccountSummaryAsync(self, groupName: str = '', tags: str = '') -> Awaitable[None]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
-        tags = (
+        tags1 = (
             'AccountType,NetLiquidation,TotalCashValue,SettledCash,'
             'AccruedCash,BuyingPower,EquityWithLoanValue,'
             'PreviousDayEquityWithLoanValue,GrossPositionValue,RegTEquity,'
@@ -2026,7 +2026,7 @@ class IB:
             'HighestSeverity,DayTradesRemaining,DayTradesRemainingT+1,'
             'DayTradesRemainingT+2,DayTradesRemainingT+3,'
             'DayTradesRemainingT+4,Leverage,$LEDGER:ALL')
-        self.client.reqAccountSummary(reqId, 'All', tags)
+        self.client.reqAccountSummary(reqId, groupName or 'All', tags or tags1)
         return future
 
     def reqOpenOrdersAsync(self) -> Awaitable[List[Trade]]:
