@@ -187,6 +187,7 @@ class Ticker:
         return price
 
     def __repr_minimal__(self):
+        assert self.contract
         return f'Ticker({self.contract.__repr_minimal__()})'
 
 class TickerUpdateEvent(Event):
@@ -296,7 +297,7 @@ class BarList(List[Bar]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 
