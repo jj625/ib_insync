@@ -1072,7 +1072,7 @@ class Client:
     def reqAutoOpenOrders(self, bAutoBind):
         if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
             proto = AutoOpenOrdersRequestProto()
-            proto.bAutoBind = bAutoBind
+            proto.autoBind = bAutoBind
             self.sendProto(_OUT_REQ_AUTO_OPEN_ORDERS, proto)
             return
         self.send(15, 1, bAutoBind)
@@ -1365,7 +1365,7 @@ class Client:
             proto = AccountSummaryRequestProto()
             proto.reqId = reqId
             if groupName:
-                proto.groupName = groupName
+                proto.group = groupName
             if tags:
                 proto.tags = tags
             self.sendProto(_OUT_REQ_ACCOUNT_SUMMARY, proto)
