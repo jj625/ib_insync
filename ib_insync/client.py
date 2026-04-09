@@ -661,12 +661,14 @@ class Client:
             proto = NextValidIdProto()
             proto.ParseFromString(payload)
             validId = proto.orderId if proto.HasField('orderId') else 0
+            assert validId and validId >= 0
             self.updateReqId(validId)
             self._hasReqId = True
         elif msgId == 15:  # MANAGED_ACCTS
             proto = ManagedAccountsProto()
             proto.ParseFromString(payload)
             accts = proto.accountsList if proto.HasField('accountsList') else ''
+            assert accts or accts == ''
             self._accounts = [a for a in accts.split(',') if a]
         if self._hasReqId and self._accounts:
             self._apiReady = True
@@ -701,6 +703,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if genericTickList:
                 proto.genericTickList = genericTickList
@@ -1003,6 +1006,7 @@ class Client:
                 filterProto.side = execFilter.side
             reqProto = ExecutionRequestProto()
             reqProto.reqId = reqId
+            assert reqProto.executionFilter
             reqProto.executionFilter.CopyFrom(filterProto)
             self.sendProto(_OUT_REQ_EXECUTIONS, reqProto)
             return
@@ -1022,6 +1026,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             self.sendProto(_OUT_REQ_CONTRACT_DATA, proto)
             return
@@ -1112,6 +1117,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if endDateTime:
                 proto.endDateTime = str(endDateTime)
@@ -1228,6 +1234,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             proto.barSize = barSize
             if whatToShow:
@@ -1257,6 +1264,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if reportType:
                 proto.reportType = reportType
@@ -1289,6 +1297,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             proto.optionPrice = optionPrice
             proto.underPrice = underPrice
@@ -1305,6 +1314,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             proto.volatility = volatility
             proto.underPrice = underPrice
@@ -1563,6 +1573,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if whatToShow:
                 proto.whatToShow = whatToShow
@@ -1581,6 +1592,7 @@ class Client:
             proto.reqId = tickerId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if useRTH:
                 proto.useRTH = useRTH
@@ -1665,6 +1677,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if startDateTime:
                 proto.startDateTime = str(startDateTime)
@@ -1691,6 +1704,7 @@ class Client:
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
             if cp:
+                assert proto.contract
                 proto.contract.CopyFrom(cp)
             if tickType:
                 proto.tickType = tickType

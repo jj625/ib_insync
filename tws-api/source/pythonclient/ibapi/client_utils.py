@@ -152,7 +152,7 @@ def createAttachedOrdersProto(order: Order) -> AttachedOrdersProto:
     return attachedOrdersProto
 
 @staticmethod
-def createContractProto(contract: Contract, order: Order) -> ContractProto:
+def createContractProto(contract: Contract, order: Order|None) -> ContractProto:
     contractProto = ContractProto()
     if isValidIntValue(contract.conId): contractProto.conId = contract.conId
     if contract.symbol: contractProto.symbol = contract.symbol
@@ -177,7 +177,9 @@ def createContractProto(contract: Contract, order: Order) -> ContractProto:
     if comboLegProtoList is not None and comboLegProtoList: contractProto.comboLegs.extend(comboLegProtoList)
 
     deltaNeutralContractProto = createDeltaNeutralContractProto(contract)
-    if deltaNeutralContractProto is not None: contractProto.deltaNeutralContract.CopyFrom(deltaNeutralContractProto)
+    if deltaNeutralContractProto is not None: 
+        assert contractProto and contractProto.deltaNeutralContract
+        contractProto.deltaNeutralContract.CopyFrom(deltaNeutralContractProto)
 
     return contractProto
 
