@@ -116,6 +116,7 @@ class Ticker:
     regulatoryImbalance: float = nan
     bboExchange: str = ''
     snapshotPermissions: int = 0
+    lastRthTrade: float = nan
     etf_frozen_nav_last: float = nan
     etf_nav_last: float = nan
     shortTermVolume3Min: float = nan

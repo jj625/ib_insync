@@ -438,7 +438,7 @@ class TickData(NamedTuple):
                 return f"TickData({time_str}, {tickType_str}, {size_str})"
             case TickTypeEnum.HALTED, 0, 0:
                 return f"TickData({time_str}, {tickType_str})"
-            case _:
+            case _, _, _:
                 return f"TickData({time_str}, {tickType_str}, price={self.price}, {size_str})"
 
 class HistoricalTick(NamedTuple):

@@ -593,9 +593,15 @@ class Client:
                     # Protobuf message
                     realMsgId = msgId - PROTOBUF_MSG_ID
                     if debug:
+                        # if realMsgId in [45]:
+                        #     from ib_insync.protobufdec import decode_message
+                        #     msgPayload_str = f' payload={decode_message(msgPayload)}'
+                        # else:
+                        #     msgPayload_str = ''
+                        msgPayload_str = ''
                         self._logger.debug(
-                            '<<< proto %s len=%d',
-                            _in_msg_name(realMsgId), len(msgPayload))
+                            '<<< proto %s len=%d%s',
+                            _in_msg_name(realMsgId), len(msgPayload), msgPayload_str)
 
                     # Snoop for nextValidId and managedAccounts
                     if not self._apiReady:

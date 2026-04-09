@@ -843,9 +843,11 @@ class Wrapper:
             ticker.askYield = price
         elif tickType == TickTypeEnum.LAST_YIELD: # 52
             ticker.lastYield = price
-        elif tickType == TickTypeEnum.ETF_FROZEN_NAV_LAST:
+        elif tickType == TickTypeEnum.LAST_RTH_TRADE: # 57
+            ticker.lastRthTrade = price
+        elif tickType == TickTypeEnum.ETF_FROZEN_NAV_LAST: # 97
             ticker.etf_frozen_nav_last = price
-        elif tickType == TickTypeEnum.ETF_NAV_LAST:
+        elif tickType == TickTypeEnum.ETF_NAV_LAST: # 96
             ticker.etf_nav_last = price
         else:
             self._logger.error(f'priceSizeTick: Unknown tickType: {tickType}')
@@ -1071,25 +1073,25 @@ class Wrapper:
         except ValueError:
             self._logger.error(f'genericTick: malformed value: {value!r}')
             return
-        if tickType == TickTypeEnum.OPTION_HISTORICAL_VOL:
+        if tickType == TickTypeEnum.OPTION_HISTORICAL_VOL: # 23
             ticker.histVolatility = value
-        elif tickType == TickTypeEnum.OPTION_IMPLIED_VOL:
+        elif tickType == TickTypeEnum.OPTION_IMPLIED_VOL: # 24
             ticker.impliedVolatility = value
-        elif tickType == TickTypeEnum.INDEX_FUTURE_PREMIUM:
+        elif tickType == TickTypeEnum.INDEX_FUTURE_PREMIUM: # 31
             ticker.indexFuturePremium = value
-        elif tickType == TickTypeEnum.HALTED:
+        elif tickType == TickTypeEnum.HALTED: # 49
             ticker.halted = value
-        elif tickType == TickTypeEnum.TRADE_COUNT:
+        elif tickType == TickTypeEnum.TRADE_COUNT: # 54
             ticker.tradeCount = value
-        elif tickType == TickTypeEnum.TRADE_RATE:
+        elif tickType == TickTypeEnum.TRADE_RATE:  # 55
             ticker.tradeRate = value
-        elif tickType == TickTypeEnum.VOLUME_RATE:
+        elif tickType == TickTypeEnum.VOLUME_RATE: # 56
             ticker.volumeRate = value
-        elif tickType == TickTypeEnum.RT_HISTORICAL_VOL:
+        elif tickType == TickTypeEnum.RT_HISTORICAL_VOL: # 58
             ticker.rtHistVolatility = value
-        elif tickType == TickTypeEnum.SHORTABLE:
+        elif tickType == TickTypeEnum.SHORTABLE: # 46
             ticker.shortable = value
-        elif tickType == TickTypeEnum.SHORTABLE_SHARES:
+        elif tickType == TickTypeEnum.SHORTABLE_SHARES: # 89
             ticker.shortableShares = value
         else:
             self._logger.error(f'tickGeneric: Unknown tickType: {tickType}')
