@@ -1,12 +1,14 @@
 """Test protobuf connect/disconnect against a live TWS/gateway on localhost:7296."""
 
 import collections
+import datetime
 import colorama
 import argparse
 import asyncio
 import logging
 import sys
 import pprint
+from typing import Any
 
 import ib_insync as ibi
 from ib_insync.objects import TickTypeEnum
@@ -62,6 +64,32 @@ async def main(args):
     vfiax = ibi.MutualFund(symbol='VFIAX')
     await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax)
 
+    if 0 in args.test:
+        from adebouncer import AsyncDebouncer
+        logging.getLogger('adebouncer').setLevel(logging.DEBUG)
+        async def on_acct_summary_flush(a: list[ibi.AccountValue]):
+            # get unique account
+            accounts = set(av.account for av in a)
+            # get unique AccountValue without lastUpdateTime element
+            unique_av = { (av.account, av.tag): av for av in a }.values()
+            # get account value item where tag contains 'cash'
+            cash_items = [av for av in a if 'cash' in av.tag.lower()]
+            logger.info(f'Unique accounts: {accounts}')
+            # logger.info(f'Cash items:\n{pprint.pformat(cash_items, indent=1)}')
+            logger.info(f'Total items: {len(a)}, Unique items: {len(unique_av)}')
+            return
+        adeb = AsyncDebouncer(on_acct_summary_flush, debounce=0.5, max_wait=2.0, max_batch=1000)
+        # async def _on_apiEnd():
+        #     logger.info("API end event received")
+        #     await adeb.stop()
+        # ib.client.apiEnd.connect(_on_apiEnd)
+        await adeb.start()
+        async def on_acct_summary(av: ibi.AccountValue):
+            await adeb.add(av)
+            # print(av)
+        print('-'*10 + ' Account Summary ' + '-'*10)
+        ib.accountSummaryEvent.connect(on_acct_summary)
+        print(await ib.reqAccountSummaryAsync('ES2100'))
     if 1 in args.test:
         print('-'*10 + ' reqHistoricalDataAsync ' + '-'*10)
 
@@ -238,7 +266,7 @@ if __name__ == '__main__':
     logging.getLogger('ib_insync.wrapper').addFilter(KeywordFilter(keywords_to_filter))
 
     try:
-        ibi.IB.run(main(args))
+        asyncio.run(main(args))
     except KeyboardInterrupt:
         print("Interrupted by user")
     except Exception as e:
