@@ -1,7 +1,9 @@
 import asyncio
+import logging
 import time
 from typing import Any, Callable, Awaitable, List
 
+logger = logging.getLogger(__name__)
 
 class AsyncDebouncer:
     def __init__(
@@ -23,8 +25,8 @@ class AsyncDebouncer:
         self.max_batch = max_batch
 
         self.buffer: List[Any] = []
-        self.first_event: float | None = None
-        self.last_event: float | None = None
+        self.first_event: float = float('-inf')
+        self.last_event: float = float('-inf')
 
         self._event = asyncio.Event()
         self._stop = False
@@ -35,10 +37,12 @@ class AsyncDebouncer:
     # Async context manager
     # ---------------------------------------------------------
     async def __aenter__(self):
+        logger.debug("Entering AsyncDebouncer context")
         await self.start()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        logger.debug("Exiting AsyncDebouncer context")
         await self.stop()
 
     # ---------------------------------------------------------
@@ -50,10 +54,18 @@ class AsyncDebouncer:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self):
+        logger.debug("Stopping AsyncDebouncer")
         self._stop = True
         self._event.set()
         if self._task:
+          logger.debug("Cancelling AsyncDebouncer task")
+          self._task.cancel()
+          try:
+            logger.debug("Waiting for AsyncDebouncer task to finish")
             await self._task
+          except asyncio.CancelledError:
+            logger.debug("AsyncDebouncer task was cancelled")
+            pass
         await self._flush()  # final flush
 
     # ---------------------------------------------------------
@@ -73,6 +85,7 @@ class AsyncDebouncer:
     # Worker loop
     # ---------------------------------------------------------
     async def _run(self):
+      try:
         while not self._stop:
             await self._event.wait()
             self._event.clear()
@@ -99,6 +112,11 @@ class AsyncDebouncer:
                     break
 
             await self._flush()
+      except asyncio.CancelledError:
+          # loop is shutting down - do a final flush
+          logger.debug("_run() cancelled")
+          await self._flush()
+          raise
 
     # ---------------------------------------------------------
     # Flush
@@ -109,7 +127,7 @@ class AsyncDebouncer:
                 return
             items = self.buffer[:]
             self.buffer.clear()
-            self.first_event = None
-            self.last_event = None
+            self.first_event = float('-inf')
+            self.last_event = float('-inf')
 
         await self.flush_func(items)
