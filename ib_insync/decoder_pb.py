@@ -512,12 +512,14 @@ class ProtobufDecoder:
         proto = NextValidIdProto()
         proto.ParseFromString(payload)
         orderId = proto.orderId if proto.HasField('orderId') else 0
+        assert orderId and orderId >= 0
         self.wrapper.nextValidId(orderId)
 
     def _managedAccounts(self, payload: bytes):
         proto = ManagedAccountsProto()
         proto.ParseFromString(payload)
         accountsList = proto.accountsList if proto.HasField('accountsList') else ''
+        assert accountsList or accountsList == ''
         self.wrapper.managedAccounts(accountsList)
 
     def _errorMsg(self, payload: bytes):
