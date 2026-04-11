@@ -444,23 +444,25 @@ class Wrapper:
             realizedPnL: float):
         pnl = self.reqId2PnL.get(reqId)
         if not pnl:
+            self._logger.error(f'pnl: no PnL found for reqId {reqId}')
             return
         pnl.dailyPnL = dailyPnL
         pnl.unrealizedPnL = unrealizedPnL
-        pnl.realizedPnL = realizedPnL
+        pnl.realizedPnL = realizedPnL if realizedPnL != UNSET_DOUBLE else 0.0
         self._logger.info(f'pnl: {pnl}')
         self.ib.pnlEvent.emit(pnl)
 
     def pnlSingle(
-            self, reqId: int, pos: int, dailyPnL: float, unrealizedPnL: float,
+            self, reqId: int, pos: float, dailyPnL: float, unrealizedPnL: float,
             realizedPnL: float, value: float):
         pnlSingle = self.reqId2PnlSingle.get(reqId)
         if not pnlSingle:
+            self._logger.error(f'pnlSingle: no PnL found for reqId {reqId}')
             return
         pnlSingle.position = pos
         pnlSingle.dailyPnL = dailyPnL
         pnlSingle.unrealizedPnL = unrealizedPnL
-        pnlSingle.realizedPnL = realizedPnL
+        pnlSingle.realizedPnL = realizedPnL if realizedPnL != UNSET_DOUBLE else 0.0
         pnlSingle.value = value
         self._logger.info(f'pnlSingle: {pnlSingle}')
         self.ib.pnlSingleEvent.emit(pnlSingle)
@@ -685,7 +687,7 @@ class Wrapper:
         results: Optional[BarDataList] = self._results.get(reqId)
         self._logger.debug(f'historicalData: {reqId} {bar}')
         if results is not None:
-            bar.date = parseIBDatetime(bar.date)  # type: ignore
+            bar.date = parseIBDatetime(bar._date_s)
             results.append(bar)
         else:
             self._logger.warning(f'historicalData: reqId={reqId} bar={bar} no results')
@@ -725,7 +727,7 @@ class Wrapper:
         if not bars:
             self._logger.error(f'historicalDataUpdate: {reqId} no bar')
             return
-        bar.date = parseIBDatetime(bar.date)  # type: ignore
+        bar.date = parseIBDatetime(bar._date_s)
         lastDate = bars[-1].date
         if bar.date < lastDate:
             self._logger.warning(

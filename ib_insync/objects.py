@@ -129,6 +129,7 @@ class ExecutionFilter:
 
 @dataclass
 class BarData:
+    _date_s : str = '' # string representation of the date, internal api use only
     date: date_|datetime|pd.Timestamp = EPOCH
     open_: float = 0.0
     high: float = 0.0
@@ -261,7 +262,7 @@ class PnLSingle:
     dailyPnL: float = nan
     unrealizedPnL: float = nan
     realizedPnL: float = nan
-    position: int = 0
+    position: float = 0
     value: float = nan
 
 
@@ -756,14 +757,14 @@ class BarDataList(List[BarData]):
                     barCount=row.get('barCount', 0),
                     # timestamp=row.timestamp
                 ))
-        BarDataList._init_npdata.doOnce = True
+        setattr(BarDataList._init_npdata, 'doOnce', True)
         if len(self) > 0:
             self._init_npdata('', '')
 
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
     @property
@@ -1192,7 +1193,7 @@ class RealTimeBarList(List[RealTimeBar]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 
@@ -1216,7 +1217,7 @@ class ScanDataList(List[ScanData]):
     def __eq__(self, other):
         return self is other
 
-    def __hash__(self):
+    def __hash__(self): # type: ignore[override]
         return id(self)
 
 

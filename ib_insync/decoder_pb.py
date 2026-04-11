@@ -989,7 +989,7 @@ class ProtobufDecoder:
         from datetime import datetime, timezone
         for bar_proto in proto.historicalDataBars:
             bar = BarData(
-                date=bar_proto.date if bar_proto.HasField('date') else '',
+                date=bar_proto.date if bar_proto.HasField('date') else datetime.now(timezone.utc),
                 open_=bar_proto.open if bar_proto.HasField('open') else 0.0,
                 high=bar_proto.high if bar_proto.HasField('high') else 0.0,
                 low=bar_proto.low if bar_proto.HasField('low') else 0.0,

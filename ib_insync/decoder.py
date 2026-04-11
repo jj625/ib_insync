@@ -281,7 +281,9 @@ class Decoder:
             float(marketValue), float(averageCost), float(unrealizedPNL),
             float(realizedPNL), accountName)
 
-    def contractDetails(self, fields: list[Any]):
+    def contractDetails(self, fields: list[str]):
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(f'{fields}, len={len(fields)}')
         cd = ContractDetails()
         cd.contract = c = Contract()
         if self.serverVersion < 164: # MIN_SERVER_VER_SIZE_RULES=164
@@ -301,24 +303,28 @@ class Decoder:
             (c.lastTradeDate, *fields) = fields
         (
             lastTimes,
-            c.strike,
+            _strike_s,
             c.right,
             c.exchange,
             c.currency,
             c.localSymbol,
             cd.marketName,
             c.tradingClass,
-            c.conId,
-            cd.minTick,
+            _conId_s,
+            _minTick_s,
             *fields) = fields
+        c.strike = float(_strike_s) if _strike_s else 0.0
+        c.conId = int(_conId_s) if _conId_s else -1
+        cd.minTick = float(_minTick_s)
+
         if self.serverVersion < 164:
             fields.pop(0)  # obsolete mdSizeMultiplier
         (
             c.multiplier,
             cd.orderTypes,
             cd.validExchanges,
-            cd.priceMagnifier,
-            cd.underConId,
+            _priceMagnifier_s,
+            _underConId_s,
             cd.longName,
             c.primaryExchange,
             cd.contractMonth,
@@ -329,9 +335,12 @@ class Decoder:
             cd.tradingHours,
             cd.liquidHours,
             cd.evRule,
-            cd.evMultiplier,
+            _evMultiplier_s,
             numSecIds,
             *fields) = fields
+        cd.priceMagnifier = int(_priceMagnifier_s)
+        cd.underConId = int(_underConId_s) if _underConId_s else 0
+        cd.evMultiplier = int(_evMultiplier_s) if _evMultiplier_s else 0
 
         numSecIds = int(numSecIds)
         if numSecIds > 0:
@@ -340,22 +349,23 @@ class Decoder:
                 tag, value, *fields = fields
                 cd.secIdList += [TagValue(tag, value)]
         (
-            cd.aggGroup,
+            _aggGroup_s,
             cd.underSymbol,
             cd.underSecType,
             cd.marketRuleIds,
             cd.realExpirationDate,
             cd.stockType,
             *fields) = fields
+        cd.aggGroup = int(_aggGroup_s)
         if self.serverVersion == 163:
-            cd.suggestedSizeIncrement, *fields = fields
+            cd.suggestedSizeIncrement, fields = float(fields[0]), fields[1:]
         if self.serverVersion >= 164:
             (
                 cd.minSize,
                 cd.sizeIncrement,
                 cd.suggestedSizeIncrement,
                 # cd.minCashQtySize,
-                *fields) = fields
+                fields) = float(fields[0]), float(fields[1]), float(fields[2]), fields[3:]
 
         if self.serverVersion >= 179 and c.secType == 'FUND': # MIN_SERVER_VER_FUND_DATA_FIELDS=179
             (
@@ -366,17 +376,22 @@ class Decoder:
                 cd.fundBackLoad,
                 cd.fundBackLoadTimeInterval,
                 cd.fundManagementFee,
-                cd.fundClosed,
-                cd.fundClosedForNewInvestors,
-                cd.fundClosedForNewMoney,
+                _fundClosed_s,
+                _fundClosedForNewInvestors_s,
+                _fundClosedForNewMoney_s,
                 cd.fundNotifyAmount,
                 cd.fundMinimumInitialPurchase,
                 cd.fundSubsequentMinimumPurchase,
                 cd.fundBlueSkyStates,
                 cd.fundBlueSkyTerritories,
-                cd.fundDistributionPolicyIndicator,
-                cd.fundAssetType,
+                _fundDistributionPolicyIndicator_s,
+                _fundAssetType_s,
                 *fields) = fields
+            cd.fundClosed = _fundClosed_s not in ('0', '')
+            cd.fundClosedForNewInvestors = _fundClosedForNewInvestors_s not in ('0', '')
+            cd.fundClosedForNewMoney = _fundClosedForNewMoney_s not in ('0', '')
+            cd.fundDistributionPolicyIndicator = _fundDistributionPolicyIndicator_s
+            cd.fundAssetType = _fundAssetType_s          
             
         if self.serverVersion >= 186: # MIN_SERVER_VER_FUND_DATA_FIELDS=186
             (
@@ -387,6 +402,8 @@ class Decoder:
                 cd.ineligibilityReasonList = []
                 for _ in range(ineligibilityReasonListCount):
                     ineligibilityReason = fields.pop(0)
+                    # bomb with unimplemented exception
+                    raise NotImplementedError('ineligibilityReasonList is not yet implemented')
                     cd.ineligibilityReasonList.append(ineligibilityReason)
 
         times = lastTimes.split('-' if '-' in lastTimes else None)
@@ -528,7 +545,7 @@ class Decoder:
 
         for _ in range(int(numBars)):
             bar = BarData(
-                date=get(),
+                _date_s=get(),
                 open_=float(get()),
                 high=float(get()),
                 low=float(get()),
@@ -547,7 +564,7 @@ class Decoder:
 
         bar = BarData(
             barCount=int(get() or 0),
-            date=get(),
+            _date_s=get(),
             open_=float(get() or 0),
             close=float(get() or 0),
             high=float(get() or 0),
