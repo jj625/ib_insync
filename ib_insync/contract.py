@@ -1,5 +1,6 @@
 """Financial instrument types used by Interactive Brokers."""
 
+import logging
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import List, NamedTuple, Optional
@@ -7,6 +8,7 @@ from enum import Enum
 
 import ib_insync.util as util
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Contract:
