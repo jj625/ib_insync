@@ -135,6 +135,17 @@ class Ticker:
 
     def __repr__(self):
         attrs = dataclassNonDefaults(self)
+        # remove [bid=-1.0, ask=-1.0, bidSize=0, askSize=0] when exist together
+        if all(k in attrs for k in ('bid', 'ask', 'bidSize', 'askSize')):
+            if attrs['bid'] == -1.0 and attrs['ask'] == -1.0 and attrs['bidSize'] == 0 and attrs['askSize'] == 0:
+                for k in ('bid', 'ask', 'bidSize', 'askSize'):
+                    attrs.pop(k)
+
+        # remove volume=0, lastSize=0
+        for k in ('volume', 'lastSize'):
+            if k in attrs and attrs[k] == 0:
+                attrs.pop(k)
+
         clsName = self.__class__.__qualname__
 
         def _fmt(k, v):
