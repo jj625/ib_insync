@@ -573,8 +573,8 @@ class ContractDetails:
     fundSubsequentMinimumPurchase: str = ''
     fundBlueSkyStates: str = ''
     fundBlueSkyTerritories: str = ''
-    fundDistributionPolicyIndicator = FundDistributionPolicyIndicator.NoneItem
-    fundAssetType = FundAssetType.NoneItem
+    fundDistributionPolicyIndicator: str = ''  # FundDistributionPolicyIndicator.NoneItem
+    fundAssetType: str = ''  # FundAssetType.NoneItem
     # MIN_SERVER_VER_INELIGIBILITY_REASONS=186
     ineligibilityReasonList: list[IneligibilityReason] = field(default_factory=list)
 
@@ -595,6 +595,15 @@ class ContractDetails:
                 for t in sess.split('-')]))
         return sessions
 
+    def __repr__(self):
+        attrs = util.dataclassNonDefaults(self)
+        if self.__class__ is not Contract:
+            attrs.pop('secType', '')
+        clsName = self.__class__.__qualname__
+        kwargs = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({kwargs})'
+
+    __str__ = __repr__
 
 @dataclass
 class ContractDescription:

@@ -109,9 +109,11 @@ def dataclassNonDefaults(obj) -> dict:
     values = [getattr(obj, field.name) for field in fields(obj)]
     return {
         field.name: value for field, value in zip(fields(obj), values)
-        if value != field.default
+        if (value != field.default
         and value == value
-        and not (isinstance(value, list) and value == [])}
+        and not (isinstance(value, list) and value == []))
+        or isinstance(value, bool)
+    }
 
 
 def dataclassUpdate(obj, *srcObjs, **kwargs) -> object:
