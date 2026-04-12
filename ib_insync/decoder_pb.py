@@ -444,7 +444,7 @@ class ProtobufDecoder:
             sdt = orderProto.softDollarTier
             o.softDollarTier = SoftDollarTier(
                 name=sdt.name if sdt.HasField('name') else '',
-                value=sdt.val if sdt.HasField('val') else '',
+                val=sdt.val if sdt.HasField('val') else '',
                 displayName=sdt.displayName if sdt.HasField('displayName') else '')
         return o
 
