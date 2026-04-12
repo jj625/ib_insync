@@ -821,6 +821,7 @@ class ProtobufDecoder:
         tickType = proto.tickType if proto.HasField('tickType') else 0
         if tickType in (1, 2):  # Last or AllLast
             if proto.HasField('historicalTickLast'):
+                assert proto.historicalTickLast
                 t = proto.historicalTickLast
                 time = t.time if t.HasField('time') else 0
                 price = t.price if t.HasField('price') else 0.0
@@ -836,6 +837,7 @@ class ProtobufDecoder:
         elif tickType == 3:  # BidAsk
             if proto.HasField('historicalTickBidAsk'):
                 t = proto.historicalTickBidAsk
+                assert t
                 time = t.time if t.HasField('time') else 0
                 mask = t.tickAttribBidAsk if t.HasField('tickAttribBidAsk') else 0
                 attrib = TickAttribBidAsk(
@@ -849,9 +851,12 @@ class ProtobufDecoder:
         elif tickType == 4:  # MidPoint
             if proto.HasField('historicalTickMidPoint'):
                 t = proto.historicalTickMidPoint
+                assert t
                 time = t.time if t.HasField('time') else 0
                 midPoint = t.price if t.HasField('price') else 0.0
                 self.wrapper.tickByTickMidPoint(reqId, time, midPoint)
+        else:
+            self.logger.error(f'Unknown tickType: {tickType}')
 
     def _tickNews(self, payload: bytes):
         proto = TickNewsProto()
@@ -942,6 +947,7 @@ class ProtobufDecoder:
         if not proto.HasField('marketDepthData'):
             return
         d = proto.marketDepthData
+        assert d
         position = d.position if d.HasField('position') else 0
         operation = d.operation if d.HasField('operation') else 0
         side = d.side if d.HasField('side') else 0
@@ -956,6 +962,7 @@ class ProtobufDecoder:
         if not proto.HasField('marketDepthData'):
             return
         d = proto.marketDepthData
+        assert d
         position = d.position if d.HasField('position') else 0
         marketMaker = d.marketMaker if d.HasField('marketMaker') else ''
         operation = d.operation if d.HasField('operation') else 0
@@ -989,7 +996,7 @@ class ProtobufDecoder:
         from datetime import datetime, timezone
         for bar_proto in proto.historicalDataBars:
             bar = BarData(
-                date=bar_proto.date if bar_proto.HasField('date') else datetime.now(timezone.utc),
+                _date_s=bar_proto.date if bar_proto.HasField('date') else '',
                 open_=bar_proto.open if bar_proto.HasField('open') else 0.0,
                 high=bar_proto.high if bar_proto.HasField('high') else 0.0,
                 low=bar_proto.low if bar_proto.HasField('low') else 0.0,
@@ -1007,9 +1014,10 @@ class ProtobufDecoder:
         if not proto.HasField('historicalDataBar'):
             return
         b = proto.historicalDataBar
+        assert b
         from datetime import datetime, timezone
         bar = BarData(
-            date=b.date if b.HasField('date') else '',
+            _date_s=b.date if b.HasField('date') else '',
             open_=b.open if b.HasField('open') else 0.0,
             high=b.high if b.HasField('high') else 0.0,
             low=b.low if b.HasField('low') else 0.0,
