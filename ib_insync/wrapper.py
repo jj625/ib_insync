@@ -1272,6 +1272,11 @@ class Wrapper:
     def receiveFA(self, _faDataType: int, faXmlData: str):
         self._endReq('requestFA', faXmlData)
 
+    def replaceFAEnd(self, reqId: int, text: str):
+        """This is called at the end of a replace FA."""
+        raise NotImplementedError(f'replaceFAEnd({reqId}, {text}) is not implemented')
+        self._endReq('replaceFA', text)       
+
     def currentTime(self, time: int):
         dt = datetime.fromtimestamp(time, timezone.utc)
         self._endReq('currentTime', dt)
@@ -1422,3 +1427,21 @@ class Wrapper:
                 ticker.time = self.lastTime
                 ticker.updateEvent.emit(ticker)
             self.ib.pendingTickersEvent.emit(self.pendingTickers)
+
+    def verifyMessageAPI(self, apiData):
+        raise NotImplementedError(f'verifyMessageAPI({apiData}) is not implemented')
+    
+    def verifyCompleted(self, isSuccessful, errorText):
+        raise NotImplementedError(f'verifyCompleted({isSuccessful}, {errorText}) is not implemented')
+
+    def displayGroupList(self, reqId, groups):
+        raise NotImplementedError(f'displayGroupList({reqId}, {groups}) is not implemented')
+    
+    def displayGroupUpdated(self, reqId, contractInfo):
+        raise NotImplementedError(f'displayGroupUpdated({reqId}, {contractInfo}) is not implemented')
+    
+    def rerouteMktDataReq(self, reqId, conId, exchange):
+        raise NotImplementedError(f'rerouteMktDataReq({reqId}, {conId}, {exchange}) is not implemented')
+    
+    def rerouteMktDepthReq(self, reqId, conId, exchange):
+        raise NotImplementedError(f'rerouteMktDepthReq({reqId}, {conId}, {exchange}) is not implemented')
