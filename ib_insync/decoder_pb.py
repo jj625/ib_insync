@@ -924,13 +924,17 @@ class ProtobufDecoder:
         ibapi_cd = _ibapi_decodeContractDetails(contractProto, detailsProto, isBond)
         cd = ContractDetails()
         cd.contract = ProtobufDecoder._decodeContract(contractProto)
-        # copy detail fields via proto field names
-        detail_fields = _proto_fields(detailsProto)
-        for fname in detail_fields:
-            if detailsProto.HasField(fname):
-                val = getattr(ibapi_cd, fname, None)
-                if val is not None and hasattr(cd, fname):
-                    setattr(cd, fname, val)
+        # copy detail fields via proto field names; repeated fields do not support HasField
+        for field in detailsProto.DESCRIPTOR.fields:
+            fname = field.name
+            if field.label == field.LABEL_REPEATED:
+                if len(getattr(detailsProto, fname)) == 0:
+                    continue
+            elif not detailsProto.HasField(fname):
+                continue
+            val = getattr(ibapi_cd, fname, None)
+            if val is not None and hasattr(cd, fname):
+                setattr(cd, fname, val)
         # fields with different names between ibapi and ib_insync
         if hasattr(ibapi_cd, 'longName'):
             cd.longName = ibapi_cd.longName
