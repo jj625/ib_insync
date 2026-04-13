@@ -26,6 +26,17 @@ ROOT = Path(__file__).resolve().parent
 PROTO_DIR = ROOT / "ibapi" / "protobuf"
 
 
+def collect_message_dependencies(desc: Descriptor) -> set[Descriptor]:
+    deps: set[Descriptor] = set()
+    for fd in desc.fields:
+        if fd.type == FieldDescriptor.TYPE_MESSAGE:
+            mt = fd.message_type
+            # Skip map entry messages
+            if mt.GetOptions().map_entry:
+                continue
+            deps.add(mt)
+    return deps
+
 # ---------------------------------------------------------------------------
 # Type mapping
 # ---------------------------------------------------------------------------
@@ -109,27 +120,53 @@ def emit_message(desc: Descriptor) -> list[str]:
         )
         out.append(f"    # oneof {oneof.name}: {union_t}")
 
-    # Standard protobuf API
+    # Standard protobuf API (must match google.protobuf.message.Message)
     out.extend([
         "",
-        "    def ParseFromString(self, data: bytes) -> None: ...",
-        "    def SerializeToString(self) -> bytes: ...",
+        "    def ParseFromString(self, serialized: bytes) -> int: ...",
+        "    def SerializeToString(self, *, deterministic: bool = False) -> bytes: ...",
+        "    def CopyFrom(self, other_msg: Message) -> None: ...",
+        "    def MergeFrom(self, other_msg: Message) -> None: ...",
         "    def HasField(self, field_name: str) -> bool: ...",
-        "    def CopyFrom(self, other: Message) -> None: ...",
-        "    def MergeFrom(self, other: Message) -> None: ...",
         "",
     ])
     return out
 
+from pathlib import Path
+
+def module_name_for_message(message_descriptor: Descriptor) -> str:
+    """
+    Given a message descriptor, return the correct *_pb2 module name.
+    Works for both classic and UPB protobuf runtimes.
+    """
+    proto_path = Path(message_descriptor.file.name)   # e.g. "ibapi/protobuf/historicalDataBar.proto"
+    base = proto_path.stem                            # "historicalDataBar"
+    return base + "_pb2"
 
 def generate_stub(module_name: str, module) -> str:
-    """Generate .pyi content for a single *_pb2 module."""
     lines = [
         "from __future__ import annotations",
         "from typing import Any, Optional, List, Dict",
         "from google.protobuf.message import Message",
         "",
     ]
+
+    # Collect all message dependencies across this module
+    all_deps: set[Descriptor] = set()
+    for md in module.DESCRIPTOR.message_types_by_name.values():
+        all_deps |= collect_message_dependencies(md)
+
+    # Remove self-references (messages defined in this same file)
+    this_file = module.DESCRIPTOR # this is a FileDescriptor in UPB
+    all_deps = {d for d in all_deps if d.file is not this_file}
+
+    # Emit imports for dependencies
+    for dep_desc in sorted(all_deps, key=lambda d: d.name):
+        # dep_mod = dep[0].lower() + dep[1:] + "_pb2"
+        dep_mod = module_name_for_message(dep_desc)
+        lines.append(f"from .{dep_mod} import {dep_desc.name}")
+    if all_deps:
+        lines.append("")
 
     # Enums first
     enums = sorted(module.DESCRIPTOR.enum_types_by_name.values(), key=lambda e: e.name)
