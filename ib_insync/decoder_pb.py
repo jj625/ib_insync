@@ -1315,8 +1315,8 @@ class ProtobufDecoder:
         codes = []
         for fc in proto.familyCodes:
             codes.append(FamilyCode(
-                accountID=fc.accountID if fc.HasField('accountID') else '',
-                familyCodeStr=fc.familyCodeStr if fc.HasField('familyCodeStr') else ''))
+                accountID=fc.accountId if fc.HasField('accountId') else '',
+                familyCodeStr=fc.familyCode if fc.HasField('familyCode') else ''))
         self.wrapper.familyCodes(codes)
 
     def _symbolSamples(self, payload: bytes):
