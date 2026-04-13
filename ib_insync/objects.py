@@ -20,6 +20,8 @@ import math
 import decimal
 from enum import IntEnum
 
+logger = logging.getLogger(__name__)
+
 def _decimal_places(v: float) -> int:
     """
     Return number of significant decimal places using arithmetic only.
@@ -475,6 +477,23 @@ class TickByTickAllLast(NamedTuple):
     exchange: str
     specialConditions: str
 
+    def __repr__(self):
+        match self.tickType: 
+            case 1:
+                tt_str = "Last"
+            case 2:
+                tt_str = "AllLast"
+            case _:
+                tt_str = "Unknown"
+                logger.warning(f"Unknown tickType: {self.tickType}")
+
+        tickType_str = f'tickType={self.tickType}({tt_str})'
+        time_str = f'time={self.time.astimezone():%H:%M:%S.%f}'
+        size_str = f'size={int(self.size)}' if self.size.is_integer() else f'size={self.size}'
+        exch_str_opt = f', exchange={self.exchange}' if self.exchange else ''
+        specialConditions_str_opt = f', specialConditions={self.specialConditions}' if self.specialConditions else ''
+        return f"TickByTickAllLast({time_str}, {tickType_str}, price={self.price}, {size_str}{exch_str_opt}{specialConditions_str_opt})"
+
 
 class TickByTickBidAsk(NamedTuple):
     time: datetime
@@ -484,10 +503,21 @@ class TickByTickBidAsk(NamedTuple):
     askSize: float
     tickAttribBidAsk: TickAttribBidAsk
 
+    def __repr__(self):
+        time_str = f'time={self.time.astimezone():%H:%M:%S.%f}'
+        bidSize_str = f'bidSize={int(self.bidSize)}' if self.bidSize.is_integer() else f'bidSize={self.bidSize}'
+        askSize_str = f'askSize={int(self.askSize)}' if self.askSize.is_integer() else f'askSize={self.askSize}'
+        return f"TickByTickBidAsk({time_str}, bidPrice={self.bidPrice}, askPrice={self.askPrice}, {bidSize_str}, {askSize_str})"
+
+
 
 class TickByTickMidPoint(NamedTuple):
     time: datetime
     midPoint: float
+
+    def __repr__(self):
+        time_str = f'time={self.time.astimezone():%H:%M:%S.%f}'
+        return f"TickByTickMidPoint({time_str}, midPoint={self.midPoint})"
 
 
 class MktDepthData(NamedTuple):

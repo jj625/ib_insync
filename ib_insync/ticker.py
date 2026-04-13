@@ -150,6 +150,8 @@ class Ticker:
                     return f"{int(v)}"
                 else:
                     return v
+            elif k in ('contract'):
+                return v.localSymbol or v.symbol
             else:
                 return repr(v)
         s = ', '.join(f'{k}={_fmt(k, v)}' for k, v in attrs.items())

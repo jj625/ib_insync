@@ -506,6 +506,22 @@ class ProtobufDecoder:
             e.pendingPriceRevision = executionProto.isPriceRevisionPending
         return e
 
+    @staticmethod
+    def _decodeTickAttribLast(attribProto) -> TickAttribLast:
+        return TickAttribLast(
+            pastLimit=(
+                attribProto.pastLimit if attribProto.HasField('pastLimit') else False),
+            unreported=(
+                attribProto.unreported if attribProto.HasField('unreported') else False))
+
+    @staticmethod
+    def _decodeTickAttribBidAsk(attribProto) -> TickAttribBidAsk:
+        return TickAttribBidAsk(
+            bidPastLow=(
+                attribProto.bidPastLow if attribProto.HasField('bidPastLow') else False),
+            askPastHigh=(
+                attribProto.askPastHigh if attribProto.HasField('askPastHigh') else False))
+
     # ---- protobuf message handlers ----
 
     def _nextValidId(self, payload: bytes):
@@ -826,9 +842,9 @@ class ProtobufDecoder:
                 time = t.time if t.HasField('time') else 0
                 price = t.price if t.HasField('price') else 0.0
                 size = float(t.size) if t.HasField('size') else 0.0
-                mask = t.tickAttribLast if t.HasField('tickAttribLast') else 0
-                attrib = TickAttribLast(
-                    pastLimit=bool(mask & 1), unreported=bool(mask & 2))
+                attrib = (
+                    self._decodeTickAttribLast(t.tickAttribLast)
+                    if t.HasField('tickAttribLast') else TickAttribLast())
                 exchange = t.exchange if t.HasField('exchange') else ''
                 specialConditions = t.specialConditions if t.HasField('specialConditions') else ''
                 self.wrapper.tickByTickAllLast(
@@ -839,9 +855,9 @@ class ProtobufDecoder:
                 t = proto.historicalTickBidAsk
                 assert t
                 time = t.time if t.HasField('time') else 0
-                mask = t.tickAttribBidAsk if t.HasField('tickAttribBidAsk') else 0
-                attrib = TickAttribBidAsk(
-                    bidPastLow=bool(mask & 1), askPastHigh=bool(mask & 2))
+                attrib = (
+                    self._decodeTickAttribBidAsk(t.tickAttribBidAsk)
+                    if t.HasField('tickAttribBidAsk') else TickAttribBidAsk())
                 bidPrice = t.priceBid if t.HasField('priceBid') else 0.0
                 askPrice = t.priceAsk if t.HasField('priceAsk') else 0.0
                 bidSize = float(t.sizeBid) if t.HasField('sizeBid') else 0.0
@@ -1093,10 +1109,10 @@ class ProtobufDecoder:
         ticks = []
         for t in proto.historicalTicksBidAsk:
             time = t.time if t.HasField('time') else 0
-            mask = t.tickAttribBidAsk if t.HasField('tickAttribBidAsk') else 0
-            attrib = TickAttribBidAsk(
-                askPastHigh=bool(mask & 1), bidPastLow=bool(mask & 2))
-            dt = datetime.fromtimestamp(time, timezone.utc)
+            attrib = (
+                self._decodeTickAttribBidAsk(t.tickAttribBidAsk)
+                if t.HasField('tickAttribBidAsk') else TickAttribBidAsk())
+            dt = datetime.fromtimestamp(time, timezone.utc).astimezone()
             ticks.append(HistoricalTickBidAsk(
                 time=dt, tickAttribBidAsk=attrib,
                 priceBid=t.priceBid if t.HasField('priceBid') else 0.0,
@@ -1114,10 +1130,10 @@ class ProtobufDecoder:
         ticks = []
         for t in proto.historicalTicksLast:
             time = t.time if t.HasField('time') else 0
-            mask = t.tickAttribLast if t.HasField('tickAttribLast') else 0
-            attrib = TickAttribLast(
-                pastLimit=bool(mask & 1), unreported=bool(mask & 2))
-            dt = datetime.fromtimestamp(time, timezone.utc)
+            attrib = (
+                self._decodeTickAttribLast(t.tickAttribLast)
+                if t.HasField('tickAttribLast') else TickAttribLast())
+            dt = datetime.fromtimestamp(time, timezone.utc).astimezone()
             ticks.append(HistoricalTickLast(
                 time=dt, tickAttribLast=attrib,
                 price=t.price if t.HasField('price') else 0.0,

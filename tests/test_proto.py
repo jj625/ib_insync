@@ -62,7 +62,18 @@ async def main(args):
     qqq = ibi.Stock('QQQ', 'NASDAQ', 'USD')
     eurusd = ibi.Forex('EURUSD')
     vfiax = ibi.MutualFund(symbol='VFIAX')
-    await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax)
+    if 100 in args.test:
+        async def _on_tickbytick(t: ibi.Ticker):
+            print(t)
+
+        print('-'*10 + ' Some Test 100 ' + '-'*10)
+        await ib.qualifyContractsAsync(esfut)
+        tickType = 'Last' # Last, AllLast, BidAsk, MidPoint
+        ticker = ib.reqTickByTickData(esfut, tickType, 0, False)
+        print(ticker)
+        ticker.updateEvent.connect(_on_tickbytick)
+        await asyncio.sleep(10)
+        ib.cancelTickByTickData(esfut, tickType)
 
     if 0 in args.test:
         from adebouncer import AsyncDebouncer

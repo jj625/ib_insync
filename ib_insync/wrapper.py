@@ -933,7 +933,12 @@ class Wrapper:
             size: float, tickAttribLast: TickAttribLast,
             exchange, specialConditions):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__() if ticker else ""}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f'Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker_str}')
         if not ticker:
             self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -954,7 +959,12 @@ class Wrapper:
             bidSize: float, askSize: float,
             tickAttribBidAsk: TickAttribBidAsk):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__() if ticker else ""}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f'Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker_str}')
         if not ticker:
             self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -978,7 +988,12 @@ class Wrapper:
 
     def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
         ticker = self.reqId2Ticker.get(reqId)
-        # self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f'Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker_str}')
         if not ticker:
             self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
