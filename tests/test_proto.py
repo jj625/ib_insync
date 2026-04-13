@@ -255,9 +255,9 @@ if __name__ == '__main__':
         handlers=[handler]
     )
     # bump client/decoder to DEBUG for protocol-level visibility
-    logging.getLogger('ib_insync.client').setLevel(logging.WARNING)
-    logging.getLogger('ib_insync.wrapper').setLevel(logging.WARNING)
-    logging.getLogger('ib_insync.ProtobufDecoder').setLevel(logging.WARNING)
+    logging.getLogger('ib_insync.client').setLevel(logging.DEBUG)
+    logging.getLogger('ib_insync.wrapper').setLevel(logging.DEBUG)
+    logging.getLogger('ib_insync.ProtobufDecoder').setLevel(logging.DEBUG)
 
     # add cli `-test N` (N=int)
     
