@@ -74,6 +74,16 @@ async def main(args):
         ticker.updateEvent.connect(_on_tickbytick)
         await asyncio.sleep(10)
         ib.cancelTickByTickData(esfut, tickType)
+    if 10 in args.test:
+        print('-'*10 + ' pnlSingle ' + '-'*10)
+        ib.reqPnLSingle('U2575725', '', esfut.conId)
+        print(f'Portfolio PnL:\n{pprint.pformat(ib.pnlSingle('U2575725'))}')
+        ib.pnlSingleEvent.connect(lambda pnl: print(f'PnL update:\n{pprint.pformat(pnl)}'))
+
+    if 11 in args.test:
+        ib.reqPnL('U2575725')
+        print(f'Portfolio PnL:\n{pprint.pformat(ib.pnl('U2575725'))}')
+        ib.pnlEvent.connect(lambda pnl: print(f'PnL update:\n{pprint.pformat(pnl)}'))
 
     if 0 in args.test:
         from adebouncer import AsyncDebouncer
