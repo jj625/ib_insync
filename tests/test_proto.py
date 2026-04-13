@@ -62,6 +62,9 @@ async def main(args):
     qqq = ibi.Stock('QQQ', 'NASDAQ', 'USD')
     eurusd = ibi.Forex('EURUSD')
     vfiax = ibi.MutualFund(symbol='VFIAX')
+    btczh = ibi.Crypto('BTC', 'ZEROHASH', 'USD')
+    await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax, btczh)
+
     if 100 in args.test:
         async def _on_tickbytick(t: ibi.Ticker):
             print(t)
@@ -143,8 +146,9 @@ async def main(args):
         cd = await ib.reqContractDetailsAsync(esfut)
         print(pprint.pformat(cd))
 
-        await ib.qualifyContractsAsync(esfut, eurusd, vfiax)
-        print(esfut, eurusd, vfiax)
+        # logging.getLogger('ib_insync.Decoder').setLevel(logging.DEBUG)
+        await ib.qualifyContractsAsync(vfiax)
+        print(vfiax)
 
         print('-'*10 + ' Matching Symbols ' + '-'*10)
         ms = await ib.reqMatchingSymbolsAsync('BTC')
