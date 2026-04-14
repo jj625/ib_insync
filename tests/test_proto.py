@@ -17,7 +17,6 @@ from ib_insync.client import MIN_SERVER_VER_PROTOBUF
 logger = logging.getLogger(__name__)
 
 HOST = '127.0.0.1'
-PORT = 7496
 CLIENT_ID = 99
 WAIT_SECONDS = 60*5
 
@@ -33,6 +32,8 @@ async def _on_update_event(t: ibi.Ticker):
 
 async def main(args):
     ib = ibi.IB()
+
+    PORT = args.port
 
     print(f'Connecting to {HOST}:{PORT} clientId={CLIENT_ID} ...')
     _account = 'U2575725'
@@ -87,6 +88,30 @@ async def main(args):
         ib.reqPnL('U2575725')
         print(f'Portfolio PnL:\n{pprint.pformat(ib.pnl('U2575725'))}')
         ib.pnlEvent.connect(lambda pnl: print(f'PnL update:\n{pprint.pformat(pnl)}'))
+
+    if 12 in args.test:
+        print('-'*10 + ' Config ' + '-'*10)
+
+        # print(await ib.reqConfigAsync())
+
+        # print(f'Soft Dollar Tiers:\n{pprint.pformat(await ib.reqSoftDollarTiersAsync())}')
+
+        print(f'Family Codes:\n{pprint.pformat(await ib.reqFamilyCodesAsync())}')
+        
+        # print(f'Market Rule:\n{pprint.pformat(await ib.reqMarketRuleAsync(2963))}')
+
+        # z = await ib.reqMktDepthExchangesAsync()
+        # print(f'Market Depth Exchanges:\nlen={len(z)}\n{pprint.pformat(z, indent=1)}')
+
+        # ticker = ib.reqMktDepth(esfut)
+        # ticker.updateEvent.connect(lambda t: print(t))
+        # await asyncio.sleep(10)
+        # ib.cancelMktDepth(esfut)
+
+    if 1000 in args.test:
+        print('-'*10 + ' Some Test 13 ' + '-'*10)
+        ib.placeOrder(esfut, ibi.LimitOrder('BUY', 1, 6933, tif='GTC', account='DUP666283', transmit=True))
+        # ib.reqNewsBulletins(True)
 
     if 0 in args.test:
         from adebouncer import AsyncDebouncer
