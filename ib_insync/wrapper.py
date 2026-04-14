@@ -1331,9 +1331,11 @@ class Wrapper:
 
     def softDollarTiers(self, reqId: int, tiers: List[SoftDollarTier]):
         self._logger.info(f'softDollarTiers: {reqId} {tiers}')
+        self._endReq(reqId, tiers)
 
     def familyCodes(self, familyCodes: List[FamilyCode]):
         self._logger.info(f'familyCodes: {familyCodes}')
+        self._endReq('familyCodes', familyCodes)
 
     def error(
             self, reqId: int, errorCode: int, errorString: str,

@@ -239,6 +239,12 @@ class DepthMktDataDescription:
     serviceDataType: str = ''
     aggGroup: int = UNSET_INTEGER
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
+    __str__ = __repr__
 
 @dataclass
 class PnL:

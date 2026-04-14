@@ -2085,6 +2085,30 @@ class IB:
         self.client.reqContractDetails(reqId, contract)
         return future
 
+    async def reqSoftDollarTiersAsync(self) -> List[SoftDollarTier]:
+        """Requests pre-defined Soft Dollar Tiers. This is only supported for
+        registered professional advisors and hedge and mutual funds who have
+        configured Soft Dollar Tiers in Account Management."""
+        reqId = self.client.getReqId()
+        future = self.wrapper.startReq(reqId)
+        try:
+            self.client.reqSoftDollarTiers(reqId)
+            await asyncio.wait_for(future, 1)
+            return future.result()
+        except asyncio.TimeoutError:
+            self._logger.error('reqSoftDollarTiersAsync: Timeout')
+            return []
+
+    async def reqFamilyCodesAsync(self) -> List[FamilyCode]:
+        future = self.wrapper.startReq('familyCodes')
+        try:
+            self.client.reqFamilyCodes() # no reqId needed
+            await asyncio.wait_for(future, 1)
+            return future.result()
+        except asyncio.TimeoutError:
+            self._logger.error('reqFamilyCodesAsync: Timeout')
+            return []
+
     async def reqMatchingSymbolsAsync(self, pattern: str) \
             -> List[ContractDescription]:
         reqId = self.client.getReqId()
