@@ -1333,6 +1333,16 @@ class ProtobufDecoder:
         self.wrapper.familyCodes(codes)
 
     def _symbolSamples(self, payload: bytes):
+        from .protobufdec import decode_message
+        # # write payload to file for debugging
+        # with open("debug_payload.bin", "wb") as f:
+        #     f.write(payload)
+
+        # _top = decode_message(payload, recurse=True)
+        # self.logger.debug(pprint.pformat(_top))
+        # _instr_blobs = _top.get(2, [])
+        # self.logger.debug(pprint.pformat(_instr_blobs))
+        # self.logger.debug(pprint.pformat(decode_message(_instr_blobs, recurse=False)))
         proto = SymbolSamplesProto()
         proto.ParseFromString(payload)
         reqId = proto.reqId if proto.HasField('reqId') else -1
@@ -1341,6 +1351,7 @@ class ProtobufDecoder:
             cd = ContractDescription()
             if cdp.HasField('contract'):
                 cd.contract = self._decodeContract(cdp.contract)
+                # self.logger.debug(f'Decoded contract: {cd.contract}, Description: {cd.contract.issuerId}')
             cd.derivativeSecTypes = list(cdp.derivativeSecTypes) if cdp.derivativeSecTypes else []
             descriptions.append(cd)
         self.wrapper.symbolSamples(reqId, descriptions)

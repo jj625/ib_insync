@@ -92,13 +92,13 @@ async def main(args):
     if 12 in args.test:
         print('-'*10 + ' Config ' + '-'*10)
 
-        # print(await ib.reqConfigAsync())
+        print(f'Config:\n{pprint.pformat(await ib.reqConfigAsync(), indent=1)}')
 
-        # print(f'Soft Dollar Tiers:\n{pprint.pformat(await ib.reqSoftDollarTiersAsync())}')
+        print(f'Soft Dollar Tiers:\n{pprint.pformat(await ib.reqSoftDollarTiersAsync(), indent=1)}')
 
-        print(f'Family Codes:\n{pprint.pformat(await ib.reqFamilyCodesAsync())}')
+        print(f'Family Codes:\n{pprint.pformat(await ib.reqFamilyCodesAsync(), indent=1)}')
         
-        # print(f'Market Rule:\n{pprint.pformat(await ib.reqMarketRuleAsync(2963))}')
+        print(f'Market Rule:\n{pprint.pformat(await ib.reqMarketRuleAsync(2963), indent=1)}')
 
         # z = await ib.reqMktDepthExchangesAsync()
         # print(f'Market Depth Exchanges:\nlen={len(z)}\n{pprint.pformat(z, indent=1)}')
