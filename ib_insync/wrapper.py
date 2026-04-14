@@ -1462,3 +1462,37 @@ class Wrapper:
     
     def rerouteMktDepthReq(self, reqId, conId, exchange):
         raise NotImplementedError(f'rerouteMktDepthReq({reqId}, {conId}, {exchange}) is not implemented')
+
+    def configResponse(self, reqId: int, config: dict):
+        """Called when TWS/gateway responds to reqConfig.
+
+        Args:
+            reqId: The request ID.
+            config: Dict with decoded config sections. Possible keys:
+                'lockAndExit' - dict with autoLogoffTime/Period/Type
+                'messages' - list of dicts with id/title/message/defaultAction/enabled
+                'api' - dict with 'precautions' and 'settings' sub-dicts
+                'orders' - dict with 'smartRouting' sub-dict
+        """
+        self._logger.info(f'configResponse: reqId={reqId}')
+        self._endReq(reqId, config)
+
+    def updateConfigResponse(
+            self, reqId: int, status: str, message: str,
+            changedFields: list, errors: list):
+        """Called when TWS/gateway responds to updateConfig.
+
+        Args:
+            reqId: The request ID.
+            status: 'ok' or 'error'.
+            message: Human-readable status message.
+            changedFields: List of config field names that changed.
+            errors: List of error strings, if any.
+        """
+        self._logger.info(
+            f'updateConfigResponse: reqId={reqId} status={status} '
+            f'message={message} changed={changedFields} errors={errors}')
+        result = {
+            'status': status, 'message': message,
+            'changedFields': changedFields, 'errors': errors}
+        self._endReq(reqId, result)

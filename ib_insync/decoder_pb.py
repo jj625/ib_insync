@@ -119,7 +119,10 @@ from ibapi.protobuf.VerifyMessageApi_pb2 import VerifyMessageApi as VerifyMessag
 from ibapi.protobuf.VerifyCompleted_pb2 import VerifyCompleted as VerifyCompletedProto
 from ibapi.protobuf.DisplayGroupList_pb2 import DisplayGroupList as DisplayGroupListProto
 from ibapi.protobuf.DisplayGroupUpdated_pb2 import DisplayGroupUpdated as DisplayGroupUpdatedProto
-# ibapi decoder_utils for complex protobuf → native type conversions
+from ibapi.protobuf.ConfigResponse_pb2 import ConfigResponse as ConfigResponseProto
+from ibapi.protobuf.UpdateConfigResponse_pb2 import UpdateConfigResponse as UpdateConfigResponseProto
+
+# ibapi decoder_utils for complex protobuf
 from ibapi.decoder_utils import (
     decodeContractDetails as _ibapi_decodeContractDetails,
     setLastTradeDate as _ibapi_setLastTradeDate,
@@ -241,6 +244,8 @@ class ProtobufDecoder:
             IN.VERIFY_COMPLETED: self._verifyCompleted,
             IN.DISPLAY_GROUP_LIST: self._displayGroupList,
             IN.DISPLAY_GROUP_UPDATED: self._displayGroupUpdated,
+            IN.CONFIG_RESPONSE: self._configResponse,
+            IN.UPDATE_CONFIG_RESPONSE: self._updateConfigResponse
         }
 
     def processProtoBuf(self, payload: bytes, msgId: int):
@@ -581,7 +586,7 @@ class ProtobufDecoder:
         if not proto.HasField('orderState'):
             return
         orderState = self._decodeOrderState(proto.orderState)
-        self.wrapper.openOrder(contract, order, orderState)
+        self.wrapper.openOrder(orderId, contract, order, orderState) # TODO: confirm first argument
 
     def _openOrderEnd(self, payload: bytes):
         # proto is empty but we still parse it
@@ -1291,7 +1296,7 @@ class ProtobufDecoder:
         strikes = set(proto.strikes) if proto.strikes else set()
         self.wrapper.securityDefinitionOptionParameter(
             reqId, exchange, underlyingConId, tradingClass, multiplier,
-            expirations, strikes)
+            list(expirations), list(strikes))
 
     def _secDefOptParamEnd(self, payload: bytes):
         proto = SecDefOptParameterEndProto()
@@ -1304,7 +1309,11 @@ class ProtobufDecoder:
     def _softDollarTiers(self, payload: bytes):
         proto = SoftDollarTiersProto()
         proto.ParseFromString(payload)
-        reqId = proto.reqId if proto.HasField('reqId') else -1
+        if proto.HasField('reqId'):
+            reqId = proto.reqId
+        else:
+            self.logger.error('softDollarTiers: Missing reqId')
+            reqId = -1
         tiers = []
         for t in proto.softDollarTiers:
             tiers.append(SoftDollarTier(
@@ -1434,3 +1443,98 @@ class ProtobufDecoder:
         reqId = proto.reqId if proto.HasField('reqId') else -1
         contractInfo = proto.contractInfo if proto.HasField('contractInfo') else ''
         self.wrapper.displayGroupUpdated(reqId, contractInfo)
+
+    @staticmethod
+    def _decodeLockAndExit(le):
+        """Decode LockAndExitConfig sub-message to dict."""
+        return {
+            'autoLogoffTime': le.autoLogoffTime if le.HasField('autoLogoffTime') else '',
+            'autoLogoffPeriod': le.autoLogoffPeriod if le.HasField('autoLogoffPeriod') else '',
+            'autoLogoffType': le.autoLogoffType if le.HasField('autoLogoffType') else '',
+        }
+
+    @staticmethod
+    def _decodeMessageConfig(mc):
+        """Decode a single MessageConfig sub-message to dict."""
+        return {
+            'id': mc.id if mc.HasField('id') else 0,
+            'title': mc.title if mc.HasField('title') else '',
+            'message': mc.message if mc.HasField('message') else '',
+            'defaultAction': mc.defaultAction if mc.HasField('defaultAction') else '',
+            'enabled': mc.enabled if mc.HasField('enabled') else False,
+        }
+
+    @staticmethod
+    def _decodeApiPrecautions(ap):
+        """Decode ApiPrecautionsConfig sub-message to dict."""
+        d = {}
+        for f in ap.DESCRIPTOR.fields:
+            if ap.HasField(f.name):
+                d[f.name] = getattr(ap, f.name)
+        return d
+
+    @staticmethod
+    def _decodeApiSettings(s):
+        """Decode ApiSettingsConfig sub-message to dict."""
+        d = {}
+        for f in s.DESCRIPTOR.fields:
+            if f.label == f.LABEL_REPEATED:
+                val = list(getattr(s, f.name))
+                if val:
+                    d[f.name] = val
+            elif s.HasField(f.name):
+                d[f.name] = getattr(s, f.name)
+        return d
+
+    @staticmethod
+    def _decodeApiConfig(api):
+        """Decode ApiConfig sub-message to dict."""
+        d = {}
+        if api.HasField('precautions'):
+            d['precautions'] = ProtobufDecoder._decodeApiPrecautions(api.precautions)
+        if api.HasField('settings'):
+            d['settings'] = ProtobufDecoder._decodeApiSettings(api.settings)
+        return d
+
+    @staticmethod
+    def _decodeOrdersSmartRouting(sr):
+        """Decode OrdersSmartRoutingConfig sub-message to dict."""
+        d = {}
+        for f in sr.DESCRIPTOR.fields:
+            if sr.HasField(f.name):
+                d[f.name] = getattr(sr, f.name)
+        return d
+
+    @staticmethod
+    def _decodeOrdersConfig(oc):
+        """Decode OrdersConfig sub-message to dict."""
+        d = {}
+        if oc.HasField('smartRouting'):
+            d['smartRouting'] = ProtobufDecoder._decodeOrdersSmartRouting(oc.smartRouting)
+        return d
+
+    def _configResponse(self, payload: bytes):
+        proto = ConfigResponseProto()
+        proto.ParseFromString(payload)
+        reqId = proto.reqId if proto.HasField('reqId') else -1
+        config = {}
+        if proto.HasField('lockAndExit'):
+            config['lockAndExit'] = self._decodeLockAndExit(proto.lockAndExit)
+        if proto.messages:
+            config['messages'] = [
+                self._decodeMessageConfig(m) for m in proto.messages]
+        if proto.HasField('api'):
+            config['api'] = self._decodeApiConfig(proto.api)
+        if proto.HasField('orders'):
+            config['orders'] = self._decodeOrdersConfig(proto.orders)
+        self.wrapper.configResponse(reqId, config)
+
+    def _updateConfigResponse(self, payload: bytes):
+        proto = UpdateConfigResponseProto()
+        proto.ParseFromString(payload)
+        reqId = proto.reqId if proto.HasField('reqId') else -1
+        status = proto.status if proto.HasField('status') else ''
+        message = proto.message if proto.HasField('message') else ''
+        changedFields = list(proto.changedFields) if proto.changedFields else []
+        errors = list(proto.errors) if proto.errors else []
+        self.wrapper.updateConfigResponse(reqId, status, message, changedFields, errors)

@@ -110,6 +110,17 @@ from ibapi.protobuf.CancelWshEventData_pb2 import CancelWshEventData as CancelWs
 # fundamental data
 from ibapi.protobuf.FundamentalsDataRequest_pb2 import FundamentalsDataRequest as FundamentalsDataRequestProto
 from ibapi.protobuf.CancelFundamentalsData_pb2 import CancelFundamentalsData as CancelFundamentalsDataProto
+# market depth
+from ibapi.protobuf.MarketDepthRequest_pb2 import MarketDepthRequest as MarketDepthRequestProto
+from ibapi.protobuf.CancelMarketDepth_pb2 import CancelMarketDepth as CancelMarketDepthProto
+# news bulletins
+from ibapi.protobuf.NewsBulletinsRequest_pb2 import NewsBulletinsRequest as NewsBulletinsRequestProto
+from ibapi.protobuf.CancelNewsBulletins_pb2 import CancelNewsBulletins as CancelNewsBulletinsProto
+# soft dollar tiers
+from ibapi.protobuf.SoftDollarTiersRequest_pb2 import SoftDollarTiersRequest as SoftDollarTiersRequestProto
+# config
+from ibapi.protobuf.ConfigRequest_pb2 import ConfigRequest as ConfigRequestProto
+from ibapi.protobuf.UpdateConfigRequest_pb2 import UpdateConfigRequest as UpdateConfigRequestProto
 # ibapi client_utils for building contract/order protos
 from ibapi.client_utils import (
     createContractProto as _createContractProto,
@@ -130,6 +141,10 @@ _OUT_REQ_ACCT_DATA = 6
 _OUT_REQ_EXECUTIONS = 7
 _OUT_REQ_IDS = 8
 _OUT_REQ_CONTRACT_DATA = 9
+_OUT_REQ_MKT_DEPTH = 10
+_OUT_CANCEL_MKT_DEPTH = 11
+_OUT_REQ_NEWS_BULLETINS = 12
+_OUT_CANCEL_NEWS_BULLETINS = 13
 _OUT_SET_SERVER_LOGLEVEL = 14
 _OUT_REQ_AUTO_OPEN_ORDERS = 15
 _OUT_REQ_ALL_OPEN_ORDERS = 16
@@ -165,6 +180,7 @@ _OUT_CANCEL_POSITIONS_MULTI = 75
 _OUT_REQ_ACCOUNT_UPDATES_MULTI = 76
 _OUT_CANCEL_ACCOUNT_UPDATES_MULTI = 77
 _OUT_REQ_SEC_DEF_OPT_PARAMS = 78
+_OUT_REQ_SOFT_DOLLAR_TIERS = 79
 _OUT_REQ_FAMILY_CODES = 80
 _OUT_REQ_MATCHING_SYMBOLS = 81
 _OUT_REQ_MKT_DEPTH_EXCHANGES = 82
@@ -190,20 +206,24 @@ _OUT_REQ_USER_INFO = 104
 _OUT_REQ_CURRENT_TIME_IN_MILLIS = 105
 _OUT_CANCEL_CONTRACT_DATA = 106
 _OUT_CANCEL_HISTORICAL_TICKS = 107
+_OUT_REQ_CONFIG = 108
+_OUT_UPDATE_CONFIG = 109
 
 # Min server versions for protobuf per request category
+_MIN_PB_PLACE_ORDER = 203  # MIN_SERVER_VER_PROTOBUF_PLACE_ORDER
 _MIN_PB_COMPLETED_ORDER = 204  # MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER
 _MIN_PB_CONTRACT_DATA = 205  # MIN_SERVER_VER_PROTOBUF_CONTRACT_DATA
 _MIN_PB_MARKET_DATA = 206  # MIN_SERVER_VER_PROTOBUF_MARKET_DATA
 _MIN_PB_ACCOUNTS_POSITIONS = 207  # MIN_SERVER_VER_PROTOBUF_ACCOUNTS_POSITIONS
 _MIN_PB_HISTORICAL_DATA = 208  # MIN_SERVER_VER_PROTOBUF_HISTORICAL_DATA
-_MIN_PB_SCAN_DATA = 210  # MIN_SERVER_VER_PROTOBUF_SCAN_DATA (also PnL, fundamental)
 _MIN_PB_SCAN_DATA_NEWS = 209  # MIN_SERVER_VER_PROTOBUF_NEWS_DATA (also WSH)
+_MIN_PB_SCAN_DATA = 210  # MIN_SERVER_VER_PROTOBUF_SCAN_DATA (also PnL, fundamental)
 _MIN_PB_REST_1 = 211  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_1 (FA, exercise, calc)
 _MIN_PB_REST_2 = 212  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_2 (sec def, family, etc)
 _MIN_PB_REST_3 = 213  # MIN_SERVER_VER_PROTOBUF_REST_MESSAGES_3
 _MIN_PB_CANCEL_CONTRACT_DATA = 215  # MIN_SERVER_VER_CANCEL_CONTRACT_DATA
-_MIN_PB_PLACE_ORDER = 203  # MIN_SERVER_VER_PROTOBUF_PLACE_ORDER
+_MIN_PB_CONFIG = 219  # MIN_SERVER_VER_CONFIG
+_MIN_PB_UPDATE_CONFIG = 221  # MIN_SERVER_VER_UPDATE_CONFIG
 
 from .msg_names import in_msg_name as _in_msg_name, out_msg_name as _out_msg_name
 
@@ -742,7 +762,83 @@ class Client:
             return
         self.send(2, 2, reqId)
 
+    @staticmethod
+    def _safeCreatePlaceOrderProto(orderId, contract, order):
+        """Build PlaceOrderRequest proto from ib_insync types.
+
+        Uses ibapi's createContractProto/createOrderProto but guards
+        against missing attributes (ib_insync Order may lack newer
+        ibapi-only fields like hedgeMaxSize, slOrderId, etc.).
+        """
+        from ibapi.client_utils import (
+            createContractProto as _ccp,
+            createOrderProto as _cop,
+        )
+        from ibapi.protobuf.PlaceOrderRequest_pb2 import (
+            PlaceOrderRequest as _PlaceOrderRequestProto,
+        )
+        from ibapi.protobuf.AttachedOrders_pb2 import (
+            AttachedOrders as _AttachedOrdersProto,
+        )
+        from ibapi.utils import isValidIntValue
+
+        # Patch any attributes ibapi expects but ib_insync doesn't have.
+        # We add them transiently so createOrderProto won't crash.
+        # Defaults match ibapi.order.Order.__init__.
+        _missing_order_attrs = {
+            'hedgeMaxSize': UNSET_INTEGER,
+            'slOrderId': UNSET_INTEGER, 'slOrderType': '',
+            'ptOrderId': UNSET_INTEGER, 'ptOrderType': '',
+            'includeOvernight': False,
+            'imbalanceOnly': False,
+            'allowPreOpen': False,
+            'deactivate': False,
+            'ignoreOpenAuction': False,
+            'postOnly': False,
+            'seekPriceImprovement': None,
+            'submitter': '',
+            'whatIfType': UNSET_INTEGER,
+        }
+        patched = []
+        for attr, default in _missing_order_attrs.items():
+            if not hasattr(order, attr):
+                setattr(order, attr, default)
+                patched.append(attr)
+
+        try:
+            proto = _PlaceOrderRequestProto()
+            proto.orderId = orderId
+            cp = _ccp(contract, order)
+            if cp is not None:
+                assert proto.contract
+                proto.contract.CopyFrom(cp)
+            op = _cop(order)
+            if op is not None:
+                assert proto.order
+                proto.order.CopyFrom(op)
+            # attached orders (optional newer feature)
+            aop = _AttachedOrdersProto()
+            if isValidIntValue(getattr(order, 'slOrderId', 0)):
+                aop.slOrderId = order.slOrderId
+            if getattr(order, 'slOrderType', ''):
+                aop.slOrderType = order.slOrderType
+            if isValidIntValue(getattr(order, 'ptOrderId', 0)):
+                aop.ptOrderId = order.ptOrderId
+            if getattr(order, 'ptOrderType', ''):
+                aop.ptOrderType = order.ptOrderType
+            assert proto.attachedOrders
+            proto.attachedOrders.CopyFrom(aop)
+            return proto
+        finally:
+            # clean up patched attrs so we don't pollute the dataclass
+            for attr in patched:
+                delattr(order, attr)
+
     def placeOrder(self, orderId, contract, order: Order):
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_PLACE_ORDER:
+            proto = self._safeCreatePlaceOrderProto(orderId, contract, order)
+            self.sendProto(_OUT_PLACE_ORDER, proto)
+            return
         version = self.serverVersion()
         if version < 183 and order.customerAccount: # MIN_SERVER_VER_BOND_ACCRUED_INTEREST=183
             raise ValueError('customerAccount only available with server version 183+')
@@ -969,13 +1065,25 @@ class Client:
         self.send(*fields)
 
     def cancelOrder(self, orderId, manualCancelOrderTime=''):
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PROTOBUF_PLACE_ORDER:
+            proto = CancelOrderRequestProto()
+            proto.orderId = orderId
+            if manualCancelOrderTime:
+                assert proto.orderCancel
+                proto.orderCancel.manualOrderCancelTime = manualCancelOrderTime
+            self.sendProto(_OUT_CANCEL_ORDER, proto)
+            return
         fields = [4, 1, orderId]
-        if self.serverVersion() >= 169:
+        if self.serverVersion() >= 169: # MIN_SERVER_VER_MANUAL_ORDER_TIME
             fields += [manualCancelOrderTime]
+        else:
+            if manualCancelOrderTime:
+                raise RuntimeError(f'Server version {self._serverVersion} does not support manualCancelOrderTime')
+
         self.send(*fields)
 
     def reqOpenOrders(self):
-        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER:
             self.sendProto(_OUT_REQ_OPEN_ORDERS, OpenOrdersRequestProto())
             return
         self.send(5, 1)
@@ -1045,6 +1153,21 @@ class Client:
 
     def reqMktDepth(
             self, reqId, contract, numRows, isSmartDepth, mktDepthOptions):
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PROTOBUF_MARKET_DATA:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqMktDepth')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_MARKET_DATA:
+            proto = MarketDepthRequestProto()
+            proto.reqId = reqId
+            cp = _createContractProto(contract, None)
+            if cp:
+                assert proto.contract
+                proto.contract.CopyFrom(cp)
+            proto.numRows = numRows
+            if isSmartDepth:
+                proto.isSmartDepth = isSmartDepth
+            self.sendProto(_OUT_REQ_MKT_DEPTH, proto)
+            return
         self.send(
             10, 5, reqId,
             contract.conId,
@@ -1064,12 +1187,30 @@ class Client:
             mktDepthOptions)
 
     def cancelMktDepth(self, reqId, isSmartDepth):
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PROTOBUF_MARKET_DATA:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support cancelMktDepth')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_MARKET_DATA:
+            proto = CancelMarketDepthProto()
+            proto.reqId = reqId
+            if isSmartDepth:
+                proto.isSmartDepth = isSmartDepth
+            self.sendProto(_OUT_CANCEL_MKT_DEPTH, proto)
+            return
         self.send(11, 1, reqId, isSmartDepth)
 
     def reqNewsBulletins(self, allMsgs):
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_NEWS_DATA:
+            proto = NewsBulletinsRequestProto()
+            proto.allMessages = allMsgs
+            self.sendProto(_OUT_REQ_NEWS_BULLETINS, proto)
+            return
         self.send(12, 1, allMsgs)
 
     def cancelNewsBulletins(self):
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_NEWS_DATA:
+            self.sendProto(_OUT_CANCEL_NEWS_BULLETINS, CancelNewsBulletinsProto())
+            return
         self.send(13, 1)
 
     def reqAutoOpenOrders(self, bAutoBind):
@@ -1521,16 +1662,28 @@ class Client:
             underlyingSecType, underlyingConId)
 
     def reqSoftDollarTiers(self, reqId):
+        if self._serverVersion < server_versions.MIN_SERVER_VER_SOFT_DOLLAR_TIER:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqSoftDollarTiers')
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
+            proto = SoftDollarTiersRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_REQ_SOFT_DOLLAR_TIERS, proto)
+            return
         self.send(79, reqId)
 
     def reqFamilyCodes(self):
-        if self._serverVersion >= _MIN_PB_REST_2:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_REQ_FAMILY_CODES:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqFamilyCodes')
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             self.sendProto(_OUT_REQ_FAMILY_CODES, FamilyCodesRequestProto())
             return
         self.send(80)
 
     def reqMatchingSymbols(self, reqId, pattern):
-        if self._serverVersion >= _MIN_PB_REST_2:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_REQ_MATCHING_SYMBOLS:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqMatchingSymbols')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = MatchingSymbolsRequestProto()
             proto.reqId = reqId
             if pattern:
@@ -1571,7 +1724,10 @@ class Client:
 
     def reqHeadTimeStamp(
             self, reqId, contract, whatToShow, useRTH, formatDate):
-        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_REQ_HEAD_TIMESTAMP:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqHeadTimeStamp')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = HeadTimestampRequestProto()
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
@@ -1616,7 +1772,10 @@ class Client:
         self.send(89, tickerId)
 
     def cancelHeadTimeStamp(self, reqId):
-        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_CANCEL_HEADTIMESTAMP:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support cancelHeadTimeStamp')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = CancelHeadTimestampProto()
             proto.reqId = reqId
             self.sendProto(_OUT_CANCEL_HEAD_TIMESTAMP, proto)
@@ -1624,7 +1783,10 @@ class Client:
         self.send(90, reqId)
 
     def reqMarketRule(self, marketRuleId):
-        if self._serverVersion >= _MIN_PB_REST_2:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_MARKET_RULES:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqMarketRule')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = MarketRuleRequestProto()
             proto.marketRuleId = marketRuleId
             self.sendProto(_OUT_REQ_MARKET_RULE, proto)
@@ -1632,7 +1794,10 @@ class Client:
         self.send(91, marketRuleId)
 
     def reqPnL(self, reqId, account, modelCode):
-        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PNL:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqPnL')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = PnLRequestProto()
             proto.reqId = reqId
             if account:
@@ -1644,7 +1809,10 @@ class Client:
         self.send(92, reqId, account, modelCode)
 
     def cancelPnL(self, reqId):
-        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PNL:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support cancelPnL')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = CancelPnLProto()
             proto.reqId = reqId
             self.sendProto(_OUT_CANCEL_PNL, proto)
@@ -1652,7 +1820,10 @@ class Client:
         self.send(93, reqId)
 
     def reqPnLSingle(self, reqId, account, modelCode, conid):
-        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PNL:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqPnLSingle')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = PnLSingleRequestProto()
             proto.reqId = reqId
             if account:
@@ -1665,7 +1836,10 @@ class Client:
         self.send(94, reqId, account, modelCode, conid)
 
     def cancelPnLSingle(self, reqId):
-        if self._serverVersion >= _MIN_PB_SCAN_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_PNL:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support cancelPnLSingle')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = CancelPnLSingleProto()
             proto.reqId = reqId
             self.sendProto(_OUT_CANCEL_PNL_SINGLE, proto)
@@ -1675,7 +1849,10 @@ class Client:
     def reqHistoricalTicks(
             self, reqId, contract, startDateTime, endDateTime,
             numberOfTicks, whatToShow, useRth, ignoreSize, miscOptions):
-        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_HISTORICAL_TICKS:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqHistoricalTicks')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = HistoricalTicksRequestProto()
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
@@ -1702,7 +1879,10 @@ class Client:
 
     def reqTickByTickData(
             self, reqId, contract, tickType, numberOfTicks, ignoreSize):
-        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_TICK_BY_TICK:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqTickByTickData')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = TickByTickRequestProto()
             proto.reqId = reqId
             cp = _createContractProto(contract, None)
@@ -1719,7 +1899,10 @@ class Client:
         self.send(97, reqId, contract, tickType, numberOfTicks, ignoreSize)
 
     def cancelTickByTickData(self, reqId):
-        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_TICK_BY_TICK:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support cancelTickByTickData')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = CancelTickByTickProto()
             proto.reqId = reqId
             self.sendProto(_OUT_CANCEL_TICK_BY_TICK_DATA, proto)
@@ -1727,7 +1910,10 @@ class Client:
         self.send(98, reqId)
 
     def reqCompletedOrders(self, apiOnly):
-        if self._serverVersion >= _MIN_PB_COMPLETED_ORDER:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_COMPLETED_ORDERS:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqCompletedOrders')
+
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF_COMPLETED_ORDER:
             proto = CompletedOrdersRequestProto()
             proto.apiOnly = apiOnly
             self.sendProto(_OUT_REQ_COMPLETED_ORDERS, proto)
@@ -1795,7 +1981,10 @@ class Client:
         self.send(103, reqId)
 
     def reqUserInfo(self, reqId):
-        if self._serverVersion >= _MIN_PB_REST_2:
+        if self._serverVersion < server_versions.MIN_SERVER_VER_USER_INFO:
+            raise RuntimeError(f'Server version {self._serverVersion} does not support reqUserInfo')
+        
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = UserInfoRequestProto()
             proto.reqId = reqId
             self.sendProto(_OUT_REQ_USER_INFO, proto)
@@ -1832,3 +2021,47 @@ class Client:
             self.sendProto(_OUT_SET_SERVER_LOGLEVEL, proto)
             return
         self.send(14, 1, logLevel)
+
+    def cancelContractDetails(self, reqId):
+        """Cancel a pending reqContractDetails request."""
+        if self._serverVersion >= _MIN_PB_CANCEL_CONTRACT_DATA:
+            proto = CancelContractDataProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_CONTRACT_DATA, proto)
+            return
+        # text fallback for older servers (msgId 106 added at server ver 215)
+        self.send(106, reqId)
+
+    def cancelHistoricalTicks(self, reqId):
+        """Cancel a pending reqHistoricalTicks request."""
+        if self._serverVersion >= _MIN_PB_HISTORICAL_DATA:
+            proto = CancelHistoricalTicksProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_CANCEL_HISTORICAL_TICKS, proto)
+            return
+        self.send(107, reqId)
+
+    def reqConfig(self, reqId):
+        """Request configuration from TWS/gateway."""
+        if self._serverVersion >= _MIN_PB_CONFIG:
+            proto = ConfigRequestProto()
+            proto.reqId = reqId
+            self.sendProto(_OUT_REQ_CONFIG, proto)
+        else:
+            self._logger.error('Server version does not support reqConfig')
+
+    def updateConfig(self, reqId, **kwargs):
+        """Send a config update to TWS/gateway.
+
+        Accepts keyword arguments that correspond to UpdateConfigRequest
+        proto fields (e.g. resetAPIOrderSequence=True).
+        """
+        if self._serverVersion >= _MIN_PB_UPDATE_CONFIG:
+            proto = UpdateConfigRequestProto()
+            proto.reqId = reqId
+            for k, v in kwargs.items():
+                if hasattr(proto, k):
+                    setattr(proto, k, v)
+            self.sendProto(_OUT_UPDATE_CONFIG, proto)
+        else:
+            self._logger.error('Server version does not support updateConfig')

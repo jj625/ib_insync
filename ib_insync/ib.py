@@ -15,12 +15,13 @@ from ib_insync.client import Client
 from ib_insync.contract import Contract, ContractDescription, ContractDetails, Stock, TradingSession, FundAssetType, FundDistributionPolicyIndicator
 from ib_insync.objects import (
     AccountValue, BarDataList, DepthMktDataDescription, Execution,
-    ExecutionFilter, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
+    ExecutionFilter, FamilyCode, Fill, HistogramData, HistoricalNews, HistoricalSchedule,
     NewsArticle, NewsBulletin, NewsProvider, NewsTick, OptionChain,
     OptionComputation, PnL, PnLSingle, PortfolioItem, Position, PriceIncrement,
     PositionMulti, BarData, RealTimeBar,
     RealTimeBarList, ScanDataList, ScannerSubscription, SmartComponent,
     CommissionReport,
+    SoftDollarTier,
     TagValue, TradeLogEntry, WshEventData)
 from ib_insync.order import (
     MarketOrder,
@@ -2427,6 +2428,11 @@ class IB:
         self.client.reqUserInfo(reqId)
         return future
 
+    def reqConfigAsync(self):
+        reqId = self.client.getReqId()
+        future = self.wrapper.startReq(reqId)
+        self.client.reqConfig(reqId)
+        return future
 
 if __name__ == '__main__':
     loop = util.getLoop()
