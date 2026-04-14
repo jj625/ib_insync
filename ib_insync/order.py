@@ -248,6 +248,12 @@ class OrderStatus:
     ActiveStates: ClassVar[FrozenSet[str]] = frozenset(
         ['PendingSubmit', 'ApiPending', 'PreSubmitted', 'Submitted'])
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
+    __str__ = __repr__
 
 @dataclass
 class OrderState:
@@ -332,6 +338,17 @@ class Trade:
         """Number of shares remaining to be filled."""
         return self.order.totalQuantity - self.filled()
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+
+        def _fmt(k, v):
+            if isinstance(v, Contract):
+                return v.localSymbol or v.symbol
+            else:
+                return repr(v)
+        s = ', '.join(f'{k}={_fmt(k, v)}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 class BracketOrder(NamedTuple):
     parent: Order

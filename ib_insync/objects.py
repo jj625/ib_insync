@@ -7,10 +7,11 @@ from typing import List, NamedTuple, Optional, Union
 from eventkit import Event
 
 from .contract import Contract, ScanData, TagValue, TradingSession
-from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, NPMKTOPEN, NPMKTCLOSE, MKTOPEN, MKTCLOSE
+from .util import EPOCH, UNSET_DOUBLE, UNSET_INTEGER, dataclassNonDefaults
 
 nan = float('nan')
 
+import datetime as dt
 import numpy as np
 _is_numpy_2_or_newer = tuple(map(int, np.__version__.split(".")[:2])) >= (2, 0)
 NPNINF = -np.inf if _is_numpy_2_or_newer else np.NINF # type: ignore
@@ -255,6 +256,21 @@ class TradeLogEntry:
     message: str = ''
     errorCode: int = 0
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+
+        def _fmt(k, v):
+            if isinstance(v, dt.datetime):
+                return v.astimezone().isoformat()
+            elif isinstance(v, dt.date):
+                return v.isoformat()
+            elif isinstance(v, dt.time):
+                return v.isoformat()
+            else:
+                return repr(v)
+        s = ', '.join(f'{k}={_fmt(k, v)}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class PnLSingle:
