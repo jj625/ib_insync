@@ -42,7 +42,7 @@ setup(
         'Programming Language :: Python :: 3 :: Only',
     ],
     keywords='ibapi tws asyncio jupyter interactive brokers async',
-    packages=['ib_insync'],
+    # packages=['ib_insync'], # use setup.cfg
     package_data={'ib_insync': ['py.typed']},
     install_requires=['eventkit', # 'nest_asyncio',
                       'dataclasses;python_version<"3.7"',
