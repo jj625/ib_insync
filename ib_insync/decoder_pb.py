@@ -847,34 +847,39 @@ class ProtobufDecoder:
                 time = t.time if t.HasField('time') else 0
                 price = t.price if t.HasField('price') else 0.0
                 size = float(t.size) if t.HasField('size') else 0.0
-                attrib = (
+                attribLast: TickAttribLast = (
                     self._decodeTickAttribLast(t.tickAttribLast)
                     if t.HasField('tickAttribLast') else TickAttribLast())
                 exchange = t.exchange if t.HasField('exchange') else ''
                 specialConditions = t.specialConditions if t.HasField('specialConditions') else ''
+                self.wrapper.tickByTickRaw(
+                    reqId, tickType, time, price, size, attribLast, exchange, specialConditions)
                 self.wrapper.tickByTickAllLast(
                     reqId, tickType, time, price, size,
-                    attrib, exchange, specialConditions)
+                    attribLast, exchange, specialConditions)
         elif tickType == 3:  # BidAsk
             if proto.HasField('historicalTickBidAsk'):
                 t = proto.historicalTickBidAsk
                 assert t
                 time = t.time if t.HasField('time') else 0
-                attrib = (
+                attribBidAsk: TickAttribBidAsk = (
                     self._decodeTickAttribBidAsk(t.tickAttribBidAsk)
                     if t.HasField('tickAttribBidAsk') else TickAttribBidAsk())
                 bidPrice = t.priceBid if t.HasField('priceBid') else 0.0
                 askPrice = t.priceAsk if t.HasField('priceAsk') else 0.0
                 bidSize = float(t.sizeBid) if t.HasField('sizeBid') else 0.0
                 askSize = float(t.sizeAsk) if t.HasField('sizeAsk') else 0.0
+                self.wrapper.tickByTickRaw(
+                    reqId, tickType, time, bidPrice, bidSize, attribBidAsk, '', '')
                 self.wrapper.tickByTickBidAsk(
-                    reqId, time, bidPrice, askPrice, bidSize, askSize, attrib)
+                    reqId, time, bidPrice, askPrice, bidSize, askSize, attribBidAsk)
         elif tickType == 4:  # MidPoint
             if proto.HasField('historicalTickMidPoint'):
                 t = proto.historicalTickMidPoint
                 assert t
                 time = t.time if t.HasField('time') else 0
                 midPoint = t.price if t.HasField('price') else 0.0
+                self.wrapper.tickByTickRaw(reqId, tickType, time, midPoint, 0.0, None, '', '')
                 self.wrapper.tickByTickMidPoint(reqId, time, midPoint)
         else:
             self.logger.error(f'Unknown tickType: {tickType}')

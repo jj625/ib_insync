@@ -38,9 +38,10 @@ class Ticker:
 
     Events:
         * ``updateEvent`` (ticker: :class:`.Ticker`)
+        * ``_updateEventRaw`` (ticker: :class:`.Ticker`, tickType: int, time: int, price: float, size: float, tickAttrib: :class:`.TickAttribBidAsk`|:class:`.TickAttribLast`|None, exchange: str, specialConditions: str)
     """
 
-    events: ClassVar = ('updateEvent',)
+    events: ClassVar = ('updateEvent', '_updateEventRaw')
 
     contract: Optional[Contract] = None
     time: Optional[datetime] = None
@@ -127,6 +128,7 @@ class Ticker:
 
     def __post_init__(self):
         self.updateEvent = TickerUpdateEvent('updateEvent')
+        self._updateEventRaw = Event('_updateEventRaw')
 
     def __eq__(self, other):
         return self is other
@@ -197,19 +199,19 @@ class TickerUpdateEvent(Event):
 
     def trades(self) -> "Tickfilter":
         """Emit trade ticks."""
-        return Tickfilter((4, 5, 48, 68, 71), self)
+        return Tickfilter((4, 5, 48, 68, 71), self) # LAST, LAST_SIZE, RT_VOLUME, DELAYED_LAST, DELAYED_LAST_SIZE
 
     def bids(self) -> "Tickfilter":
         """Emit bid ticks."""
-        return Tickfilter((0, 1, 66, 69), self)
+        return Tickfilter((0, 1, 66, 69), self) # BID_SIZE, BID, DELAYED_BID, DELAYED_BID_SIZE
 
     def asks(self) -> "Tickfilter":
         """Emit ask ticks."""
-        return Tickfilter((2, 3, 67, 70), self)
+        return Tickfilter((2, 3, 67, 70), self) # ASK, ASK_SIZE, DELAYED_ASK, DELAYED_ASK_SIZE
 
     def bidasks(self) -> "Tickfilter":
         """Emit bid and ask ticks."""
-        return Tickfilter((0, 1, 66, 69, 2, 3, 67, 70), self)
+        return Tickfilter((0, 1, 66, 69, 2, 3, 67, 70), self) # BID_SIZE, BID, DELAYED_BID, DELAYED_BID_SIZE, ASK, ASK_SIZE, DELAYED_ASK, DELAYED_ASK_SIZE
 
     def midpoints(self) -> "Tickfilter":
         """Emit midpoint ticks."""
@@ -221,7 +223,7 @@ class Tickfilter(Op):
 
     __slots__ = ('_tickTypes',)
 
-    def __init__(self, tickTypes, source=None):
+    def __init__(self, tickTypes, source):
         Op.__init__(self, source)
         self._tickTypes = set(tickTypes)
 
@@ -309,7 +311,7 @@ class TimeBars(Op):
 
     bars: BarList
 
-    def __init__(self, timer, source=None):
+    def __init__(self, timer, source):
         Op.__init__(self, source)
         self._timer = timer
         self._timer.connect(self._on_timer, None, self._on_timer_done)
@@ -349,7 +351,7 @@ class TickBars(Op):
 
     bars: BarList
 
-    def __init__(self, count, source=None):
+    def __init__(self, count, source):
         Op.__init__(self, source)
         self._count = count
         self.bars = BarList()
@@ -376,7 +378,7 @@ class VolumeBars(Op):
 
     bars: BarList
 
-    def __init__(self, volume, source=None):
+    def __init__(self, volume, source):
         Op.__init__(self, source)
         self._volume = volume
         self.bars = BarList()

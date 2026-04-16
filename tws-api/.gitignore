@@ -43,3 +43,14 @@ __pycache__
 /samples/Excel/TwsActiveX/ComboLegForm.frx
 /samples/Excel/80F45F30
 build*
+
+source/javaclient
+source/csharpclient
+source/cppclient
+
+Extended Samples/CSharp
+Extended Samples/Java
+
+samples/Cpp
+samples/Java
+samples/CSharp

@@ -251,7 +251,9 @@ class Wrapper:
         Start a tick request that has the reqId associated with the contract.
         Return the ticker.
         """
-        self._logger.info(f'startTicker: {reqId} {tickType} {contract}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            con_str = f'{contract.__class__.__name__}({contract.localSymbol or contract.symbol})'
+            self._logger.debug(f'startTicker: {reqId} {tickType} {con_str}')
         ticker = self.tickers.get(id(contract))
         if not ticker:
             ticker = Ticker(
@@ -264,8 +266,13 @@ class Wrapper:
         return ticker
 
     def endTicker(self, ticker: Ticker, tickType: Union[int, str]):
-        self._logger.info(f'endTicker: {tickType} {ticker}')
         reqId = self.ticker2ReqId[tickType].pop(ticker, 0)
+        if self._logger.isEnabledFor(logging.DEBUG):
+            con = ticker.contract
+            assert con
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            self._logger.debug(f'endTicker: {reqId} {tickType} {con_str}')
+        # TODO: add ref count for Ticker as there may be multiple tickTypes using the same Ticker
         if reqId:
             self.reqId2Ticker.pop(reqId, None)
         self._reqId2Contract.pop(reqId, None)
@@ -928,17 +935,27 @@ class Wrapper:
         self.reqId2Ticker.pop(reqId) # FIXME: is this correct?
         self._endReq(reqId)
 
+    def tickByTickRaw(
+            self, reqId: int, tickType: int, time: int, price: float, size: float,
+            tickAttrib: TickAttribBidAsk|TickAttribLast|None, 
+            exchange: str, specialConditions: str):
+        ticker = self.reqId2Ticker.get(reqId)
+        assert ticker
+        self._logger.debug(f"tickByTickRaw: {reqId} {tickType}({TickByTickTypeEnum(tickType).name}) {time} {price} {size} '{exchange}' '{specialConditions}'")
+        ticker._updateEventRaw.emit(ticker, tickType, time, price, size, 
+            tickAttrib, exchange, specialConditions)
+
     def tickByTickAllLast(
             self, reqId: int, tickType: int, time: int, price: float,
             size: float, tickAttribLast: TickAttribLast,
-            exchange, specialConditions):
+            exchange: str, specialConditions: str):
         ticker = self.reqId2Ticker.get(reqId)
         if self._logger.isEnabledFor(logging.DEBUG):
             assert ticker and ticker.contract
             con = ticker.contract
             con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
             ticker_str = f'Ticker({con_str if ticker else ""})'
-            self._logger.debug(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker_str}')
+            self._logger.debug(f'tickByTickAllLast: {reqId} {tickType}({TickByTickTypeEnum(tickType).name}) {time} {price} {size} {ticker_str}')
         if not ticker:
             self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -994,23 +1011,21 @@ class Wrapper:
             con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
             ticker_str = f'Ticker({con_str if ticker else ""})'
             self._logger.debug(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker_str}')
-        if not ticker:
-            self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
-            return
-        self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         tick = TickByTickMidPoint(self.lastTime, midPoint)
         ticker.tickByTicks.append(tick)
         self.pendingTickers.add(ticker)
 
     def tickString(self, reqId: int, tickType: int, value: str):
         ticker = self.reqId2Ticker.get(reqId)
-        ticker_str = f' {ticker.__repr_minimal__()}' if ticker else ''
-        self._logger.info(f'tickString: {reqId} {tickType}({TickTypeEnum(tickType).name}) "{value}"{ticker_str}')
         if not ticker:
             self._logger.error(f'tickString: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
-        self._logger.debug(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}' if tickType != 45 
-            else f'tickString: {reqId} {tickType} {datetime.fromtimestamp(int(value), timezone.utc)} {ticker.__repr_minimal__()}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f' Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickString: {reqId} {tickType}({TickTypeEnum(tickType).name}) "{value}"{ticker_str}')
         try:
             if tickType == TickTypeEnum.BID_EXCH: # 32
                 ticker.bidExchange = value

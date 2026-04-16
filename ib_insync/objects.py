@@ -333,6 +333,15 @@ class AccountValue(NamedTuple):
         parts.append(f"lastUpdateTime='{self.lastUpdateTime.astimezone().isoformat()}'")
         return f"AccountValue({', '.join(parts)})"
 
+class TickByTickTypeEnum(IntEnum):
+    LAST = 1
+    ALLLAST = 2
+    BID_ASK = 3
+    MIDPOINT = 4
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}.{self.name}"
+
 class TickTypeEnum(IntEnum):
     BID_SIZE = 0
     BID = 1
