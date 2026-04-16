@@ -21,7 +21,7 @@ from ib_insync.objects import (
     NewsTick, OptionChain, OptionComputation, PnL, PnLSingle, PortfolioItem,
     Position, PositionMulti, PriceIncrement, RealTimeBar, RealTimeBarList, SoftDollarTier,
     TickAttribBidAsk, TickAttribLast, TickByTickAllLast, TickByTickBidAsk,
-    TickByTickMidPoint, TickData, TickTypeEnum, TradeLogEntry)
+    TickByTickMidPoint, TickData, TickTypeEnum, TickByTickTypeEnum,TradeLogEntry)
 from ib_insync.order import Order, OrderState, OrderStatus, Trade
 from ib_insync.ticker import Ticker
 from ib_insync.util import (
@@ -950,15 +950,15 @@ class Wrapper:
             size: float, tickAttribLast: TickAttribLast,
             exchange: str, specialConditions: str):
         ticker = self.reqId2Ticker.get(reqId)
+        if not ticker:
+            self._logger.error(f'tickByTickAllLast: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            return
         if self._logger.isEnabledFor(logging.DEBUG):
             assert ticker and ticker.contract
             con = ticker.contract
             con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
             ticker_str = f'Ticker({con_str if ticker else ""})'
             self._logger.debug(f'tickByTickAllLast: {reqId} {tickType}({TickByTickTypeEnum(tickType).name}) {time} {price} {size} {ticker_str}')
-        if not ticker:
-            self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
-            return
         if price != ticker.last:
             ticker.prevLast = ticker.last
             ticker.last = price
@@ -976,15 +976,15 @@ class Wrapper:
             bidSize: float, askSize: float,
             tickAttribBidAsk: TickAttribBidAsk):
         ticker = self.reqId2Ticker.get(reqId)
+        if not ticker:
+            self._logger.error(f'tickByTickBidAsk: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            return
         if self._logger.isEnabledFor(logging.DEBUG):
             assert ticker and ticker.contract
             con = ticker.contract
             con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
             ticker_str = f'Ticker({con_str if ticker else ""})'
             self._logger.debug(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker_str}')
-        if not ticker:
-            self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
-            return
         if bidPrice != ticker.bid:
             ticker.prevBid = ticker.bid
             ticker.bid = bidPrice
@@ -1005,6 +1005,9 @@ class Wrapper:
 
     def tickByTickMidPoint(self, reqId: int, time: int, midPoint: float):
         ticker = self.reqId2Ticker.get(reqId)
+        if not ticker:
+            self._logger.error(f'tickByTickMidPoint: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            return
         if self._logger.isEnabledFor(logging.DEBUG):
             assert ticker and ticker.contract
             con = ticker.contract
