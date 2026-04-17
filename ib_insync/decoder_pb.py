@@ -853,7 +853,8 @@ class ProtobufDecoder:
                 exchange = t.exchange if t.HasField('exchange') else ''
                 specialConditions = t.specialConditions if t.HasField('specialConditions') else ''
                 self.wrapper.tickByTickRaw(
-                    reqId, tickType, time, price, size, attribLast, exchange, specialConditions)
+                    reqId, tickType, time,
+                    (price, size, attribLast, exchange, specialConditions))
                 self.wrapper.tickByTickAllLast(
                     reqId, tickType, time, price, size,
                     attribLast, exchange, specialConditions)
@@ -870,7 +871,8 @@ class ProtobufDecoder:
                 bidSize = float(t.sizeBid) if t.HasField('sizeBid') else 0.0
                 askSize = float(t.sizeAsk) if t.HasField('sizeAsk') else 0.0
                 self.wrapper.tickByTickRaw(
-                    reqId, tickType, time, bidPrice, bidSize, attribBidAsk, '', '')
+                    reqId, tickType, time, 
+                    (bidPrice, askPrice, bidSize, askSize, attribBidAsk))
                 self.wrapper.tickByTickBidAsk(
                     reqId, time, bidPrice, askPrice, bidSize, askSize, attribBidAsk)
         elif tickType == 4:  # MidPoint
@@ -879,7 +881,8 @@ class ProtobufDecoder:
                 assert t
                 time = t.time if t.HasField('time') else 0
                 midPoint = t.price if t.HasField('price') else 0.0
-                self.wrapper.tickByTickRaw(reqId, tickType, time, midPoint, 0.0, None, '', '')
+                self.wrapper.tickByTickRaw(reqId, tickType, time, 
+                    (midPoint,))
                 self.wrapper.tickByTickMidPoint(reqId, time, midPoint)
         else:
             self.logger.error(f'Unknown tickType: {tickType}')

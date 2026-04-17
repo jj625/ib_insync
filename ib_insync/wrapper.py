@@ -941,14 +941,11 @@ class Wrapper:
         self._endReq(reqId)
 
     def tickByTickRaw(
-            self, reqId: int, tickType: int, time: int, price: float, size: float,
-            tickAttrib: TickAttribBidAsk|TickAttribLast|None, 
-            exchange: str, specialConditions: str):
+            self, reqId: int, tickType: int, time: int, args: tuple):
         ticker = self.reqId2Ticker.get(reqId)
         assert ticker
-        self._logger.debug(f"tickByTickRaw: {reqId} {tickType}({TickByTickTypeEnum(tickType).name}) {time} {price} {size} '{exchange}' '{specialConditions}'")
-        ticker._updateEventRaw.emit(ticker, tickType, time, price, size, 
-            tickAttrib, exchange, specialConditions)
+        self._logger.debug(f"tickByTickRaw: {reqId} {tickType}({TickByTickTypeEnum(tickType).name}) {time} {args}")
+        ticker._updateEventRaw.emit(ticker, tickType, time, args)
 
     def tickByTickAllLast(
             self, reqId: int, tickType: int, time: int, price: float,
