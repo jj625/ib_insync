@@ -67,17 +67,25 @@ async def main(args):
     await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax, btczh)
 
     if 100 in args.test:
-        async def _on_tickbytick(t: ibi.Ticker):
-            print(t)
+        async def _on_tickbytick(ticker, tickType, time, args):
+            print(tickType, time, args)
 
-        print('-'*10 + ' Some Test 100 ' + '-'*10)
+        print('-'*10 + ' TickByTick ' + '-'*10)
         await ib.qualifyContractsAsync(esfut)
-        tickType = 'Last' # Last, AllLast, BidAsk, MidPoint
-        ticker = ib.reqTickByTickData(esfut, tickType, 0, False)
-        print(ticker)
-        ticker.updateEvent.connect(_on_tickbytick)
-        await asyncio.sleep(10)
-        ib.cancelTickByTickData(esfut, tickType)
+        tickTypeLast = 'Last' # Last, AllLast, BidAsk, MidPoint
+        tickTypeBidAsk = 'BidAsk'
+        ticker = ib.reqTickByTickData(esfut, tickTypeLast, 0, True)
+        print(ticker, id(ticker))
+        # ticker.updateEvent.connect(_on_tickbytick, once=True)
+        ticker._updateEventRaw.connect(_on_tickbytick, once=True)
+        tickerBidAsk = ib.reqTickByTickData(esfut, tickTypeBidAsk, 0, True)
+        print(tickerBidAsk, id(tickerBidAsk))
+        # tickerBidAsk.updateEvent.connect(_on_tickbytick, once=True)
+        tickerBidAsk._updateEventRaw.connect(_on_tickbytick, once=True)
+
+        await asyncio.sleep(5000)
+        ib.cancelTickByTickData(esfut, tickTypeLast)
+        ib.cancelTickByTickData(esfut, tickTypeBidAsk)
     if 10 in args.test:
         print('-'*10 + ' pnlSingle ' + '-'*10)
         ib.reqPnLSingle('U2575725', '', esfut.conId)
