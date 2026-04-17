@@ -560,8 +560,8 @@ class IB:
         """Get a list of all tickers."""
         return list(self.wrapper.tickers.values())
 
-    def tickersByLocalsymbol(self) -> dict[str, Ticker]:
-        """Get a list of all tickers."""
+    def tickersByLocalSymbol(self) -> dict[str, Ticker]:
+        """Get a dictionary of tickers by local symbol."""
         return self.wrapper.tickersByLocalSymbol
     
     def lastTime(self) -> datetime.datetime:
