@@ -931,10 +931,15 @@ class Wrapper:
             size: float, tickAttribLast: TickAttribLast,
             exchange, specialConditions):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
-            self._logger.error(f'tickByTickAllLast: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            self._logger.error(f'tickByTickAllLast: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f'Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickByTickAllLast: {reqId} {tickType} {time} {price} {size} {ticker_str}')
         if price != ticker.last:
             ticker.prevLast = ticker.last
             ticker.last = price
@@ -954,7 +959,7 @@ class Wrapper:
         ticker = self.reqId2Ticker.get(reqId)
         self._logger.info(f'tickByTickBidAsk: {reqId} {time} {bidPrice} {askPrice} {bidSize} {askSize} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
-            self._logger.error(f'tickByTickBidAsk: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            self._logger.error(f'tickByTickBidAsk: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
         if bidPrice != ticker.bid:
             ticker.prevBid = ticker.bid
@@ -978,7 +983,7 @@ class Wrapper:
         ticker = self.reqId2Ticker.get(reqId)
         # self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         if not ticker:
-            self._logger.error(f'tickByTickMidPoint: Unknown reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
+            self._logger.error(f'tickByTickMidPoint: reqId: {reqId} not in reqId2Ticker {self.reqId2Ticker}')
             return
         self._logger.info(f'tickByTickMidPoint: {reqId} {time} {midPoint} {ticker.__repr_minimal__()}')
         tick = TickByTickMidPoint(self.lastTime, midPoint)
@@ -987,12 +992,15 @@ class Wrapper:
 
     def tickString(self, reqId: int, tickType: int, value: str):
         ticker = self.reqId2Ticker.get(reqId)
-        # self._logger.info(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}')
         if not ticker:
             self._logger.error(f'tickString: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
-        self._logger.debug(f'tickString: {reqId} {tickType} {value} {ticker.__repr_minimal__()}' if tickType != 45 
-            else f'tickString: {reqId} {tickType} {datetime.fromtimestamp(int(value), timezone.utc)} {ticker.__repr_minimal__()}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            assert ticker and ticker.contract
+            con = ticker.contract
+            con_str = f'{con.__class__.__name__}({con.localSymbol or con.symbol})'
+            ticker_str = f' Ticker({con_str if ticker else ""})'
+            self._logger.debug(f'tickString: {reqId} {tickType}({TickTypeEnum(tickType).name}) "{value}"{ticker_str}')
         try:
             if tickType == 32:
                 ticker.bidExchange = value
