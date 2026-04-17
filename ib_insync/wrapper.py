@@ -88,6 +88,9 @@ class Wrapper:
     tickers: Dict[int, Ticker]
     """ id(Contract) -> Ticker """
 
+    tickersByLocalSymbol: Dict[str, Ticker]
+    """ localSymbol -> Ticker """
+
     pendingTickers: Set[Ticker]
 
     reqId2Ticker: Dict[int, Ticker]
@@ -173,6 +176,7 @@ class Wrapper:
         self.newsTicks = []
         self.msgId2NewsBulletin = {}
         self.tickers = {}
+        self.tickersByLocalSymbol = {}
         self.pendingTickers = set()
         self.reqId2Ticker = {}
         self.ticker2ReqId = defaultdict(dict)
@@ -260,6 +264,7 @@ class Wrapper:
                 contract=contract, ticks=[], tickByTicks=[],
                 domBids=[], domAsks=[], domTicks=[])
             self.tickers[id(contract)] = ticker
+            self.tickersByLocalSymbol[contract.localSymbol] = ticker
         self.reqId2Ticker[reqId] = ticker
         self._reqId2Contract[reqId] = contract
         self.ticker2ReqId[tickType][ticker] = reqId
