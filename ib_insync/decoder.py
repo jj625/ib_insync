@@ -884,8 +884,14 @@ class Decoder:
                 pastLimit=bool(mask & 1),
                 unreported=bool(mask & 2))
 
+            _price = float(price)
+            _size = float(size)
+            self.wrapper.tickByTickRaw(
+                reqId, tickType, time,
+                (_price, _size, attrib, exchange, specialConditions))
+
             self.wrapper.tickByTickAllLast(
-                reqId, tickType, time, float(price), float(size),
+                reqId, tickType, time, _price, _size,
                 attrib, exchange, specialConditions)
 
         elif tickType == 3:
@@ -895,14 +901,28 @@ class Decoder:
                 bidPastLow=bool(mask & 1),
                 askPastHigh=bool(mask & 2))
 
+            _bidPrice = float(bidPrice)
+            _askPrice = float(askPrice)
+            _bidSize = float(bidSize)
+            _askSize = float(askSize)
+
+            self.wrapper.tickByTickRaw(
+                reqId, tickType, time,
+                (_bidPrice, _askPrice, _bidSize, _askSize, attrib))
+
             self.wrapper.tickByTickBidAsk(
-                reqId, time, float(bidPrice), float(askPrice),
-                float(bidSize), float(askSize), attrib)
+                reqId, time, _bidPrice, _askPrice,
+                _bidSize, _askSize, attrib)
 
         elif tickType == 4:
             midPoint, = fields
 
-            self.wrapper.tickByTickMidPoint(reqId, time, float(midPoint))
+            _midPoint = float(midPoint)
+            self.wrapper.tickByTickRaw(
+                reqId, tickType, time,
+                (_midPoint,))
+
+            self.wrapper.tickByTickMidPoint(reqId, time, _midPoint)
 
     def openOrder(self, fields):
         o = Order()
