@@ -28,7 +28,8 @@ from ib_insync.order import (
     BracketOrder, LimitOrder, Order, OrderState, OrderStatus, StopOrder, Trade)
 from ib_insync.ticker import Ticker
 from ib_insync.wrapper import Wrapper
-import ibapi.server_versions
+import eventkit as ek
+import ibapi.server_versions as server_versions
 
 
 class IB:
@@ -695,7 +696,7 @@ class IB:
         """
         return self._run(self.whatIfOrderAsync(contract, order))
 
-    def placeOrder(self, contract: Contract, order: Order) -> Trade:
+    def placeOrder(self, contract: Contract, order: Order, *, errorEvent: Optional[ek.Event] = None) -> Trade:
         """
         Place a new order or modify an existing order.
         Returns a Trade that is kept live updated with
@@ -704,8 +705,13 @@ class IB:
         Args:
             contract: Contract to use for order.
             order: The order to be placed.
+            errorEvent: Event to emit errors.
         """
         orderId = order.orderId or self.client.getReqId()
+        if errorEvent:
+            if orderId in self.wrapper.reqId2Event:
+                self._logger.error(f'placeOrder: Event already exists for orderId {orderId}')
+            self.wrapper.reqId2Event[orderId] = errorEvent
         self.client.placeOrder(orderId, contract, order)
         now = datetime.datetime.now(datetime.timezone.utc)
         key = self.wrapper.orderKey(
@@ -1853,7 +1859,7 @@ class IB:
             self, host: str = '127.0.0.1', port: int = 7497,
             clientId: int = 1, timeout: Optional[float] = 4,
             readonly: bool = False, account: str = '',
-            _MaxClientVer: int = 178,
+            _MaxClientVer: int = 178, _opts: dict = {},
             raiseSyncErrors: bool = False):
         clientId = int(clientId)
         self.wrapper.clientId = clientId
@@ -1867,33 +1873,34 @@ class IB:
                 self._logger.info('Autobinding manual orders')
                 self.reqAutoOpenOrders(True)
 
-            accounts = self.client.getAccounts()
+            accounts: List[str] = self.client.getAccounts()
             if not account and len(accounts) == 1:
                 account = accounts[0]
 
             # prepare initializing requests
             reqs: Dict = {}  # name -> request
-            reqs['positions'] = self.reqPositionsAsync()
+            if _opts.get('reqPositions', True):
+                reqs['positions'] = self.reqPositionsAsync()
             if not readonly:
                 reqs['open orders'] = self.reqOpenOrdersAsync()
-                if self.client.serverVersion() >= 150:
+                if self.client.serverVersion() >= server_versions.MIN_SERVER_VER_COMPLETED_ORDERS:
                     reqs['completed orders'] = self.reqCompletedOrdersAsync(False)
                 else:
                     self._logger.warning(
-                        'Server version too low for reqCompletedOrders')
+                        '⚠️ Server version too low for reqCompletedOrders')
             if account:
                 reqs['account updates'] = self.reqAccountUpdatesAsync(account)
-            else:
-                if len(accounts) > 1 and not account:
+            _sync_multi_accts = _opts.get('sync_multi_accounts', True)
+            if len(accounts) <= self.MaxSyncedSubAccounts and _sync_multi_accts:
                     self._logger.warning(
                         'Multiple accounts detected, but no account specified, not subscribing to account updates')
             if len(accounts) <= self.MaxSyncedSubAccounts:
                 for acc in accounts:
                     reqs[f'account updates for {acc}'] = \
                         self.reqAccountUpdatesMultiAsync(acc)
-            else:
+            elif len(accounts) > self.MaxSyncedSubAccounts:
                 self._logger.warning(
-                    f'Not subscribing to account updates for {len(accounts)} accounts')
+                    f'⚠️ max synced sub-accounts exceeded: {len(accounts)} > {self.MaxSyncedSubAccounts}')
 
             # run initializing requests concurrently and log if any times out
             tasks = [
@@ -1910,8 +1917,10 @@ class IB:
                     self._logger.debug(f"'{name}' completed" + (f': {resp}' if resp else ''))
 
             # the request for executions must come after all orders are in
+            _opts_reqExecs = _opts.get('reqExecutions', True)
             try:
-                await asyncio.wait_for(self.reqExecutionsAsync(), timeout)
+                if _opts_reqExecs:
+                    await asyncio.wait_for(self.reqExecutionsAsync(), timeout)
             except asyncio.TimeoutError:
                 msg = 'executions request timed out'
                 errors.append(msg)
@@ -1990,7 +1999,7 @@ class IB:
         return future
 
     def reqCurrentTimeInMillisAsync(self) -> Awaitable[datetime.datetime]:
-        if self.client._serverVersion < ibapi.server_versions.MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS:
+        if self.client._serverVersion < server_versions.MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS:
             self._logger.warning('Server version does not support reqCurrentTimeInMillis')
             future = asyncio.Future()
             future.set_result(datetime.datetime.now(datetime.timezone.utc).astimezone()) # dummy
@@ -2000,18 +2009,18 @@ class IB:
         self.client.reqCurrentTimeInMillis()
         return future
 
-    def reqAccountUpdatesAsync(self, account: str) -> Awaitable[None]:
+    def reqAccountUpdatesAsync(self, account: str, subscribe: bool = True) -> Awaitable[None]:
         self._logger.info(f'reqAccountUpdatesAsync: account={account}')
         future = self.wrapper.startReq('accountValues')
-        self.client.reqAccountUpdates(True, account)
+        self.client.reqAccountUpdates(subscribe, account)
         return future
 
     def reqAccountUpdatesMultiAsync(
-            self, account: str, modelCode: str = '') -> Awaitable[None]:
-        self._logger.info(f'reqAccountUpdatesMultiAsync: account={account}' + (f', modelCode={modelCode}' if modelCode else ''))
+            self, account: str, modelCode: str = '', ledgerAndNLV: bool = False) -> Awaitable[None]:
+        self._logger.info(f'reqAccountUpdatesMultiAsync: account={account}' + (f', modelCode={modelCode}' if modelCode else '') + (f', ledgerAndNLV={ledgerAndNLV}' if ledgerAndNLV else ''))
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
-        self.client.reqAccountUpdatesMulti(reqId, account, modelCode, False)
+        self.client.reqAccountUpdatesMulti(reqId, account, modelCode, ledgerAndNLV)
         return future
 
     async def accountSummaryAsync(self, account: str = '') \

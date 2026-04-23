@@ -563,7 +563,7 @@ class Client:
             self._logger.debug(
                 '>>> proto %s len=%d', _out_msg_name(msgId), len(payload))
 
-    def _onSocketHasData(self, data):
+    def _onSocketHasData(self, data: bytes):
         debug = self._logger.isEnabledFor(logging.DEBUG)
         if self._tcpDataArrived:
             self._tcpDataArrived()
@@ -585,11 +585,11 @@ class Client:
 
             if not self._serverVersion:
                 # Handshake: always text, 2 null-delimited fields
-                msg = rawMsg.decode(errors='backslashreplace')
+                msg: str = rawMsg.decode(errors='backslashreplace')
                 fields = msg.split('\0')
                 fields.pop()
                 if debug:
-                    self._logger.debug('<<< %s', ','.join(fields))
+                    self._logger.debug('<<< \'%s\'', '\',\''.join(fields))
                 if len(fields) == 2:
                     version, _connTime = fields
                     self._serverVersion = int(version)
@@ -600,10 +600,14 @@ class Client:
                     self.decoder.serverVersion = self._serverVersion
                     self.pbDecoder.serverVersion = self._serverVersion
                     self.connState = Client.CONNECTED
-                    self.startApi()
+                    # self.startApi()
                     self.wrapper.connectAck()
                     self._logger.info(
                         f'Logged on to server version {self._serverVersion}')
+                    self.startApi()
+                else:
+                    self._logger.error(f'Unexpected handshake message: {msg}, len(fields)={len(fields)}')
+                    raise ValueError(f'Unexpected handshake message: {msg}, len(fields)={len(fields)}')
                 continue
 
             # Post-handshake message routing
@@ -665,12 +669,17 @@ class Client:
 
     def _snoopText(self, msgId: int, fields: list):
         """Snoop text messages for nextValidId / managedAccounts during init."""
+        debug = self._logger.isEnabledFor(logging.DEBUG)
         if msgId == 9:  # NEXT_VALID_ID
-            _, _, validId = fields
+            _x, _y, validId = fields
+            if debug:
+                self._logger.debug(f'Next valid ID: {_x}, {_y}, {validId}')
             self.updateReqId(int(validId))
             self._hasReqId = True
         elif msgId == 15:  # MANAGED_ACCTS
-            _, _, accts = fields
+            _f, _g, accts = fields
+            if debug:
+                self._logger.debug(f'Managed accounts: {_f}, {_g}, {accts}')
             self._accounts = [a for a in accts.split(',') if a]
         if self._hasReqId and self._accounts:
             self._apiReady = True
@@ -1586,7 +1595,7 @@ class Client:
         self.send(70, 1, reqId)
 
     def startApi(self):
-        if self._serverVersion >= _MIN_PB_REST_3:
+        if self._serverVersion >= server_versions.MIN_SERVER_VER_PROTOBUF:
             proto = StartApiRequestProto()
             proto.clientId = self.clientId
             if self.optCapab:
