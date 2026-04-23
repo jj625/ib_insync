@@ -108,6 +108,24 @@ class Execution:
     lastLiquidity: int = 0
     pendingPriceRevision: bool = False
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+
+        _dt_today = datetime.now().date()
+        def _fmt(k, v):
+            if isinstance(v, dt.datetime):
+                if v.date() == _dt_today:
+                    return v.astimezone().strftime('%H:%M:%S.%f')[:-3]
+                return v.astimezone().isoformat()
+            elif isinstance(v, dt.date):
+                return v.isoformat()
+            elif isinstance(v, dt.time):
+                return v.isoformat()
+            else:
+                return repr(v)
+        s = ', '.join(f'{k}={_fmt(k, v)}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class CommissionReport:
@@ -118,6 +136,11 @@ class CommissionReport:
     yield_: float = 0.0
     yieldRedemptionDate: int = 0
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class ExecutionFilter:
@@ -129,6 +152,11 @@ class ExecutionFilter:
     exchange: str = ''
     side: str = ''
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class BarData:
@@ -254,6 +282,11 @@ class PnL:
     unrealizedPnL: float = nan
     realizedPnL: float = nan
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class TradeLogEntry:
@@ -265,9 +298,11 @@ class TradeLogEntry:
     def __repr__(self):
         attrs = dataclassNonDefaults(self)
         clsName = self.__class__.__qualname__
-
+        _dt_today = datetime.now().date()
         def _fmt(k, v):
             if isinstance(v, dt.datetime):
+                if v.date() == _dt_today:
+                    return v.astimezone().strftime('%H:%M:%S.%f')[:-3]
                 return v.astimezone().isoformat()
             elif isinstance(v, dt.date):
                 return v.isoformat()
@@ -289,6 +324,11 @@ class PnLSingle:
     position: float = 0
     value: float = nan
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 @dataclass
 class HistoricalSession:
@@ -582,12 +622,27 @@ class PortfolioItem(NamedTuple):
     realizedPNL: float
     account: str
 
+    def __repr__(self):
+        attrs = dataclassNonDefaults(self)
+        clsName = self.__class__.__qualname__
+        s = ', '.join(f'{k}={v!r}' for k, v in attrs.items())
+        return f'{clsName}({s})'
 
 class Position(NamedTuple):
     account: str
     contract: Contract
     position: float
     avgCost: float
+
+    def __repr__(self):
+        clsName = self.__class__.__qualname__
+        fields = [f"account='{self.account}'"
+            , f"contract={self.contract!r}"
+            , f"position={self.position}"
+            , f"avgCost={self.avgCost}"
+        ]
+        s = ', '.join(fields)
+        return f'{clsName}({s})'
 
 # @dataclass
 class PositionMulti(NamedTuple):
