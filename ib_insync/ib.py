@@ -2095,7 +2095,7 @@ class IB:
         self.client.reqContractDetails(reqId, contract)
         return future
 
-    async def reqSoftDollarTiersAsync(self) -> List[SoftDollarTier]:
+    async def reqSoftDollarTiersAsync(self, _timeout: float = 1.0) -> List[SoftDollarTier]:
         """Requests pre-defined Soft Dollar Tiers. This is only supported for
         registered professional advisors and hedge and mutual funds who have
         configured Soft Dollar Tiers in Account Management."""
@@ -2103,40 +2103,40 @@ class IB:
         future = self.wrapper.startReq(reqId)
         try:
             self.client.reqSoftDollarTiers(reqId)
-            await asyncio.wait_for(future, 1)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqSoftDollarTiersAsync: Timeout')
             return []
 
-    async def reqFamilyCodesAsync(self) -> List[FamilyCode]:
+    async def reqFamilyCodesAsync(self, _timeout: float = 1.0) -> List[FamilyCode]:
         future = self.wrapper.startReq('familyCodes')
         try:
             self.client.reqFamilyCodes() # no reqId needed
-            await asyncio.wait_for(future, 1)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqFamilyCodesAsync: Timeout')
             return []
 
-    async def reqMatchingSymbolsAsync(self, pattern: str) \
+    async def reqMatchingSymbolsAsync(self, pattern: str, _timeout: float = 4.0) \
             -> List[ContractDescription]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         self.client.reqMatchingSymbols(reqId, pattern)
         try:
-            await asyncio.wait_for(future, 4)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqMatchingSymbolsAsync: Timeout')
             return []
 
     async def reqMarketRuleAsync(
-            self, marketRuleId: int) -> List[PriceIncrement]:
+            self, marketRuleId: int, _timeout: float = 1.0) -> List[PriceIncrement]:
         future = self.wrapper.startReq(f'marketRule-{marketRuleId}')
         try:
             self.client.reqMarketRule(marketRuleId)
-            await asyncio.wait_for(future, 1)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqMarketRuleAsync: Timeout')
@@ -2324,14 +2324,14 @@ class IB:
     async def calculateImpliedVolatilityAsync(
             self, contract: Contract,
             optionPrice: float, underPrice: float,
-            implVolOptions: List[TagValue] = []) \
+            implVolOptions: List[TagValue] = [], _timeout: float = 4.0) \
             -> Optional[OptionComputation]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId, contract)
         self.client.calculateImpliedVolatility(
             reqId, contract, optionPrice, underPrice, implVolOptions)
         try:
-            await asyncio.wait_for(future, 4)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('calculateImpliedVolatilityAsync: Timeout')
@@ -2342,13 +2342,13 @@ class IB:
     async def calculateOptionPriceAsync(
             self, contract: Contract,
             volatility: float, underPrice: float,
-            optPrcOptions: List[TagValue] = []) -> Optional[OptionComputation]:
+            optPrcOptions: List[TagValue] = [], _timeout: float = 4.0) -> Optional[OptionComputation]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId, contract)
         self.client.calculateOptionPrice(
             reqId, contract, volatility, underPrice, optPrcOptions)
         try:
-            await asyncio.wait_for(future, 4)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('calculateOptionPriceAsync: Timeout')
@@ -2387,7 +2387,7 @@ class IB:
             startDateTime: Union[str, datetime.date],
             endDateTime: Union[str, datetime.date],
             totalResults: int,
-            historicalNewsOptions: List[TagValue] = []) \
+            historicalNewsOptions: List[TagValue] = [], _timeout: float = 4.0) \
             -> List[HistoricalNews]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
@@ -2397,20 +2397,21 @@ class IB:
             reqId, conId, providerCodes, start, end,
             totalResults, historicalNewsOptions)
         try:
-            await asyncio.wait_for(future, 4)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('reqHistoricalNewsAsync: Timeout')
             return []
 
-    async def requestFAAsync(self, faDataType: int):
+    async def requestFAAsync(self, faDataType: int, _timeout: float=4.0) -> str:
         future = self.wrapper.startReq('requestFA')
         self.client.requestFA(faDataType)
         try:
-            await asyncio.wait_for(future, 4)
+            await asyncio.wait_for(future, _timeout)
             return future.result()
         except asyncio.TimeoutError:
             self._logger.error('requestFAAsync: Timeout')
+            return ''
 
     async def getWshMetaDataAsync(self) -> str:
         if self.wrapper.wshMetaReqId:
@@ -2426,7 +2427,7 @@ class IB:
             self.cancelWshEventData()
         self.reqWshEventData(data)
         future = self.wrapper.startReq(
-            self.wrapper.wshEventReqId, container=None)
+            self.wrapper.wshEventReqId)
         await future
         self.cancelWshEventData()
         return future.result()
