@@ -5,6 +5,8 @@ import copy
 import datetime
 import logging
 import time
+import weakref
+import threading
 from typing import Awaitable, Dict, Iterator, List, Optional, Union, Any
 from collections.abc import Callable
 from eventkit import Event
@@ -212,7 +214,6 @@ class IB:
     MaxSyncedSubAccounts: int = 50
     TimezoneTWS: str = ''
 
-    import weakref, threading
     _live_instances: weakref.WeakSet = weakref.WeakSet()
     _lock = threading.Lock()
     def _check_single_instance(self):
@@ -1882,19 +1883,27 @@ class IB:
             if _opts.get('reqPositions', True):
                 reqs['positions'] = self.reqPositionsAsync()
             if not readonly:
+              _skip_reqOpenOrders = _opts.get('skip_reqOpenOrders', False)
+              if not _skip_reqOpenOrders:
                 reqs['open orders'] = self.reqOpenOrdersAsync()
+              _skip_reqCompletedOrders = _opts.get('skip_reqCompletedOrders', False)
+              if not _skip_reqCompletedOrders:
                 if self.client.serverVersion() >= server_versions.MIN_SERVER_VER_COMPLETED_ORDERS:
                     reqs['completed orders'] = self.reqCompletedOrdersAsync(False)
                 else:
                     self._logger.warning(
                         '⚠️ Server version too low for reqCompletedOrders')
             if account:
+                # Only one account can be subscribed at a time. 
+                # A second subscription request for another account 
+                # when the previous one is still active will cause 
+                # the first one to be canceled in favour of the second one.
                 reqs['account updates'] = self.reqAccountUpdatesAsync(account)
             _sync_multi_accts = _opts.get('sync_multi_accounts', True)
             if len(accounts) <= self.MaxSyncedSubAccounts and _sync_multi_accts:
-                    self._logger.warning(
-                        'Multiple accounts detected, but no account specified, not subscribing to account updates')
-            if len(accounts) <= self.MaxSyncedSubAccounts:
+                acc = 'All'
+                # reqs[f'account updates for {acc}'] = \
+                #         self.reqAccountUpdatesMultiAsync(acc)
                 for acc in accounts:
                     reqs[f'account updates for {acc}'] = \
                         self.reqAccountUpdatesMultiAsync(acc)
