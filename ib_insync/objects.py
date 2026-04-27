@@ -511,7 +511,7 @@ class TickData(NamedTuple):
             case TickTypeEnum.VOLUME | TickTypeEnum.OPTION_CALL_VOLUME | TickTypeEnum.OPTION_PUT_VOLUME | TickTypeEnum.FUTURES_OPEN_INTEREST | TickTypeEnum.OPTION_CALL_OPEN_INTEREST | TickTypeEnum.OPTION_PUT_OPEN_INTEREST | TickTypeEnum.REGULATORY_IMBALANCE | TickTypeEnum.AUCTION_VOLUME | TickTypeEnum.AVG_OPT_VOLUME | TickTypeEnum.AVG_VOLUME | TickTypeEnum.SHORTABLE_SHARES, _, -1.0:
                 return f"TickData({time_str}, {tickType_str}, {size_str})"
             case TickTypeEnum.HALTED, 0, 0:
-                return f"TickData({time_str}, {tickType_str})"
+                return f"TickData({time_str}, {tickType_str}, {int(self.price)})"
             case _, _, _:
                 return f"TickData({time_str}, {tickType_str}, price={self.price}, {size_str})"
 
