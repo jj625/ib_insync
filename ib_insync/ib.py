@@ -1360,6 +1360,22 @@ class IB:
             reqId, contract, tickType, numberOfTicks, ignoreSize)
         return ticker
 
+    def _reqTickByTickData(
+            self, contract: Contract, tickType: str,
+            numberOfTicks: int = 0, ignoreSize: bool = False) -> int:
+        """
+        Subscribe to tick-by-tick data. Returns reqId instead of Ticker.
+        Args:
+            contract: Contract of interest.
+            tickType: One of  'Last', 'AllLast', 'BidAsk' or 'MidPoint'.
+            numberOfTicks: Number of ticks or 0 for unlimited.
+            ignoreSize: Ignore bid/ask ticks that only update the size.
+        """
+        reqId = self.client.getReqId()
+        self.client.reqTickByTickData(
+            reqId, contract, tickType, numberOfTicks, ignoreSize)
+        return reqId
+
     def cancelTickByTickData(self, contract: Contract, tickType: str):
         """
         Unsubscribe from tick-by-tick data
@@ -1375,6 +1391,9 @@ class IB:
         else:
             self._logger.error(
                 f'cancelMktData: No reqId found for contract {contract}')
+
+    def _cancelTickByTickData(self, reqId):
+        self.client.cancelTickByTickData(reqId)
 
     def reqSmartComponents(self, bboExchange: str) -> List[SmartComponent]:
         """
