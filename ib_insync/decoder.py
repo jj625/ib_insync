@@ -191,7 +191,7 @@ class Decoder:
                 'userInfo', [int, str], skip=1)
         }
 
-    def wrap(self, methodName, types, skip=2):
+    def wrap(self, methodName: str, types: list[type], skip: int = 2):
         """
         Create a message handler that invokes a wrapper method
         with the in-order message fields as parameters, skipping over
@@ -211,7 +211,8 @@ class Decoder:
                     method(*args)
                 except Exception:
                     self.logger.exception(f'Error for {methodName}:')
-
+            else:
+                self.logger.error(f'Method/handler "{methodName}" not found in wrapper')
         return handler
 
     def interpret(self, fields: list[str]):
@@ -924,7 +925,7 @@ class Decoder:
 
             self.wrapper.tickByTickMidPoint(reqId, time, _midPoint)
 
-    def openOrder(self, fields):
+    def openOrder(self, fields: list):
         o = Order()
         c = Contract()
         st = OrderState()
