@@ -2304,7 +2304,7 @@ class IB:
         self.client.cancelHeadTimeStamp(reqId)
         return future.result()
 
-    def reqSmartComponentsAsync(self, bboExchange):
+    def reqSmartComponentsAsync(self, bboExchange) -> Awaitable[list[SmartComponent]]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         self.client.reqSmartComponents(reqId, bboExchange)
