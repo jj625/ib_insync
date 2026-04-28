@@ -258,6 +258,8 @@ class Wrapper:
                 else:
                     future.set_exception(result)
                     if debug: logMsg += f' future_set_exception'
+        else:
+            if debug: logMsg += f' future_not_found'
         if debug: self._logger.debug(logMsg + logResult)
 
     def startTicker(
@@ -491,9 +493,14 @@ class Wrapper:
         * feed in manual orders and order updates from TWS if clientId=0;
         * handle openOrders and allOpenOrders responses.
         """
+        _debug = self._logger.isEnabledFor(logging.DEBUG)
+        if _debug:
+            self._logger.debug(
+                f'openOrder: orderId={orderId}, contract.symbol={contract.symbol}, '
+                f'order={order}, orderState={orderState}')
         if order.whatIf:
             # response to whatIfOrder
-            if orderState.initMarginChange != str(UNSET_DOUBLE):
+            if orderState.initMarginChange != UNSET_DOUBLE:
                 self._endReq(order.orderId, orderState)
         else:
             key = self.orderKey(order.clientId, order.orderId, order.permId)
@@ -553,6 +560,14 @@ class Wrapper:
             avgFillPrice: float, permId: int, parentId: int,
             lastFillPrice: float, clientId: int, whyHeld: str,
             mktCapPrice: float = 0.0):
+        _debug = self._logger.isEnabledFor(logging.DEBUG)
+        if _debug:
+            self._logger.debug(
+                f'orderStatus: orderId={orderId}, '
+                f'status={status}, filled={filled}, remaining={remaining}, '
+                f'avgFillPrice={avgFillPrice}, permId={permId}, '
+                f'parentId={parentId}, lastFillPrice={lastFillPrice}, '
+                f'clientId={clientId}, whyHeld={whyHeld}, mktCapPrice={mktCapPrice}')
         key = self.orderKey(clientId, orderId, permId)
         trade = self.trades.get(key)
         if trade:
@@ -579,7 +594,7 @@ class Wrapper:
             if msg is not None:
                 logEntry = TradeLogEntry(self.lastTime, status, msg)
                 trade.log.append(logEntry)
-                self._logger.info(f'orderStatus: {trade}')
+                # self._logger.info(f'orderStatus: {trade}')
                 self.ib.orderStatusEvent.emit(trade)
                 trade.statusEvent.emit(trade)
                 if status != oldStatus:
@@ -679,7 +694,8 @@ class Wrapper:
 
     def marketDataType(self, reqId: int, marketDataId: int):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'marketDataType: {reqId} {marketDataId} {ticker.__repr_minimal__() if ticker else ""}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._logger.debug(f'marketDataType: {reqId} {marketDataId} {ticker.__repr_minimal__() if ticker else ""}')
         if ticker:
             ticker.marketDataType = marketDataId
 
@@ -1103,7 +1119,8 @@ class Wrapper:
         if not ticker:
             self._logger.error(f'tickGeneric: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
-        self._logger.info(f'tickGeneric: {reqId} {tickType}({TickTypeEnum(tickType).name}) {value} {ticker.__repr_minimal__()}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._logger.debug(f'tickGeneric: {reqId} {tickType}({TickTypeEnum(tickType).name}) {value} {ticker.__repr_minimal__()}')
         try:
             value = float(value)
         except ValueError:
@@ -1139,7 +1156,8 @@ class Wrapper:
             self, reqId: int, minTick: float, bboExchange: str,
             snapshotPermissions: int):
         ticker = self.reqId2Ticker.get(reqId)
-        self._logger.info(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__() if ticker else ""}')
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._logger.debug(f'tickReqParams: {reqId} {minTick} {bboExchange} {snapshotPermissions} {ticker.__repr_minimal__() if ticker else ""}')
         if not ticker:
             self._logger.error(f'tickReqParams: {reqId} is not in reqId2Ticker {self.reqId2Ticker}')
             return
@@ -1407,7 +1425,7 @@ class Wrapper:
                     logEntry = TradeLogEntry(
                         self.lastTime, status, msg, errorCode)
                     trade.log.append(logEntry)
-                    self._logger.warning(f'Canceled order: {trade}')
+                    # self._logger.warning(f'Canceled order: {trade}')
                     self.ib.orderStatusEvent.emit(trade)
                     trade.statusEvent.emit(trade)
                     trade.cancelledEvent.emit(trade)
