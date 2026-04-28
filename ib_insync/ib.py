@@ -298,7 +298,9 @@ class IB:
     def connect(
             self, host: str = '127.0.0.1', port: int = 7497, clientId: int = 1,
             timeout: float = 4, readonly: bool = False, account: str = '',
-            raiseSyncErrors: bool = False):
+            raiseSyncErrors: bool = False,
+            _MaxClientVer: int = 178, _opts: dict = {},
+        ):
         """
         Connect to a running TWS or IB gateway application.
         After the connection is made the client is fully synchronized
@@ -323,6 +325,7 @@ class IB:
         """
         return self._run(self.connectAsync(
             host, port, clientId, timeout, readonly, account,
+            _MaxClientVer, _opts,
             raiseSyncErrors))
 
     def disconnect(self):
