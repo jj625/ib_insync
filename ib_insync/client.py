@@ -356,8 +356,8 @@ class Client:
         self._apiReady = False
         self._serverVersion = 0
         self._data = b''
-        self._hasReqId = False
-        self._reqIdSeq = 0
+        self._hasReqId = False # set to True in connectAsync -> _snoopText
+        self._reqIdSeq = 0 # set in _snoopText
         self._accounts = []
         self._startTime = time.time()
         self._numBytesRecv = 0
