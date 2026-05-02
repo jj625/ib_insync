@@ -147,18 +147,18 @@ class DynamicCompressedHistogramNP:
         # fallback: return max value
         return self.hi[-1]
 
-    def percentile_of(self, y):
+    def percentile_of(self, y) -> float:
         """
         Given a value y, return the percentile (0–100) of y
         based on the current histogram.
         Uses linear interpolation inside the bin.
         """
         if len(self.count) == 0:
-            return None
+            return 0
 
         total = self.count.sum()
         if total == 0:
-            return None
+            return 0
 
         # Find the bin containing y
         # If y is outside the histogram range, clamp to edges
