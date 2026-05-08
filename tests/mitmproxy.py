@@ -2,6 +2,7 @@
 single-session, single-client server
 """
 import asyncio
+from asyncio import StreamReader, StreamWriter
 import datetime
 import logging, argparse
 import struct
@@ -57,7 +58,8 @@ TWS_PORT    = 7497          # real TWS/Gateway port
 def ts():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds")
 
-async def pipe(reader, writer, direction, cancel_event):
+async def pipe(reader: StreamReader, writer: StreamWriter, 
+        direction, cancel_event, log_files):
     """
     Forward bytes from reader → writer.
     direction: "C→S" or "S→C" for logging.
