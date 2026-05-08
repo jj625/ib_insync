@@ -543,6 +543,12 @@ class HistoricalTickBidAsk(NamedTuple):
     sizeBid: float
     sizeAsk: float
 
+    def __repr__(self):
+        time_str = f'time={self.time.astimezone():%H:%M:%S.%f}'
+        bidSize_str = f'bidSize={int(self.sizeBid)}' if self.sizeBid.is_integer() else f'bidSize={self.sizeBid}'
+        askSize_str = f'askSize={int(self.sizeAsk)}' if self.sizeAsk.is_integer() else f'askSize={self.sizeAsk}'
+        return f"HistoricalTickBidAsk({time_str}, priceBid={self.priceBid}, priceAsk={self.priceAsk}, {bidSize_str}, {askSize_str})"
+
 
 class HistoricalTickLast(NamedTuple):
     time: datetime
@@ -552,6 +558,12 @@ class HistoricalTickLast(NamedTuple):
     exchange: str
     specialConditions: str
 
+    def __repr__(self):
+        time_str = f'time={self.time.astimezone():%H:%M:%S.%f}'
+        size_str = f'size={int(self.size)}' if self.size.is_integer() else f'size={self.size}'
+        exch_str_opt = f', exchange={self.exchange}' if self.exchange else ''
+        specialConditions_str_opt = f', specialConditions={self.specialConditions}' if self.specialConditions else ''
+        return f"HistoricalTickLast({time_str}, price={self.price}, {size_str}{exch_str_opt}{specialConditions_str_opt})"
 
 class TickByTickAllLast(NamedTuple):
     tickType: int
