@@ -57,7 +57,7 @@ CONTRACT_DETAILS      = 10
 CONTRACT_DETAILS_END  = 11
 
 class FakeIBGW:
-    def __init__(self, host, port, fakegw_port, clientid):
+    def __init__(self, host, port, fakegw_port, clientid, enable_sim=False):
         self.logger = logging.getLogger(__name__)
         self.state = GWState.INITIAL
         self.real_tws_host = host
@@ -68,6 +68,7 @@ class FakeIBGW:
         self._data = b''
         self.static_db = None
         self.synthetic_engine = None
+        self.enable_sim = enable_sim
 
     async def start(self):
         """Start listening like a real IB Gateway."""
@@ -96,7 +97,7 @@ class FakeIBGW:
         session = FakeIBGWSession(reader, writer, 
             self.real_tws_host, self.real_tws_port, 
             self.static_db, self.synthetic_engine, 
-            enable_sim=False)
+            enable_sim=self.enable_sim)
         await session.run()
         self.logger.info(f"Client session finished")
         self._stop.set_result(None)
@@ -352,8 +353,111 @@ class FakeIBGWSession:
         self.writer.close()
         await self.writer.wait_closed()
 
+    # ========================================================
+    # Inline interception logic
+    # ========================================================
+
+    async def _process_client_messages(self, server_writer):
+        """
+        Decode client→TWS messages and optionally override behavior.
+        """
+        while True:
+            self.logger.info(f'client_buffer {self.client_buffer[:40]}')
+
+            if self.state == GWState.INITIAL:
+                # Need at least 4 bytes for "API\0"
+                if len(self.client_buffer) < 4:
+                    self.logger.info("Waiting for more client handshake data... (client_buffer < 4)")
+                    return
+                if self.client_buffer[:4] != b'API\0':
+                    raise RuntimeError(f"Invalid IB handshake prefix: {self.client_buffer[:4]!r}")
+
+                # Need length + payload
+                if len(self.client_buffer) < 8:
+                    self.logger.info("Waiting for more client handshake data... (client_buffer < 8)")
+                    return
+                msg_len = struct.unpack(">I", self.client_buffer[4:8])[0]
+                if len(self.client_buffer) < 8 + msg_len:
+                    self.logger.info("Waiting for more client handshake data... (client_buffer < 8 + msg_len)")
+                    return
+
+                ver_bytes = self.client_buffer[8:8+msg_len]
+                self.client_version_range = ver_bytes.decode("ascii", errors="replace")
+                # Drop handshake bytes from buffer (they've already been relayed)
+                del self.client_buffer[:8+msg_len]
+
+                self.state = GWState.HANDSHAKE
+                self.logger.info("Client handshake completed: client_version_range=%s", self.client_version_range)
+                # fall through to next loop iteration
+                continue
+
+            # From here on, we’re in HANDSHAKE/READY/REQUESTS and can parse framed messages
+
+            fields, raw = await self._try_parse(self.client_buffer)
+            if fields is None:
+                return
+
+            msg_id = int(fields[0])
+            # self.logger.info(f"Received client message: {msg_id} {fields}")
+
+            # State machine transitions
+            if self.state == GWState.READY and msg_id == START_API:
+                self.logger.info(f"Processing client message: {msg_id}(START_API) {fields}"
+                    ", transitioning to REQUESTS state")
+                self.state = GWState.REQUESTS
+                continue
+
+            elif self.state == GWState.REQUESTS:
+                self.logger.info(f"Processing client request: {msg_id} {fields}")
+                pass
+                # if msg_id == REQ_CONTRACT_DETAILS:
+                #     await self._handle_static_request(fields)
+                # elif msg_id == REQ_MKT_DATA:
+                #     await self._start_stream(fields)
+                # elif msg_id == CANCEL_MKT_DATA:
+                #     await self._cancel_stream(fields)
+
+    async def _process_server_messages(self):
+        """
+        Decode server→client messages if needed.
+        """
+        while True:
+            self.logger.info(f'server_buffer {self.server_buffer[:40]}')
+            if self.state == GWState.HANDSHAKE:
+                fields, raw = await self._try_parse(self.server_buffer)
+                if fields is None:
+                    return
+                # This is the serverVersion + connectionTime message
+                self.server_version = fields[0] if fields and fields[0] else None
+                self.connection_time = fields[1] if len(fields) > 1 else None
+                self.state = GWState.READY
+
+                self.logger.info("Server handshake completed: server_version=%s, connection_time=%s", self.server_version, self.connection_time)
+                continue
+
+            fields, raw = await self._try_parse(self.server_buffer)
+            if fields is None:
+                return
+            self.logger.info("Received server message: %s", fields)
+            # You can intercept server messages here if desired.
+            # For now, we just observe them.
+
+    async def _try_parse(self, buffer):
+        if len(buffer) < 4:
+            return None, None
+        msg_len = struct.unpack(">I", buffer[:4])[0]
+        if len(buffer) < 4 + msg_len:
+            return None, None
+
+        payload = buffer[4:4+msg_len]
+        del buffer[:4+msg_len]
+
+        fields = payload.decode("utf-8", errors="backslashreplace").split("\0")
+       
+        return fields, payload
+
 async def main(args: argparse.Namespace):
-    gw = FakeIBGW(TWS_HOST, args.targetport, args.sourceport, 12345)
+    gw = FakeIBGW(TWS_HOST, args.targetport, args.sourceport, 12345, enable_sim=args.sim)
     await gw.start()
 
 if __name__ == "__main__":
@@ -363,5 +467,6 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--sourceport", type=int, default=LISTEN_PORT, help="Port for the MITM proxy to listen on")
     parser.add_argument("-t", "--targetport", type=int, default=TWS_PORT, help="Port of the real TWS/Gateway")
     parser.add_argument("-r", "--recording", action="store_true", help="Enable recording of traffic to a binary log file")
+    parser.add_argument("-z", "--sim", action="store_true", help="Enable simulation mode")
     args = parser.parse_args()
     asyncio.run(main(args))
