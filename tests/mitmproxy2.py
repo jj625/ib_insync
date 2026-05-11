@@ -250,73 +250,73 @@ class FakeIBGWSession:
     # Main session loop
     # ---------------------------
 
-    async def run2(self):
+    # async def run2(self):
 
 
-        try:
-            await self._send_handshake()
+    #     try:
+    #         await self._send_handshake()
 
-            buffer = b''
-            while True:
-                fields = await read_ib_message(self.reader)
-                if not fields:
-                    break
-                await self._dispatch(fields)
+    #         buffer = b''
+    #         while True:
+    #             fields = await read_ib_message(self.reader)
+    #             if not fields:
+    #                 break
+    #             await self._dispatch(fields)
 
-        except (asyncio.IncompleteReadError, ConnectionResetError):
-            pass
-        finally:
-            await self._shutdown()
+    #     except (asyncio.IncompleteReadError, ConnectionResetError):
+    #         pass
+    #     finally:
+    #         await self._shutdown()
 
-    # ---------------------------
-    # Handshake
-    # ---------------------------
+    # # ---------------------------
+    # # Handshake
+    # # ---------------------------
 
-    async def _send_handshake(self):
-        """
-        Send serverVersion + connectionTime.
-        """
-        server_version = "151"
-        connection_time = "20260101 12:00:00"
-        self.writer.write(encode_ib_message([server_version, connection_time]))
-        await self.writer.drain()
-        self.state = GWState.READY
+    # async def _send_handshake(self):
+    #     """
+    #     Send serverVersion + connectionTime.
+    #     """
+    #     server_version = "151"
+    #     connection_time = "20260101 12:00:00"
+    #     self.writer.write(encode_ib_message([server_version, connection_time]))
+    #     await self.writer.drain()
+    #     self.state = GWState.READY
 
     # ---------------------------
     # Message dispatcher
     # ---------------------------
 
-    async def _dispatch(self, fields: list[str]):
-        msg_id = int(fields[0])
+    # async def _dispatch(self, fields: list[str]):
+    #     msg_id = int(fields[0])
 
-        if self.state == GWState.READY:
-            if msg_id == START_API:
-                self.state = GWState.REQUESTS
-                return
+    #     if self.state == GWState.READY:
+    #         if msg_id == START_API:
+    #             self.state = GWState.REQUESTS
+    #             return
 
-        if self.state == GWState.REQUESTS:
-            if msg_id == REQ_MKT_DATA:
-                await self._handle_req_mkt_data(fields)
-            elif msg_id == CANCEL_MKT_DATA:
-                await self._handle_cancel_mkt_data(fields)
-            elif msg_id == REQ_CONTRACT_DETAILS:
-                await self._handle_req_contract_details(fields)
+    #     if self.state == GWState.REQUESTS:
+    #         if msg_id == REQ_MKT_DATA:
+    #             await self._handle_req_mkt_data(fields)
+    #         elif msg_id == CANCEL_MKT_DATA:
+    #             await self._handle_cancel_mkt_data(fields)
+    #         elif msg_id == REQ_CONTRACT_DETAILS:
+    #             await self._handle_req_contract_details(fields)
 
-    # ---------------------------
-    # Static request handler
-    # ---------------------------
+    # # ---------------------------
+    # # Static request handler
+    # # ---------------------------
 
-    async def _handle_req_contract_details(self, fields: list[str]):
-        key = tuple(fields[1:])
-        responses = self.static_db.lookup_contract_details(key)
+    # async def _handle_req_contract_details(self, fields: list[str]):
+    #     key = tuple(fields[1:])
+    #     responses = self.static_db.lookup_contract_details(key)
 
-        for resp_fields in responses:
-            self.writer.write(encode_ib_message(resp_fields))
-            await self.writer.drain()
+    #     for resp_fields in responses:
+    #         self.writer.write(encode_ib_message(resp_fields))
+    #         await self.writer.drain()
 
-        # End marker
-        self.writer.write(encode_ib_message([str(CONTRACT_DETAILS_END)]))
-        await self.writer.drain()
+    #     # End marker
+    #     self.writer.write(encode_ib_message([str(CONTRACT_DETAILS_END)]))
+    #     await self.writer.drain()
 
     # ---------------------------
     # Streaming request handlers
