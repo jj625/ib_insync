@@ -425,11 +425,13 @@ class FakeIBGWSession:
             self.logger.info(f'server_buffer {self.server_buffer[:40]}')
             if self.state == GWState.HANDSHAKE:
                 fields, raw = await self._try_parse(self.server_buffer)
-                if fields is None:
+                if fields is None or len(fields) != 3 or fields[2] != '':
+                    self.logger.warning(f"Failed to parse server handshake message: {fields}")
                     return
                 # This is the serverVersion + connectionTime message
-                self.server_version = fields[0] if fields and fields[0] else None
-                self.connection_time = fields[1] if len(fields) > 1 else None
+                _version, _connTime, _ = fields
+                self.server_version = _version # if _version else None
+                self.connection_time = _connTime # if _connTime else None
                 self.state = GWState.READY
 
                 self.logger.info("Server handshake completed: server_version=%s, connection_time=%s", self.server_version, self.connection_time)
@@ -438,9 +440,19 @@ class FakeIBGWSession:
             fields, raw = await self._try_parse(self.server_buffer)
             if fields is None:
                 return
+            msg_id = int(fields[0])
             self.logger.info("Received server message: %s", fields)
             # You can intercept server messages here if desired.
             # For now, we just observe them.
+            match msg_id, self.state:
+                case 9, _state: # NEXT_VALID_ID
+                    assert _state == GWState.REQUESTS
+                    self.logger.info(f"Server: NEXT_VALID_ID(9) {fields[1:]}")
+                case 15, _state: # MANAGED_ACCTS
+                    assert _state == GWState.REQUESTS
+                    self.logger.info(f"Server: MANAGED_ACCTS(15) {fields[1:]}")
+                case _, _:
+                    self.logger.info(f"Server: {msg_id} {fields[1:]}")
 
     async def _try_parse(self, buffer):
         if len(buffer) < 4:
