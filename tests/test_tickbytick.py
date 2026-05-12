@@ -6,6 +6,10 @@ from random import randint
 import time
 import arrow
 import colorama
+from rich import print
+from rich.style import Style
+from rich.console import Console
+
 import argparse
 import asyncio
 import logging
@@ -95,10 +99,16 @@ async def main(args):
     btczh = ibi.Crypto('BTC', 'ZEROHASH', 'USD')
     # await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax, btczh)
 
+    if 101 in args.test:
+        _startDate = arrow.now().replace(hour=18, minute=0, second=0).datetime
+        _endDate = ''
+        x = await ib.reqHistoricalTicksAsync(esfut, _startDate, _endDate, 200, 'Bid_Ask', False, True)
+        print(x)
     if 100 in args.test:
         ts: float = time.time()
         # next clock cut at precisely 5s boundary
-        next_ts_cut: float = ts + (5 - ts % 5)
+        next_ts_5s_cut: float = ts + (5 - ts % 5)
+        next_ts_1s_cut: float = ts + (1 - ts % 1)
         acc_size_net, acc_size_buy, acc_size_sell = 0, 0, 0 # accummulated size in the period
         current_bid, current_ask = 0, 0
         N: int = 0 # number of ticks recorded
@@ -107,9 +117,13 @@ async def main(args):
         size_cumulative: float = 0
         _eod_start_ts = arrow.now().replace(hour=15, minute=59, second=30).timestamp()
         _eod_end_ts = arrow.now().replace(hour=16, minute=0, second=0).timestamp()
+
+        # coloring
+        my_style = Style(bold=False)
+        console = Console(highlight=False)
         async def _on_tickbytick(ticker, tickType, time_, args):
             nonlocal current_bid, current_ask, N
-            nonlocal acc_size_net, acc_size_buy, acc_size_sell, ts, next_ts_cut
+            nonlocal acc_size_net, acc_size_buy, acc_size_sell, ts, next_ts_5s_cut, next_ts_1s_cut
             nonlocal eod_vwap, price_size_cumulative, size_cumulative
             N += 1
             if tickType in (1, 2): # Last, AllLast
@@ -119,28 +133,47 @@ async def main(args):
                 sides = 1 if price >= current_ask else -1
 
                 _now = time.time()
-                # calculate vwap during 3:59-4:00pm
-                if _eod_start_ts <= _now <= _eod_end_ts:
-                    price_size_cumulative += price * size
-                    size_cumulative += size
-                    eod_vwap = price_size_cumulative / size_cumulative if size_cumulative > 0 else 0
+                _in_eod_vwap = (_eod_start_ts <= _now <= _eod_end_ts)
+                if _now >= next_ts_1s_cut:
+                    console.print(
+                        '  '
+                        f'{datetime.datetime.fromtimestamp(next_ts_1s_cut).strftime(r"%H:%M:%S.%f")[:-3]} {N} '
+                        f'{datetime.datetime.fromtimestamp(_now).strftime(r"%H:%M:%S.%f")[:-3] } '
+                        f'{current_bid} / {current_ask} '
+                        + (f'{eod_vwap:.4f}' if _in_eod_vwap else '')
+                    )
+                    # reset counters
+                    next_ts_1s_cut = _now + (1 - _now % 1)
+                    price_size_cumulative = 0
+                    size_cumulative = 0
+                    # eod_vwap = 0
 
-                if _now >= next_ts_cut:                  
+                if _now >= next_ts_5s_cut:                  
                     # histo
 
                     # print time down to milliseconds
-                    color = colorama.Fore.GREEN if acc_size_buy > acc_size_sell else colorama.Fore.RED
+                    # color = colorama.Fore.GREEN if acc_size_buy > acc_size_sell else colorama.Fore.RED
+
+                    color = "[not bold]" "[green]" if acc_size_buy > acc_size_sell else "[red]"
                     buy_ratio = acc_size_buy/acc_size_net if acc_size_net > 0 else 0
                     print(
-                        f'{color}{datetime.datetime.fromtimestamp(next_ts_cut).strftime(r"%H:%M:%S.%f")[:-3]} {N} '
-                        f'{current_bid} / {current_ask} {next_ts_cut} {acc_size_net} B:{acc_size_buy} S:{acc_size_sell} '
+                        f'{color}{datetime.datetime.fromtimestamp(next_ts_5s_cut).strftime(r"%H:%M:%S.%f")[:-3]} {N} '
+                        f'{current_bid} / {current_ask} {next_ts_5s_cut} {acc_size_net} B:{acc_size_buy} S:{acc_size_sell} '
                         + (f'{buy_ratio-0.5:.2f}')
                     )
                     ts = time.time()
-                    next_ts_cut = ts + (5 - ts % 5)
+                    next_ts_5s_cut = ts + (5 - ts % 5)
+                    next_ts_1s_cut = ts + (1 - ts % 1)
                     acc_size_net, acc_size_buy, acc_size_sell = 0, 0, 0
                     N = 0
                 # update stats
+
+                # calculate vwap during 3:59-4:00pm
+                if _in_eod_vwap:
+                    price_size_cumulative += price * size
+                    size_cumulative += size
+                    eod_vwap = price_size_cumulative / size_cumulative if size_cumulative > 0 else 0
+                    # print(eod_vwap)
                 # update accumulated size
                 acc_size_net += size
                 if sides == 1:
