@@ -90,19 +90,14 @@ async def main(args):
         print(f'Current time in millis: {await ib.reqCurrentTimeInMillisAsync()}')
         await asyncio.Event().wait()
 
-    spxidx = ibi.Index('SPX', 'CBOE', 'USD')
-    esfut = ibi.Future('ES', '202606', 'CME')
-    spy = ibi.Stock('SPY', 'SMART', 'USD')
-    qqq = ibi.Stock('QQQ', 'NASDAQ', 'USD')
-    eurusd = ibi.Forex('EURUSD')
-    vfiax = ibi.MutualFund(symbol='VFIAX')
-    btczh = ibi.Crypto('BTC', 'ZEROHASH', 'USD')
+    fut = ibi.Future(args.fut, '202606', 'CME')
+
     # await ib.qualifyContractsAsync(spxidx,esfut, spy, qqq, eurusd, vfiax, btczh)
 
     if 101 in args.test:
         _startDate = arrow.now().replace(hour=18, minute=0, second=0).datetime
         _endDate = ''
-        x = await ib.reqHistoricalTicksAsync(esfut, _startDate, _endDate, 200, 'Bid_Ask', False, True)
+        x = await ib.reqHistoricalTicksAsync(fut, _startDate, _endDate, 200, 'Bid_Ask', False, True)
         print(x)
     if 100 in args.test:
         ts: float = time.time()
@@ -186,21 +181,21 @@ async def main(args):
             # print(tickType, time_, args)
 
         print('-'*10 + ' TickByTick ' + '-'*10)
-        await ib.qualifyContractsAsync(esfut)
+        await ib.qualifyContractsAsync(fut)
         tickTypeLast = 'AllLast' # Last, AllLast, BidAsk, MidPoint
         tickTypeBidAsk = 'BidAsk'
-        ticker = ib.reqTickByTickData(esfut, tickTypeLast, 0, True)
+        ticker = ib.reqTickByTickData(fut, tickTypeLast, 0, True)
         # print(ticker, id(ticker))
         # ticker.updateEvent.connect(_on_tickbytick, once=True)
         ticker._updateEventRaw.connect(_on_tickbytick, once=True)
-        tickerBidAsk = ib.reqTickByTickData(esfut, tickTypeBidAsk, 0, True)
+        tickerBidAsk = ib.reqTickByTickData(fut, tickTypeBidAsk, 0, True)
         # print(tickerBidAsk, id(tickerBidAsk))
         # tickerBidAsk.updateEvent.connect(_on_tickbytick, once=True)
         tickerBidAsk._updateEventRaw.connect(_on_tickbytick, once=True)
 
         await asyncio.Event().wait()
-        ib.cancelTickByTickData(esfut, tickTypeLast)
-        # ib.cancelTickByTickData(esfut, tickTypeBidAsk)
+        ib.cancelTickByTickData(fut, tickTypeLast)
+        # ib.cancelTickByTickData(fut, tickTypeBidAsk)
 
     print(f'Connected OK — waiting {WAIT_SECONDS}s ...')
     await asyncio.sleep(WAIT_SECONDS)
@@ -249,6 +244,7 @@ if __name__ == '__main__':
     parser.add_argument('-test', type=str, default=[], help='Run specific tests, comma separated, 999=all')
     parser.add_argument('-maxclientversion', type=int, default=178, help='Maximum client version to use. 178..225.')
     parser.add_argument('-port', type=int, default=7497, help='IB port to connect to.')
+    parser.add_argument('-fut', type=str, default='ES', help='Futures contract to use.')
     args = parser.parse_args()
     if args.test:
         args.test = [int(x) for x in args.test.split(',')]
