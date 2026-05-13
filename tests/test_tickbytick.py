@@ -180,6 +180,8 @@ async def fetch_ticks_adaptive(ib, contract, dt: arrow.Arrow):
 
     merged = []
     prev_ticks = None
+    prev_start = None
+    prev_end = None
     window_id = 0
 
     t0 = start
@@ -212,8 +214,7 @@ async def fetch_ticks_adaptive(ib, contract, dt: arrow.Arrow):
             continue  # retry same window
 
         # If we have a previous window, compare overlap
-        prev_start, prev_end = t0, t1
-        if prev_ticks is not None:
+        if prev_ticks is not None and prev_start is not None and prev_end is not None:
             overlap_start = max(prev_start, t0)
             overlap_end   = min(prev_end, t1)
 
@@ -260,7 +261,20 @@ async def fetch_ticks_adaptive(ib, contract, dt: arrow.Arrow):
         prev_start, prev_end = t0, t1
 
         # Move forward
-        t0 = t0 + window_size - overlap
+        next_t0 = t0 + window_size - overlap
+
+        # Strong forward-progress guard
+        if next_t0 <= t0:
+            jlog("forward_progress_guard_triggered",
+                window_id=window_id,
+                t0=str(t0),
+                attempted_next=str(next_t0),
+                window_size=str(window_size))
+
+            # Force a minimum forward step of 100 ms
+            next_t0 = t0 + timedelta(milliseconds=100)
+
+        t0 = next_t0
 
         jlog("window_end",
              window_id=window_id,
@@ -456,8 +470,8 @@ async def main(args):
         ib.cancelTickByTickData(fut, tickTypeLast)
         # ib.cancelTickByTickData(fut, tickTypeBidAsk)
 
-    print(f'Connected OK — waiting {WAIT_SECONDS}s ...')
-    await asyncio.sleep(WAIT_SECONDS)
+    # print(f'Connected OK — waiting {WAIT_SECONDS}s ...')
+    # await asyncio.sleep(WAIT_SECONDS)
 
     print('Disconnecting ...')
     ib.disconnect()
