@@ -526,7 +526,7 @@ if __name__ == '__main__':
     # -test should accept a list of ints, comma separated
     parser.add_argument('-test', type=str, default=[], help='Run specific tests, comma separated, 999=all')
     parser.add_argument('-maxclientversion', type=int, default=178, help='Maximum client version to use. 178..225.')
-    parser.add_argument('-port', type=int, default=7497, help='IB port to connect to.')
+    parser.add_argument('-port', type=int, default=7496, help='IB port to connect to.')
     parser.add_argument('-fut', type=str, default='ES', help='Futures contract to use.')
     parser.add_argument('-date', type=_parsedate, default=arrow.get(), help='Date for the test.')
     args = parser.parse_args()
