@@ -212,6 +212,7 @@ async def fetch_ticks_adaptive(ib, contract, dt: arrow.Arrow):
             continue  # retry same window
 
         # If we have a previous window, compare overlap
+        prev_start, prev_end = t0, t1
         if prev_ticks is not None:
             overlap_start = max(prev_start, t0)
             overlap_end   = min(prev_end, t1)
