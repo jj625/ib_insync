@@ -2283,7 +2283,7 @@ class IB:
             endDateTime: Union[str, datetime.date],
             numberOfTicks: int, whatToShow: str, useRth: bool,
             ignoreSize: bool = False,
-            miscOptions: List[TagValue] = []) -> Awaitable[List]:
+            miscOptions: List[TagValue] = []) -> Awaitable[List[HistoricalTick]]:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId, contract)
         start = util.formatIBDatetime(startDateTime)
