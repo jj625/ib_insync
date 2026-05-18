@@ -167,7 +167,7 @@ class Order(Object):
 
         # order combo legs
 
-        self.orderComboLegs = None  # OrderComboLegListSPtr
+        self.orderComboLegs = []  # OrderComboLegListSPtr
 
         self.orderMiscOptions = None  # TagValueList
 
