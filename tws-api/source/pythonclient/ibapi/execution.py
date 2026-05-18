@@ -80,7 +80,7 @@ class ExecutionFilter(Object):
         self.exchange = ""
         self.side = ""
         self.lastNDays = UNSET_INTEGER
-        self.specificDates = None
+        self.specificDates = set()
 
 class OptionExerciseType(Enum):
     NoneItem = (-1, "None")

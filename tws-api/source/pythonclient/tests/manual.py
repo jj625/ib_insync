@@ -8,6 +8,7 @@ import datetime
 
 from ibapi.client import EClient
 from ibapi.common import *
+from ibapi.const import NO_VALID_ID
 from ibapi.contract import *
 from ibapi.order import *
 from ibapi.order_condition import *
@@ -17,6 +18,8 @@ from ibapi.ticktype import TickType, TickTypeEnum
 from ibapi.utils import *
 from ibapi.wrapper import EWrapper
 
+import logging
+logger = logging.getLogger(__name__)
 
 # import pdb; pdb.set_trace()
 # import code; code.interact(local=locals())
@@ -26,14 +29,21 @@ from ibapi.wrapper import EWrapper
 class TestApp(EClient, EWrapper):
     def __init__(self):
         EClient.__init__(self, self)
-        self.nextValidOrderId = None
+        self.nextValidOrderId = NO_VALID_ID
         self.permId2ord = {}
 
     @iswrapper
     def nextValidId(self, orderId: int):
+        print(f'nextValidId: {orderId}')
         super().nextValidId(orderId)
         logging.debug("setting nextValidOrderId: %d", orderId)
         self.nextValidOrderId = orderId
+
+    @iswrapper
+    def managedAccounts(self, accountsList: str):
+        print(f'managedAccounts: {accountsList}')
+        return super().managedAccounts(accountsList)
+    
 
     def placeOneOrder(self):
         con = Contract()
@@ -45,7 +55,7 @@ class TestApp(EClient, EWrapper):
         order.action = "BUY"
         order.orderType = "LMT"
         order.tif = "GTC"
-        order.totalQuantity = 3
+        order.totalQuantity = Decimal(3)
         order.lmtPrice = 1.23
         self.placeOrder(self.nextOrderId(), con, order)
 
@@ -58,8 +68,8 @@ class TestApp(EClient, EWrapper):
         return id_
 
     @iswrapper
-    def error(self, *args):
-        super().error(*args)
+    def error(self, reqId: int, errorTime: int, errorCode: int, errorString: str, advancedOrderRejectJson: str = ""):
+        super().error(reqId, errorTime, errorCode, errorString, advancedOrderRejectJson)
         print(current_fn_name(), vars())
 
     @iswrapper
@@ -87,35 +97,36 @@ class TestApp(EClient, EWrapper):
         self,
         orderId: OrderId,
         status: str,
-        filled: float,
-        remaining: float,
+        filled: Decimal,
+        remaining: Decimal,
         avgFillPrice: float,
         permId: int,
         parentId: int,
         lastFillPrice: float,
         clientId: int,
         whyHeld: str,
+        mktCapPrice: float = 0.0,
     ):
         super().orderStatus(
             orderId,
             status,
-            Decimal(filled),
-            Decimal(remaining),
+            filled,
+            remaining,
             avgFillPrice,
             permId,
             parentId,
             lastFillPrice,
             clientId,
             whyHeld,
-            0,
+            mktCapPrice,
         )
 
     @iswrapper
-    def tickPrice(self, tickerId: TickerId, tickType: TickType, price: float, attrib):
-        super().tickPrice(tickerId, tickType, price, attrib)
+    def tickPrice(self, reqId: TickerId, tickType: TickType, price: float, attrib):
+        super().tickPrice(reqId, tickType, price, attrib)
         print(
             current_fn_name(),
-            tickerId,
+            reqId,
             TickTypeEnum.toStr(tickType),
             price,
             attrib,
@@ -123,11 +134,11 @@ class TestApp(EClient, EWrapper):
         )
 
     @iswrapper
-    def tickSize(self, tickerId: TickerId, tickType: TickType, size: int):
-        super().tickSize(tickerId, tickType, Decimal(size))
+    def tickSize(self, reqId: TickerId, tickType: TickType, size: Decimal):
+        super().tickSize(reqId, tickType, size)
         print(
             current_fn_name(),
-            tickerId,
+            reqId,
             TickTypeEnum.toStr(tickType),
             size,
             file=sys.stderr,
@@ -154,7 +165,6 @@ def main():
     args = cmdLineParser.parse_args()
     print("Using args", args)
 
-    import logging
 
     logging.debug("Using args %s", args)
     # print(args)

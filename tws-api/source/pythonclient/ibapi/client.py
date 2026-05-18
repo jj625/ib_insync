@@ -14,6 +14,7 @@ import logging
 import queue
 import socket
 import sys
+from typing import Optional
 
 from ibapi import decoder, reader, comm
 from ibapi.comm import make_field, make_field_handle_empty
@@ -290,17 +291,17 @@ class EClient(object):
     def __init__(self, wrapper):
         self.msg_queue = queue.Queue()
         self.wrapper = wrapper
-        self.decoder = None
+        self._decoder: Optional[decoder.Decoder] = None
         self.nKeybIntHard = 0
-        self.conn = None
+        self._conn: Optional[Connection] = None
         self.host = None
         self.port = None
         self.extraAuth = False
-        self.clientId = None
-        self.serverVersion_ = None
+        self.clientId = -1
+        self.serverVersion_ = -1
         self.connTime = None
         self.connState = None
-        self.optCapab = None
+        self.optCapab = ''
         self.asynchronous = False
         self.reader = None
         self.decode = None
@@ -308,17 +309,35 @@ class EClient(object):
         self.connectOptions = None
         self.reset()
 
+    @property
+    def decoder(self) -> decoder.Decoder:
+        assert self._decoder is not None
+        return self._decoder
+
+    @decoder.setter
+    def decoder(self, value: decoder.Decoder) -> None:
+        self._decoder = value
+
+    @property
+    def conn(self) -> Connection:
+        assert self._conn is not None
+        return self._conn
+
+    @conn.setter
+    def conn(self, value: Connection) -> None:
+        self._conn = value
+
     def reset(self):
         self.nKeybIntHard = 0
-        self.conn = None
+        self._conn = None
         self.host = None
         self.port = None
         self.extraAuth = False
-        self.clientId = None
-        self.serverVersion_ = None
+        self.clientId = -1
+        self.serverVersion_ = -1
         self.connTime = None
         self.connState = None
-        self.optCapab = None
+        self.optCapab = ''
         self.asynchronous = False
         self.reader = None
         self.decode = None
@@ -344,7 +363,7 @@ class EClient(object):
     def logRequest(self, fnName, fnParams):
         log_(fnName, fnParams, "REQUEST")
 
-    def validateInvalidSymbols(self, host):
+    def validateInvalidSymbols(self, host: str):
         if host is not None and not isAsciiPrintable(host):
             raise ClientException(
                 INVALID_SYMBOL.code(),
@@ -671,7 +690,7 @@ class EClient(object):
             self.wrapper.error(NO_VALID_ID, currentTimeMillis(), FAIL_SEND_REQCURRTIME.code(), FAIL_SEND_REQCURRTIME.msg() + str(ex))
             return
 
-    def serverVersion(self):
+    def serverVersion(self) -> int:
         """Returns the version of the TWS instance to which the API application is connected."""
 
         return self.serverVersion_

@@ -10,14 +10,16 @@ remove the size prefix and put the rest in a Queue.
 
 import logging
 from threading import Thread
+import queue
 
 from ibapi import comm
+from ibapi.connection import Connection
 
 logger = logging.getLogger(__name__)
 
 
 class EReader(Thread):
-    def __init__(self, conn, msg_queue):
+    def __init__(self, conn: Connection, msg_queue: queue.Queue):
         super().__init__()
         self.conn = conn
         self.msg_queue = msg_queue
@@ -45,5 +47,5 @@ class EReader(Thread):
                         break
 
             logger.debug("EReader thread finished")
-        except:
-            logger.exception("unhandled exception in EReader thread")
+        except Exception as ex:
+            logger.exception(f"unhandled exception in EReader thread: {ex}")

@@ -8,6 +8,7 @@ Just a thin wrapper around a socket.
 It allows us to keep some other info along with it.
 """
 
+from typing import Optional, Union
 import socket
 import threading
 import logging
@@ -16,6 +17,7 @@ from ibapi.errors import FAIL_CREATE_SOCK
 from ibapi.errors import CONNECT_FAIL
 from ibapi.const import NO_VALID_ID
 from ibapi.utils import currentTimeMillis
+from ibapi.wrapper import EWrapper
 
 # TODO: support SSL !!
 
@@ -23,12 +25,30 @@ logger = logging.getLogger(__name__)
 
 
 class Connection:
-    def __init__(self, host, port):
+    def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
-        self.socket = None
-        self.wrapper = None
+        self._socket: Optional[socket.socket] = None
+        self._wrapper: Optional[EWrapper] = None
         self.lock = threading.Lock()
+
+    @property
+    def socket(self) -> socket.socket:
+        assert self._socket
+        return self._socket
+
+    @socket.setter
+    def socket(self, value: socket.socket):
+        self._socket = value
+
+    @property
+    def wrapper(self) -> EWrapper:
+        assert self._wrapper
+        return self._wrapper
+
+    @wrapper.setter
+    def wrapper(self, value: EWrapper):
+        self._wrapper = value
 
     def connect(self):
         try:
@@ -62,9 +82,9 @@ class Connection:
             self.lock.release()
 
     def isConnected(self):
-        return self.socket is not None
+        return self._socket is not None
 
-    def sendMsg(self, msg):
+    def sendMsg(self, msg: Union[bytes, bytearray]) -> int:
         logger.debug("acquiring lock")
         self.lock.acquire()
         logger.debug("acquired lock")
