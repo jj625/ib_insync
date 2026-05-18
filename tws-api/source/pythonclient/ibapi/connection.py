@@ -8,6 +8,7 @@ Just a thin wrapper around a socket.
 It allows us to keep some other info along with it.
 """
 
+import select
 from typing import Optional, Union
 import socket
 import threading
@@ -66,15 +67,15 @@ class Connection:
             if self.wrapper:
                 self.wrapper.error(NO_VALID_ID, currentTimeMillis(), CONNECT_FAIL.code(), CONNECT_FAIL.msg())
 
-        self.socket.settimeout(1)  # non-blocking
+        # self.socket.settimeout(1)  # non-blocking
 
     def disconnect(self):
         self.lock.acquire()
         try:
-            if self.socket is not None:
+            if self._socket is not None:
                 logger.debug("disconnecting")
-                self.socket.close()
-                self.socket = None
+                self._socket.close()
+                self._socket = None
                 logger.debug("disconnected")
                 if self.wrapper:
                     self.wrapper.connectionClosed()
@@ -106,41 +107,42 @@ class Connection:
 
         return nSent
 
-    def recvMsg(self):
+    def recvMsg(self) -> bytes:
+        buf = b"" # default return value
         if not self.isConnected():
             logger.debug("recvMsg attempted while not connected, releasing lock")
-            return b""
+            return buf
         try:
-            buf = self._recvAllMsg()
-            # receiving 0 bytes outside a timeout means the connection is either
-            # closed or broken
-            if len(buf) == 0:
-                logger.debug("socket either closed or broken, disconnecting")
-                self.disconnect()
+            # Block until data is available or 1s passes, without burning CPU on timeout exceptions
+            _ready = select.select([self.socket], [], []) # block indefinitely until data arrives
+            if _ready[0]:
+                buf = self._recvAllMsg()
+                # receiving 0 bytes outside a timeout means the connection is either
+                # closed or broken
+                if len(buf) == 0:
+                    logger.debug("socket either closed or broken, disconnecting")
+                    self.disconnect()
         except socket.timeout:
             logger.debug("socket timeout from recvMsg %s", sys.exc_info())
-            buf = b""
         except socket.error:
             logger.debug("socket broken, disconnecting")
             self.disconnect()
-            buf = b""
-        except OSError:
-            # Thrown if the socket was closed (ex: disconnected at end of script)
-            # while waiting for self.socket.recv() to timeout.
-            logger.debug("Socket is broken or closed.")
+        except Exception as ex:
+            logger.debug(f"exception from recvMsg {ex}")
 
         return buf
 
     def _recvAllMsg(self):
+        _BUFSIZE = 4096
         cont = True
-        allbuf = b""
+        allbuf: bytearray = bytearray()
 
         while cont and self.isConnected():
-            buf = self.socket.recv(4096)
+            buf = self.socket.recv(_BUFSIZE)
             allbuf += buf
             logger.debug("len %d raw:%s|", len(buf), buf)
 
-            if len(buf) < 4096:
+            if len(buf) < _BUFSIZE:
                 cont = False
 
         return allbuf
