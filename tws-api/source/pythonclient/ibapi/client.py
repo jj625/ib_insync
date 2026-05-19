@@ -471,11 +471,11 @@ class EClient(object):
             self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        try:
-            self.checkConnected()
-        except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg)
-            return
+        # try:
+        #     self.checkConnected()
+        # except ClientException as ex:
+        #     self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg)
+        #     return
 
         try:
             self.host = host
@@ -536,10 +536,47 @@ class EClient(object):
 
             self.setConnState(EClient.CONNECTED)
 
-            self.reader = reader.EReader(self.conn, self.msg_queue)
-            self.reader.start()  # start thread
             logger.info("sent startApi")
             self.startApi()
+
+            # read nextValidId synchronously, same pattern as server version above
+            while True:
+                buf = self.conn.recvMsg()
+                if not self.conn.isConnected():
+                    logger.warning("Disconnected waiting for nextValidId; resetting")
+                    self.reset()
+                    return
+                if len(buf) > 0:
+                    (size, msg, rest) = comm.read_msg(buf)
+                    print((size, msg, rest))
+                    if self.serverVersion() >= MIN_SERVER_VER_PROTOBUF:
+                        msg_id = int.from_bytes(msg[:4], 'big')
+                        proto_body = msg[4:]
+                        if msg_id == 9 + PROTOBUF_MSG_ID:  # or just check the known value
+                            from ibapi.protobuf.NextValidId_pb2 import NextValidId
+                            nvi = NextValidId()
+                            nvi.ParseFromString(proto_body)
+                            self.decoder.processProtoBuf(proto_body, msg_id - PROTOBUF_MSG_ID)
+                            print(f'--------------------- NEXT_VALID_ID received: {nvi.orderId}')
+                            break
+                        else:
+                            self.decoder.processProtoBuf(proto_body, msg_id - PROTOBUF_MSG_ID)
+                    else:
+                        fields = comm.read_fields(msg)
+                        print(fields)
+                        if len(fields) >= 2:
+                            msg_id = int(fields[0])
+                            if msg_id == 9:  # NEXT_VALID_ID
+                                # self.nextValidId(int(fields[2]))
+                                print(f'--------------------- NEXT_VALID_ID received: {fields[2]}')
+                                break
+                            else:
+                                # managedAccounts or other preamble — interpret and keep going
+                                self.decoder.interpret(fields, msg_id)
+
+            self.reader = reader.EReader(self.conn, self.msg_queue)
+            self.reader.start()  # start thread
+
             self.wrapper.connectAck()
         except socket.error:
             if self.wrapper:
