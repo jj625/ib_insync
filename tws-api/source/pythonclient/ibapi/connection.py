@@ -139,6 +139,13 @@ class Connection:
 
         while cont and self.isConnected():
             buf = self.socket.recv(_BUFSIZE)
+
+            if len(buf) == 0:
+                # Peer closed the connection — disconnect immediately and bail
+                logger.debug("recvAllMsg: 0-byte read, disconnecting")
+                self.disconnect()
+                return bytes(allbuf)  # return whatever we accumulated (likely empty)
+
             allbuf += buf
             logger.debug("len %d raw:%s|", len(buf), buf)
 
