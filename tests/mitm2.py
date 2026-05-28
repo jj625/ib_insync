@@ -462,15 +462,15 @@ class FakeIBGWSession:
                 if msg_id == OUT.START_API:
                     if self.server_supports_protobuf:
                         proto = _decode_protobuf(PROTOBUF_MESSAGE_MAP_OUT, msg_id, rawMsg)
-                        self.logger.info(f"Processing client proto msg: {msg_id}(START_API) {proto}")
+                        self.logger.info(f"Processing client proto msg: {IBMsgOutEnum(msg_id).name}({msg_id}) {proto}")
                     else:
                         # legacy
-                        self.logger.info(f"Processing client legacy msg: {msg_id}(START_API) {fields}")
+                        self.logger.info(f"Processing client legacy msg: {IBMsgOutEnum(msg_id).name}({msg_id}) {fields}")
 
                     self.logger.info(colorama.Fore.GREEN + "READY → READY_waitNextValidId state" + colorama.Style.RESET_ALL)
                     self.state = GWState.READY_waitNextValidId
                 else:
-                    self.logger.warning(f"Unexpected client message in READY state: {msg_id} {fields}")
+                    self.logger.warning(f"Unexpected client message in READY state: {IBMsgOutEnum(msg_id).name}({msg_id}) {fields}")
                 continue
 
             elif self.state == GWState.READY_waitNextValidId: # on server side
@@ -553,7 +553,7 @@ class FakeIBGWSession:
                     # if _opts:
                     #     self.logger.info(_opts)
                     match msgId:
-                        case 9: # NEXT_VALID_ID
+                        case IN.NEXT_VALID_ID:
                             v = cast(ibapi.protobuf.NextValidId_pb2.NextValidId, proto)
                             self.logger.info(f"Server: Protobuf message NEXT_VALID_ID(9) orderId={v.orderId}")
                             self.logger.info(colorama.Fore.GREEN + 'READY_waitNextValidId → REQUESTS state' + colorama.Style.RESET_ALL)
