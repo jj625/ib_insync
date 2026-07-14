@@ -677,6 +677,10 @@ class Wrapper:
         self._logger.info(f'orderBound: {reqId} {apiClientId} {apiOrderId}')
 
     def contractDetails(self, reqId: int, contractDetails: ContractDetails):
+        if reqId not in self._results:
+            # when contractDetails changes after midnight, server re-emits previously requested symbols/reqIds
+            self._logger.warning(f'contractDetails: reqId={reqId} creating placeholder for results')
+            self._results[reqId] = []
         self._results[reqId].append(contractDetails)
 
     bondContractDetails = contractDetails
